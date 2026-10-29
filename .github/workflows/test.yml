@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+name: Pixel-exact against LVGL
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: LVGL 9.5.0
+        run: git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
+      - name: 54 cases
+        run: make -C test -j4 LVGL=/tmp/lvgl run
+      - name: Under AddressSanitizer
+        run: >-
+          ASAN_OPTIONS=detect_leaks=0 make -C test -j4 LVGL=/tmp/lvgl BUILD=build-asan
+          CFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" run
+      - name: Timings (a runner, not a board)
+        run: make -C test LVGL=/tmp/lvgl bench

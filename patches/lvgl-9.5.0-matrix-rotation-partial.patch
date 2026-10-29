@@ -1,0 +1,41 @@
+--- a/src/display/lv_display.c
++++ b/src/display/lv_display.c
+@@ -1015,7 +1015,8 @@
+     if(disp == NULL) disp = lv_display_get_default();
+     if(disp == NULL) return;
+ 
+-    if(!(disp->render_mode == LV_DISPLAY_RENDER_MODE_DIRECT || disp->render_mode == LV_DISPLAY_RENDER_MODE_FULL)) {
++    if(!(disp->render_mode == LV_DISPLAY_RENDER_MODE_DIRECT || disp->render_mode == LV_DISPLAY_RENDER_MODE_FULL ||
++         disp->render_mode == LV_DISPLAY_RENDER_MODE_PARTIAL)) {
+         LV_LOG_WARN("Unsupported rendering mode: %d", disp->render_mode);
+         return;
+     }
+--- a/src/core/lv_refr.c
++++ b/src/core/lv_refr.c
+@@ -868,6 +868,13 @@
+     if(disp_refr->render_mode == LV_DISPLAY_RENDER_MODE_PARTIAL) {
+         /*In partial mode render this area to the buffer*/
+         layer->buf_area = *area_p;
++#if LV_DRAW_TRANSFORM_USE_MATRIX
++        /*With matrix rotation the draw units render in the display's native orientation,
++         *so the buffer holds the rotated area*/
++        if(lv_display_get_matrix_rotation(disp_refr)) {
++            lv_display_rotate_area(disp_refr, &layer->buf_area);
++        }
++#endif
+         layer_reshape_draw_buf(layer, LV_STRIDE_AUTO);
+     }
+     else if(disp_refr->render_mode == LV_DISPLAY_RENDER_MODE_DIRECT ||
+@@ -963,6 +970,12 @@
+     }
+ 
+     disp_refr->refreshed_area = *area_p;
++#if LV_DRAW_TRANSFORM_USE_MATRIX
++    /*In partial mode the buffer holds the native area, so flush that*/
++    if(disp_refr->render_mode == LV_DISPLAY_RENDER_MODE_PARTIAL && lv_display_get_matrix_rotation(disp_refr)) {
++        lv_display_rotate_area(disp_refr, &disp_refr->refreshed_area);
++    }
++#endif
+     LV_PROFILER_REFR_END;
+ }
+ 
