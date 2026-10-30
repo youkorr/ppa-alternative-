@@ -67,6 +67,7 @@ static lv_draw_ortho_stats_t g_stats;
 static lv_draw_ortho_copy_cb_t g_copy_cb;
 static bool g_fast = true;
 static bool g_batch = true;
+static bool g_tile_internal;
 
 /* The video window: a native rectangle of one display's frame buffer that
  * LVGL leaves to a source writing there itself. */
@@ -216,11 +217,84 @@ static void move_turned(const ortho_t * o, int32_t px,
     g_stats.bytes_turned += (uint64_t)lv_area_get_width(nat_rect) *
                             (uint64_t)lv_area_get_height(nat_rect) * (uint64_t)px;
 
+    /* Two native rows next to each other are two upright columns next to each
+     * other, so in 16 bits one 32-bit read of the upright side carries a pixel
+     * of each, and two such reads a column apart fill a 32-bit write of each
+     * native row: a quarter of the loads and stores of a pixel at a time. A
+     * P4 core is in order and has no wider load, so this is where its turn
+     * spends its time. */
+    const int32_t col_step = o->c * px + o->d * up_stride;  /* one native row down, upright */
+    const bool quad = px == 2 && (col_step == 2 || col_step == -2) &&
+                      (up_step == up_stride || up_step == -up_stride);
+
     for(int32_t by = nat_rect->y1; by <= nat_rect->y2; by += LV_DRAW_ORTHO_BLOCK) {
         const int32_t ey = LV_MIN(by + LV_DRAW_ORTHO_BLOCK - 1, nat_rect->y2);
         for(int32_t bx = nat_rect->x1; bx <= nat_rect->x2; bx += LV_DRAW_ORTHO_BLOCK) {
             const int32_t w = LV_MIN(bx + LV_DRAW_ORTHO_BLOCK - 1, nat_rect->x2) - bx + 1;
-            for(int32_t ny = by; ny <= ey; ny++) {
+            int32_t ny = by;
+            if(quad) {
+                for(; ny + 1 <= ey; ny += 2) {
+                    int32_t x, y;
+                    ortho_unpoint(o, bx, ny, &x, &y);
+                    uint8_t * u = up + (intptr_t)(y - up_area->y1) * up_stride + (intptr_t)(x - up_area->x1) * px;
+                    uint16_t * n0 = (uint16_t *)(nat + (intptr_t)(ny - nat_buf_area->y1) * nat_stride +
+                                                 (intptr_t)(bx - nat_buf_area->x1) * px);
+                    uint16_t * n1 = (uint16_t *)((uint8_t *)n0 + nat_stride);
+                    /* The pair in upright memory: row ny at the lower address
+                     * when the next native row is one pixel right upright.
+                     * Halves of a 32-bit word in little-endian order, which
+                     * the P4 and every host this is tested on are. */
+                    uint8_t * pair = col_step > 0 ? u : u - 2;
+                    int32_t i = 0;
+                    if(((uintptr_t)pair & 3) == 0 && ((uintptr_t)n0 & 3) == 0 && (nat_stride & 3) == 0 &&
+                       (up_stride & 3) == 0) {
+                        const intptr_t two = 2 * up_step;
+                        for(; i + 1 < w; i += 2, pair += two) {
+                            uint32_t * a = (uint32_t *)pair;
+                            uint32_t * b = (uint32_t *)(pair + up_step);
+                            uint32_t * w0 = (uint32_t *)(n0 + i);
+                            uint32_t * w1 = (uint32_t *)(n1 + i);
+                            if(to_native) {
+                                const uint32_t va = *a, vb = *b;
+                                if(col_step > 0) {
+                                    *w0 = (va & 0xffffu) | (vb << 16);
+                                    *w1 = (va >> 16) | (vb & 0xffff0000u);
+                                }
+                                else {
+                                    *w0 = (va >> 16) | (vb & 0xffff0000u);
+                                    *w1 = (va & 0xffffu) | (vb << 16);
+                                }
+                            }
+                            else {
+                                const uint32_t v0 = *w0, v1 = *w1;
+                                if(col_step > 0) {
+                                    *a = (v0 & 0xffffu) | (v1 << 16);
+                                    *b = (v0 >> 16) | (v1 & 0xffff0000u);
+                                }
+                                else {
+                                    *a = (v1 & 0xffffu) | (v0 << 16);
+                                    *b = (v1 >> 16) | (v0 & 0xffff0000u);
+                                }
+                            }
+                        }
+                    }
+                    /* What is left, and any pair that is not word-aligned. */
+                    uint8_t * u0 = u + (intptr_t)i * up_step;
+                    for(; i < w; i++, u0 += up_step) {
+                        uint16_t * p0 = (uint16_t *)u0;
+                        uint16_t * p1 = (uint16_t *)(u0 + col_step);
+                        if(to_native) {
+                            n0[i] = *p0;
+                            n1[i] = *p1;
+                        }
+                        else {
+                            *p0 = n0[i];
+                            *p1 = n1[i];
+                        }
+                    }
+                }
+            }
+            for(; ny <= ey; ny++) {
                 int32_t x, y;
                 ortho_unpoint(o, bx, ny, &x, &y);
                 uint8_t * u = up + (intptr_t)(y - up_area->y1) * up_stride + (intptr_t)(x - up_area->x1) * px;
@@ -514,9 +588,13 @@ static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
     lv_layer_t tl;
     tile_layer(&tl, &tb, tile, target);
     for(int32_t i = first; i < n; i++) {
-        lv_area_t clip;
+        lv_area_t clip, drawn;
         if(!job_touches(&jobs[i], tile)) continue;
-        if(lv_area_intersect(&clip, &jobs[i].t->clip_area, tile)) sw_execute_on(jobs[i].t, &tl, &jobs[i].t->area, &clip);
+        if(lv_area_intersect(&clip, &jobs[i].t->clip_area, tile)) {
+            sw_execute_on(jobs[i].t, &tl, &jobs[i].t->area, &clip);
+            if(lv_area_intersect(&drawn, &jobs[i].todo, &clip))
+                g_stats.bytes_drawn += (uint64_t)lv_area_get_size(&drawn) * (uint64_t)px;
+        }
     }
 
     lv_area_t parts[4];
@@ -679,13 +757,29 @@ static bool task_todo(const lv_draw_task_t * t, const ortho_t * o, lv_area_t * t
     return lv_area_intersect(todo, todo, &buf_up);
 }
 
-/* A task that goes faster on its own than in a batch. */
+/* A task that goes faster on its own than in a batch.
+ *
+ * A plain image turned straight into the frame buffer saves its pixels one
+ * upright copy -- but leaving the batch splits the run around it, and every
+ * tile the second half of the run shares with the first is read back out of
+ * the frame buffer and turned again. For an icon that costs far more than it
+ * saves: a 97x61 picture in the middle of a UI split one run in two and
+ * turned 16% of the screen twice. So an icon stays in the run, and only a
+ * picture of LV_DRAW_ORTHO_ALONE_BYTES or more (a camera frame, a wallpaper)
+ * goes alone -- and always one stored native, which only the fast path can
+ * draw. */
+#ifndef LV_DRAW_ORTHO_ALONE_BYTES
+#define LV_DRAW_ORTHO_ALONE_BYTES (32 * 1024)
+#endif
 static bool fast_alone(const lv_draw_task_t * t)
 {
     const lv_image_dsc_t * img;
     if(!g_fast) return false;
     if(t->type == LV_DRAW_DSC_TYPE_BLUR) return true;
-    return plain_image(t, &img);
+    if(!plain_image(t, &img)) return false;
+    if(img->header.flags & LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE) return true;
+    return (int64_t)img->header.w * img->header.h * lv_color_format_get_size(img->header.cf) >=
+           LV_DRAW_ORTHO_ALONE_BYTES;
 }
 
 static void execute_alone(ortho_unit_t * u, lv_draw_task_t * t)
@@ -818,10 +912,40 @@ static int32_t dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
     return n;
 }
 
+/* The tile is where every widget is drawn and every pixel of it is turned
+ * out of, so it has to be the fastest memory there is. On an ESP32-P4 that is
+ * internal RAM: LVGL's own allocator there (ESPHome's lv_malloc_core) asks
+ * PSRAM first, which would send all of the drawing through the same bus the
+ * frame buffer and the panel's scan-out already share -- the very traffic
+ * this unit exists to avoid. PSRAM only if internal RAM cannot hold it. */
+#if defined(ESP_PLATFORM)
+#include "esp_heap_caps.h"
+static void * tile_alloc(size_t size, bool * internal)
+{
+    void * p = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    *internal = p != NULL;
+    return p ? p : heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+static void tile_free(void * p)
+{
+    heap_caps_free(p);
+}
+#else
+static void * tile_alloc(size_t size, bool * internal)
+{
+    *internal = false;
+    return lv_malloc(size);
+}
+static void tile_free(void * p)
+{
+    lv_free(p);
+}
+#endif
+
 static int32_t delete_cb(lv_draw_unit_t * draw_unit)
 {
     ortho_unit_t * u = (ortho_unit_t *)draw_unit;
-    lv_free(u->tile_alloc);
+    tile_free(u->tile_alloc);
     lv_free(u->jobs);
     u->jobs = NULL;
     u->tile_alloc = NULL;
@@ -838,8 +962,10 @@ void lv_draw_ortho_init(void)
     u->base.evaluate_cb = evaluate;
     u->base.dispatch_cb = dispatch;
     u->base.delete_cb = delete_cb;
-    u->tile_alloc = lv_malloc(LV_DRAW_ORTHO_TILE_BYTES + LV_DRAW_BUF_ALIGN);
+    bool internal = false;
+    u->tile_alloc = tile_alloc(LV_DRAW_ORTHO_TILE_BYTES + LV_DRAW_BUF_ALIGN, &internal);
     LV_ASSERT_MALLOC(u->tile_alloc);
+    g_tile_internal = internal;
     u->tile = lv_draw_buf_align(u->tile_alloc, LV_COLOR_FORMAT_RGB565);
     u->jobs = lv_malloc(sizeof(job_t) * LV_DRAW_ORTHO_MAX_BATCH);
     LV_ASSERT_MALLOC(u->jobs);
@@ -863,6 +989,7 @@ void lv_draw_ortho_set_batching(bool enable)
 
 const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void)
 {
+    g_stats.tile_internal = g_tile_internal;
     return &g_stats;
 }
 

@@ -79,6 +79,8 @@ typedef struct {
     uint32_t window_skips;     /**< writes cut around the video window */
     uint64_t bytes_turned;     /**< bytes moved through a turn */
     uint64_t bytes_straight;   /**< bytes moved without one */
+    uint64_t bytes_drawn;      /**< bytes LVGL's renderer wrote into tiles, overdraw included */
+    uint8_t tile_internal;     /**< 1 when the tile is in internal RAM rather than PSRAM */
 } lv_draw_ortho_stats_t;
 
 /** Called with a straight (unturned) copy so a platform can hand it to DMA.

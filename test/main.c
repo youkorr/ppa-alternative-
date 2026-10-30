@@ -722,6 +722,20 @@ static void bench_ui(int32_t nw, int32_t nh, lv_display_rotation_t rot)
            "      %.0f KiB turned, %.0f KiB copied straight\n",
            st->tasks_general, st->batches, st->tiles, st->tiles_unread, st->fills_direct,
            st->images_turned + st->images_native, st->bytes_turned / 1024.0, st->bytes_straight / 1024.0);
+
+    /* What each way sends through PSRAM on a P4, where a whole screen does
+     * not fit anywhere else and the panel scans out of the same bus. Counted,
+     * not timed: the drawing writes the same pixels whichever way (overdraw
+     * included, measured above), and only where they land differs. Reads made
+     * while blending are left out, which flatters the three upright ways. */
+    const double S = (double)lv_draw_buf_width_to_stride(nw, cf) * nh / 1024.0;
+    const double drawn = st->bytes_drawn / 1024.0;
+    const double ortho_psram = (st->bytes_turned + st->bytes_straight) / 1024.0;
+    printf("    PSRAM traffic per frame on a P4 (counted here, KiB; drawn %.0f KiB with overdraw):\n", drawn);
+    printf("      ESPHome lvgl / esp_lvgl_port: draw, read, PPA out, read, frame buffer : %7.0f\n", drawn + 4 * S);
+    printf("      esp_lvgl_adapter: draw, read, frame buffer                           : %7.0f\n", drawn + 2 * S);
+    printf("      lv_draw_ortho, tile in internal RAM: frame buffer only                : %7.0f (%.1fx less)\n",
+           ortho_psram, (drawn + 2 * S) / ortho_psram);
 }
 
 /* LVGL alone, no lv_draw_ortho: the same polyline drawn whole, and drawn in
