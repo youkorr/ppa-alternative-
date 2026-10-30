@@ -18,6 +18,23 @@
 #include <math.h>
 #include <string.h>
 
+/* LVGL 10 renamed the draw task types after their descriptors. */
+#if LVGL_VERSION_MAJOR < 10
+#define LV_DRAW_DSC_TYPE_FILL           LV_DRAW_TASK_TYPE_FILL
+#define LV_DRAW_DSC_TYPE_BORDER         LV_DRAW_TASK_TYPE_BORDER
+#define LV_DRAW_DSC_TYPE_BOX_SHADOW     LV_DRAW_TASK_TYPE_BOX_SHADOW
+#define LV_DRAW_DSC_TYPE_LETTER         LV_DRAW_TASK_TYPE_LETTER
+#define LV_DRAW_DSC_TYPE_LABEL          LV_DRAW_TASK_TYPE_LABEL
+#define LV_DRAW_DSC_TYPE_IMAGE          LV_DRAW_TASK_TYPE_IMAGE
+#define LV_DRAW_DSC_TYPE_ARC            LV_DRAW_TASK_TYPE_ARC
+#define LV_DRAW_DSC_TYPE_LINE           LV_DRAW_TASK_TYPE_LINE
+#define LV_DRAW_DSC_TYPE_BLUR           LV_DRAW_TASK_TYPE_BLUR
+#define LV_DRAW_DSC_TYPE_TRIANGLE       LV_DRAW_TASK_TYPE_TRIANGLE
+#define LV_DRAW_DSC_TYPE_LAYER          LV_DRAW_TASK_TYPE_LAYER
+#define LV_DRAW_DSC_TYPE_MASK_RECTANGLE LV_DRAW_TASK_TYPE_MASK_RECTANGLE
+#define LV_DRAW_DSC_TYPE_VECTOR         LV_DRAW_TASK_TYPE_VECTOR
+#endif
+
 /* Any id no other unit uses. LVGL's own units count up from 1. */
 #define DRAW_UNIT_ID_ORTHO 79
 
@@ -197,6 +214,60 @@ static void move_turned(const ortho_t * o, int32_t px,
 /* The software renderer, run on a copy of the task                         */
 /* ------------------------------------------------------------------------ */
 
+#if LVGL_VERSION_MAJOR >= 10
+/* LVGL 10 draws a descriptor onto a layer within a clip area: no task. */
+static void sw_execute_on(const lv_draw_task_t * t, lv_layer_t * layer, const lv_area_t * area,
+                          const lv_area_t * clip)
+{
+    void * d = t->draw_dsc;
+    switch(t->type) {
+        case LV_DRAW_DSC_TYPE_FILL:
+            lv_draw_sw_fill(layer, clip, d, area);
+            break;
+        case LV_DRAW_DSC_TYPE_BORDER:
+            lv_draw_sw_border(layer, clip, d, area);
+            break;
+        case LV_DRAW_DSC_TYPE_BOX_SHADOW:
+            lv_draw_sw_box_shadow(layer, clip, d, area);
+            break;
+        case LV_DRAW_DSC_TYPE_LETTER:
+            lv_draw_sw_letter(layer, clip, d, area);
+            break;
+        case LV_DRAW_DSC_TYPE_LABEL:
+            lv_draw_sw_label(layer, clip, d, area);
+            break;
+        case LV_DRAW_DSC_TYPE_IMAGE:
+            lv_draw_sw_image(layer, clip, d, area);
+            break;
+        case LV_DRAW_DSC_TYPE_ARC:
+            lv_draw_sw_arc(layer, clip, d, area);
+            break;
+        case LV_DRAW_DSC_TYPE_LINE:
+            lv_draw_line_iterate(layer, clip, d, lv_draw_sw_line, NULL);
+            break;
+        case LV_DRAW_DSC_TYPE_BLUR:
+            lv_draw_sw_blur(layer, clip, d, area);
+            break;
+        case LV_DRAW_DSC_TYPE_TRIANGLE:
+            lv_draw_sw_triangle(layer, clip, d);
+            break;
+        case LV_DRAW_DSC_TYPE_LAYER:
+            lv_draw_sw_layer(layer, clip, d, area);
+            break;
+        case LV_DRAW_DSC_TYPE_MASK_RECTANGLE:
+            lv_draw_sw_mask_rect(layer, clip, d);
+            break;
+#if LV_USE_VECTOR_GRAPHIC && LV_USE_THORVG
+        case LV_DRAW_DSC_TYPE_VECTOR:
+            lv_draw_sw_vector(layer, clip, d);
+            break;
+#endif
+        default:
+            break;
+    }
+}
+#else
+/* LVGL 9 draws a task: a copy of it, pointed at the layer and the clip. */
 static void sw_execute(lv_draw_task_t * t)
 {
     switch(t->type) {
@@ -246,7 +317,6 @@ static void sw_execute(lv_draw_task_t * t)
     }
 }
 
-/* A copy of `t` drawn with no matrix onto `layer`, clipped to `clip`. */
 static void sw_execute_on(const lv_draw_task_t * t, lv_layer_t * layer, const lv_area_t * area,
                           const lv_area_t * clip)
 {
@@ -258,6 +328,7 @@ static void sw_execute_on(const lv_draw_task_t * t, lv_layer_t * layer, const lv
     lv_matrix_identity(&copy.matrix);
     sw_execute(&copy);
 }
+#endif
 
 static void tile_layer(lv_layer_t * tl, lv_draw_buf_t * tb, const lv_area_t * area,
                        const lv_layer_t * target)
@@ -294,7 +365,7 @@ struct _job_t {
 static bool covers(const job_t * j, const lv_area_t * tile)
 {
     const lv_draw_task_t * t = j->t;
-    if(t->type != LV_DRAW_TASK_TYPE_FILL || t->opa < LV_OPA_MAX) return false;
+    if(t->type != LV_DRAW_DSC_TYPE_FILL || t->opa < LV_OPA_MAX) return false;
     const lv_draw_fill_dsc_t * d = t->draw_dsc;
     if(d->opa < LV_OPA_MAX) return false;
     if(d->grad.dir != LV_GRAD_DIR_NONE) {
@@ -324,15 +395,15 @@ static void find_hole(job_t * j)
 {
     const lv_draw_task_t * t = j->t;
     lv_area_t h = {0, 0, -1, -1};
-    if(t->type == LV_DRAW_TASK_TYPE_BORDER) {
+    if(t->type == LV_DRAW_DSC_TYPE_BORDER) {
         const lv_draw_border_dsc_t * d = t->draw_dsc;
         int32_t in = LV_MAX(d->width, d->radius);
         h = t->area;
         lv_area_increase(&h, -in, -in);
     }
-    else if(t->type == LV_DRAW_TASK_TYPE_BOX_SHADOW) {
+    else if(t->type == LV_DRAW_DSC_TYPE_BOX_SHADOW) {
         const lv_draw_box_shadow_dsc_t * d = t->draw_dsc;
-        if(d->bg_cover && t->next && t->next->type == LV_DRAW_TASK_TYPE_FILL) {
+        if(d->bg_cover && t->next && t->next->type == LV_DRAW_DSC_TYPE_FILL) {
             const lv_draw_fill_dsc_t * f = t->next->draw_dsc;
             if(f->opa >= LV_OPA_MAX && t->next->opa >= LV_OPA_MAX &&
                lv_area_is_in(&t->area, &t->next->area, 0) && lv_area_is_in(&t->next->area, &t->area, 0)) {
@@ -424,7 +495,7 @@ static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
     g_stats.tasks_general += n;
 
     /* A blur reads its neighbours, so it is never cut into tiles. */
-    if(n == 1 && jobs[0].t->type == LV_DRAW_TASK_TYPE_BLUR) {
+    if(n == 1 && jobs[0].t->type == LV_DRAW_DSC_TYPE_BLUR) {
         const uint32_t stride = lv_draw_buf_width_to_stride(lv_area_get_width(&box), cf);
         size_t size = (size_t)stride * lv_area_get_height(&box) + LV_DRAW_BUF_ALIGN;
         void * raw = lv_malloc(size);
@@ -461,7 +532,7 @@ static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
  * the same on every side, so nothing about it changes. */
 static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * todo)
 {
-    if(t->type != LV_DRAW_TASK_TYPE_FILL) return false;
+    if(t->type != LV_DRAW_DSC_TYPE_FILL) return false;
     lv_draw_fill_dsc_t * dsc = t->draw_dsc;
     if(dsc->grad.dir != LV_GRAD_DIR_NONE) return false;
 
@@ -475,7 +546,7 @@ static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * to
 
 static bool plain_image(const lv_draw_task_t * t, const lv_image_dsc_t ** src_out)
 {
-    if(t->type != LV_DRAW_TASK_TYPE_IMAGE) return false;
+    if(t->type != LV_DRAW_DSC_TYPE_IMAGE) return false;
     const lv_draw_image_dsc_t * d = t->draw_dsc;
     if(lv_image_src_get_type(d->src) != LV_IMAGE_SRC_VARIABLE) return false;
     if(d->rotation != 0 || d->scale_x != LV_SCALE_NONE || d->scale_y != LV_SCALE_NONE) return false;
@@ -543,8 +614,8 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
 static void widen_for_glyphs(const lv_draw_task_t * t, lv_area_t * area)
 {
     const lv_font_t * font = NULL;
-    if(t->type == LV_DRAW_TASK_TYPE_LABEL) font = ((const lv_draw_label_dsc_t *)t->draw_dsc)->font;
-    else if(t->type == LV_DRAW_TASK_TYPE_LETTER) font = ((const lv_draw_letter_dsc_t *)t->draw_dsc)->font;
+    if(t->type == LV_DRAW_DSC_TYPE_LABEL) font = ((const lv_draw_label_dsc_t *)t->draw_dsc)->font;
+    else if(t->type == LV_DRAW_DSC_TYPE_LETTER) font = ((const lv_draw_letter_dsc_t *)t->draw_dsc)->font;
     else return;
     int32_t m = font ? lv_font_get_line_height(font) : 32;
     lv_area_increase(area, m, m);
@@ -565,7 +636,7 @@ static bool fast_alone(const lv_draw_task_t * t)
 {
     const lv_image_dsc_t * img;
     if(!g_fast) return false;
-    if(t->type == LV_DRAW_TASK_TYPE_BLUR) return true;
+    if(t->type == LV_DRAW_DSC_TYPE_BLUR) return true;
     return plain_image(t, &img);
 }
 
@@ -600,20 +671,20 @@ static int32_t evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * task)
     /* An identity matrix is the software renderer's own case. */
     if(ortho_is_identity(&o)) return 0;
     switch(task->type) {
-        case LV_DRAW_TASK_TYPE_FILL:
-        case LV_DRAW_TASK_TYPE_BORDER:
-        case LV_DRAW_TASK_TYPE_BOX_SHADOW:
-        case LV_DRAW_TASK_TYPE_LETTER:
-        case LV_DRAW_TASK_TYPE_LABEL:
-        case LV_DRAW_TASK_TYPE_IMAGE:
-        case LV_DRAW_TASK_TYPE_ARC:
-        case LV_DRAW_TASK_TYPE_LINE:
-        case LV_DRAW_TASK_TYPE_BLUR:
-        case LV_DRAW_TASK_TYPE_TRIANGLE:
-        case LV_DRAW_TASK_TYPE_LAYER:
-        case LV_DRAW_TASK_TYPE_MASK_RECTANGLE:
+        case LV_DRAW_DSC_TYPE_FILL:
+        case LV_DRAW_DSC_TYPE_BORDER:
+        case LV_DRAW_DSC_TYPE_BOX_SHADOW:
+        case LV_DRAW_DSC_TYPE_LETTER:
+        case LV_DRAW_DSC_TYPE_LABEL:
+        case LV_DRAW_DSC_TYPE_IMAGE:
+        case LV_DRAW_DSC_TYPE_ARC:
+        case LV_DRAW_DSC_TYPE_LINE:
+        case LV_DRAW_DSC_TYPE_BLUR:
+        case LV_DRAW_DSC_TYPE_TRIANGLE:
+        case LV_DRAW_DSC_TYPE_LAYER:
+        case LV_DRAW_DSC_TYPE_MASK_RECTANGLE:
 #if LV_USE_VECTOR_GRAPHIC && LV_USE_THORVG
-        case LV_DRAW_TASK_TYPE_VECTOR:
+        case LV_DRAW_DSC_TYPE_VECTOR:
 #endif
             break;
         default:

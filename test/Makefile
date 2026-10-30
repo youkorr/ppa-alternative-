@@ -25,8 +25,8 @@ all: $(BUILD)/ortho_test
 
 $(SRC)/.patched: $(PATCHES)
 	@rm -rf $(SRC) && mkdir -p $(SRC)
-	@cp -r $(LVGL)/src $(LVGL)/lvgl.h $(LVGL)/lv_version.h $(LVGL)/lvgl_private.h $(SRC)/
-	@if [ -d $(LVGL)/include ]; then cp -r $(LVGL)/include $(SRC)/; fi
+	@cp -r $(LVGL)/src $(LVGL)/lvgl.h $(SRC)/
+	@for f in lv_version.h lvgl_private.h include; do if [ -e $(LVGL)/$$f ]; then cp -r $(LVGL)/$$f $(SRC)/; fi; done
 	@echo "LVGL $(LV_VERSION), patches: $(notdir $(PATCHES))"
 	@for p in $(PATCHES); do patch -s -p1 -d $(SRC) < $$p || exit 1; done
 	@touch $@
