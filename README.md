@@ -42,11 +42,12 @@ for pixel.
 
 ## Status
 
-**Verified on a PC against LVGL 9.5.0 and 9.6.0, not yet on a board.**
+**Verified on a PC against LVGL 9.5.0, 9.6.0 and `master` (10.0.0-dev),
+not yet on a board.**
 
 - `test/` builds LVGL and renders the same UI two ways: upright and then
   turned (what a flush callback does today), and straight to native with
-  `lv_draw_ortho`. **82 of 82 cases match on both 9.5.0 and 9.6.0**: 90, 180
+  `lv_draw_ortho`. **82 of 82 cases match on 9.5.0, 9.6.0 and `master`**: 90, 180
   and 270°, RGB565 and XRGB8888, two panel sizes (one odd), direct and partial
   render modes, fast paths on and off, batched and task by task, plus
   pre-turned pictures. The scene has gradients both ways, a shadow, borders,
@@ -150,7 +151,9 @@ lv_display_set_matrix_rotation(d, true);
 
 `lv_conf.h` needs `LV_USE_FLOAT 1`, `LV_USE_MATRIX 1` and
 `LV_DRAW_TRANSFORM_USE_MATRIX 1`. The private headers are reached through
-`lvgl_private.h`, which both 9.5 and 9.6 provide.
+`lvgl_private.h`, which 9.5, 9.6 and `master` all provide. On `master` the
+software renderer draws a descriptor onto a layer within a clip, which is used
+directly; on 9.x a copy of the task is pointed at the tile.
 
 `LV_DRAW_ORTHO_TILE_BYTES` (128 KiB by default) is the one setting that
 matters. Every tile costs each task touching it a call into the software
@@ -189,12 +192,39 @@ The LVGL tree is copied and the patch for its exact version applied inside
 The shape is chosen for LVGL: one draw unit, no platform code, LVGL's own
 `lv_matrix_t` and software renderer, and a test that compares against LVGL's
 own output. Nothing is specific to Espressif: any MCU driving a panel on its
-side has the same problem. Three separate things to propose:
+side has the same problem. A pull request to LVGL lands on `master`, which is
+why the unit and the tests build there too.
+
+**To LVGL**, three separate things:
 
 1. the draw unit, as the software renderer's answer to matrix rotation;
-2. the partial-mode patch to `lv_refr.c` and `lv_display.c`;
-3. the line renderer losing a pixel at a band cut, with `--lvgl-quirk` as
-   the reproduction.
+2. the partial-mode patch to `lv_refr.c` and `lv_display.c`
+   (`patches/lvgl-10.0.0-*.patch` for `master`);
+3. the line renderer losing a pixel at a band cut, as a bug report, with
+   `--lvgl-quirk` as the reproduction (present on 9.5, 9.6 and `master`).
+
+**Beside lvgl/lvgl#10265** (the PPA unit's scaled and rotated images): it is
+complementary rather than competing. That PR turns *an image*; this unit
+stops turning *the screen*. Two things connect them:
+
+- The PPA unit's `ppa_evaluate` does not look at the task's matrix, so with
+  matrix rotation on and no `lv_draw_ortho` it would draw images unturned.
+  With `lv_draw_ortho` the PPA unit gives those tasks up whatever the order
+  the units are asked in, because this unit claims them at preference 0. One
+  line in `ppa_evaluate` (refuse a task whose matrix is not the identity)
+  makes the PPA unit correct on its own.
+- On the ESP32-P4 the PPA is the natural engine for this unit's two copies:
+  a turned copy is an SRM rotate, and a straight one an SRM copy, and the
+  block geometry is what `lv_draw_ppa_rot_calc_block()` in #10265 computes.
+  That is a back end for `lv_draw_ortho_set_copy_cb()` and a turned-copy
+  callback still to add, and it needs a board to be measured on.
+
+**To ESPHome**: ESPHome builds LVGL 9.5.0, so the unit can live in an
+external component first, where it can be flashed and measured, and become
+a `lvgl:` option once LVGL carries it. esphome/esphome#16944
+(`esp_video_camera`, the camera as a Home Assistant entity) does not touch
+the display; showing that camera on an LVGL screen is `lvgl_camera_display`
+in esp-video, which is the case measured above.
 
 ## Licence
 

@@ -6,10 +6,12 @@ on: [push, pull_request, workflow_dispatch]
 jobs:
   test:
     runs-on: ubuntu-24.04
+    # master moves; a break there is news, not a red release.
+    continue-on-error: ${{ matrix.lvgl == 'master' }}
     strategy:
       fail-fast: false
       matrix:
-        lvgl: [v9.5.0, v9.6.0]
+        lvgl: [v9.5.0, v9.6.0, master]
     steps:
       - uses: actions/checkout@v4
       - name: LVGL ${{ matrix.lvgl }}
