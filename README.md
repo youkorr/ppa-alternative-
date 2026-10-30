@@ -47,7 +47,7 @@ not yet on a board.**
 
 - `test/` builds LVGL and renders the same UI two ways: upright and then
   turned (what a flush callback does today), and straight to native with
-  `lv_draw_ortho`. **118 of 118 cases match on 9.5.0, 9.6.0 and `master`**: 90, 180
+  `lv_draw_ortho`. **129 of 129 cases match on 9.5.0, 9.6.0 and `master`**: 90, 180
   and 270°, RGB565 and XRGB8888, two panel sizes (one odd), direct and partial
   render modes, fast paths on and off, batched and task by task, plus
   pre-turned pictures. The scene has gradients both ways, a shadow, borders,
@@ -169,6 +169,25 @@ lv_draw_ortho_video_place(&v, &obj_coords);      /* where, in UI coordinates */
 lv_draw_ortho_video_show(&v, cam_buf, 1280, 720, LV_COLOR_FORMAT_RGB565, true, false);
 ```
 
+**The household's three camera boards**, read in esp-video's `yaml/` and in
+the sensor drivers it builds (`components/esp_cam_sensor/sensor/*`). A
+sensor's MIPI lanes and frame rate belong to the format, not to anything
+downstream, so the rate in this table is the ceiling the display path has to
+keep up with:
+
+| board (YAML) | panel | LVGL | sensor | format in use | lanes | sensor rate | shown |
+|---|---|---|---|---|---|---|---|
+| M5Stack Tab5 (`habbit (1).yaml`) | 720×1280 | 270° | SC2356 (SC202CS silicon) | RAW8 1280×720 | 1 | 30 fps | the whole frame, the whole screen |
+| Guition 10" (`tab10 .yaml`) | 800×1280 | 90° | OV02C10 | RAW10 1288×728 | 1 | 30 fps | its centre 1280×720 at 1:1, under 80 px of UI |
+| Waveshare 7" (`lvgl-kawaii.yaml`) | 1024×600 | 180° | OV5647 | RAW10 1280×960 binned | 2 | 45 fps (the YAML asks 30) | its centre 1024×600 at 1:1, the whole screen |
+
+All three are cases in `test/`, at those real sizes: the screen with the
+camera written by the (fake) PPA is the screen LVGL draws with that crop of
+the frame as an ordinary image. `lv_draw_ortho_video_set_crop()` is what the
+Guition and the Waveshare need: the PPA reads only the block shown, in the
+same pass, so a 1288×728 frame on a 1280×800 screen stays sharp instead of
+being scaled by 0.99.
+
 **The cache, which is where this goes wrong if it does.** LVGL writes right up
 to the window's edge, so a cache line can hold LVGL pixels and stale video
 pixels at once; written back after the PPA has run, it puts the stale video
@@ -246,7 +265,7 @@ store the rows as they will be on the glass, give the native row length in
 ```
 git clone --depth 1 -b v9.6.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 118 cases
+make LVGL=/tmp/lvgl run            # 129 cases
 make LVGL=/tmp/lvgl bench          # timings
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 ```

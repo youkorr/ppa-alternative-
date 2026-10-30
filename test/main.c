@@ -903,12 +903,43 @@ static lv_image_dsc_t * mirrored(const lv_image_dsc_t * in, bool mx, bool my)
     return d;
 }
 
-static void check_video(int32_t nw, int32_t nh, lv_display_rotation_t rot, bool mx, bool my)
+static lv_image_dsc_t * cropped(const lv_image_dsc_t * in, int32_t x, int32_t y, int32_t w, int32_t h)
+{
+    const int32_t px = lv_color_format_get_size(in->header.cf);
+    lv_image_dsc_t * d = calloc(1, sizeof(*d));
+    *d = *in;
+    uint8_t * data = malloc((size_t)w * h * px);
+    for(int32_t r = 0; r < h; r++)
+        memcpy(data + r * w * px, in->data + ((y + r) * in->header.w + x) * px, (size_t)w * px);
+    d->data = data;
+    d->data_size = (uint32_t)(w * h * px);
+    d->header.w = w;
+    d->header.h = h;
+    d->header.stride = w * px;
+    return d;
+}
+
+typedef struct {
+    const char * name;          /* a board, or NULL */
+    int32_t nw, nh;             /* the panel */
+    lv_display_rotation_t rot;
+    int32_t fw, fh;             /* the sensor's frame */
+    int32_t cx, cy, cw, ch;     /* the part shown; cw 0 for all of it */
+    int32_t wx, wy;             /* where, in the UI */
+    bool mx, my;
+} video_case_t;
+
+static void check_video_case(const video_case_t * c)
 {
     const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
-    lv_image_dsc_t * frame = image_of(160, 112, cf, 41);
-    g_vid = mx || my ? mirrored(frame, mx, my) : frame;
-    lv_area_set(&g_vid_at, 48, 24, 48 + 160 - 1, 24 + 112 - 1);
+    const int32_t nw = c->nw, nh = c->nh, fw = c->fw, fh = c->fh;
+    const lv_display_rotation_t rot = c->rot;
+    const bool mx = c->mx, my = c->my, crop = c->cw > 0;
+    const int32_t sw = crop ? c->cw : fw, sh = crop ? c->ch : fh;
+    lv_image_dsc_t * frame = image_of(fw, fh, cf, 41);
+    lv_image_dsc_t * shown = crop ? cropped(frame, c->cx, c->cy, c->cw, c->ch) : frame;
+    g_vid = mx || my ? mirrored(shown, mx, my) : shown;
+    lv_area_set(&g_vid_at, c->wx, c->wy, c->wx + sw - 1, c->wy + sh - 1);
     uint8_t * want = reference(nw, nh, cf, rot, scene_video_ref);
 
     screen_t * s = make_screen(nw, nh, cf, rot, true, false);
@@ -917,17 +948,22 @@ static void check_video(int32_t nw, int32_t nh, lv_display_rotation_t rot, bool 
     lv_draw_ortho_video_t v;
     lv_draw_ortho_video_init(&v, s->disp);
     lv_draw_ortho_video_place(&v, &g_vid_at);
+    if(crop) lv_draw_ortho_video_set_crop(&v, c->cx, c->cy, c->cw, c->ch);
     lv_refr_now(s->disp);
 
     memset(&g_p4, 0, sizeof(g_p4));
-    esp_err_t err = lv_draw_ortho_video_show(&v, frame->data, 160, 112, cf, mx, my);
+    esp_err_t err = lv_draw_ortho_video_show(&v, frame->data, fw, fh, cf, mx, my);
     /* And LVGL redrawing everything afterwards must leave the frame alone. */
     lv_obj_invalidate(lv_display_get_screen_active(s->disp));
     lv_refr_now(s->disp);
 
     char what[200];
-    snprintf(what, sizeof(what), "camera through the PPA into a %dx%d frame buffer at %s%s%s", (int)nw, (int)nh,
-             rot_name(rot), mx ? ", mirror x" : "", my ? ", mirror y" : "");
+    if(c->name)
+        snprintf(what, sizeof(what), "%s: %dx%d sensor frame%s into the %dx%d panel at %s", c->name, (int)fw, (int)fh,
+                 crop ? " cropped" : "", (int)nw, (int)nh, rot_name(rot));
+    else
+        snprintf(what, sizeof(what), "camera through the PPA into a %dx%d frame buffer at %s%s%s%s", (int)nw, (int)nh,
+                 rot_name(rot), mx ? ", mirror x" : "", my ? ", mirror y" : "", crop ? ", centre cropped" : "");
     diffs_t d;
     long nd = count_diffs(s, want, cf, &d);
     int32_t excused = nd > 0 && nd <= MAX_EXCUSED ? excuse(s, &d, nw, nh, cf, rot, scene_video_ref) : -1;
@@ -953,6 +989,16 @@ static void check_video(int32_t nw, int32_t nh, lv_display_rotation_t rot, bool 
     lv_draw_ortho_video_deinit(&v);
     drop_screen(s);
     free(want);
+}
+
+/* `crop`: a frame 8 pixels wider and taller than the window, shown by its
+ * centre -- the OV02C10's 1288x728 on a Guition held in landscape, small. */
+static void check_video(int32_t nw, int32_t nh, lv_display_rotation_t rot, bool mx, bool my, bool crop)
+{
+    video_case_t c = {NULL, nw, nh, rot, crop ? 168 : 160, crop ? 120 : 112, crop ? 4 : 0, crop ? 4 : 0,
+                      crop ? 160 : 0, crop ? 112 : 0, 48, 24, mx, my
+                     };
+    check_video_case(&c);
 }
 
 int main(int argc, char ** argv)
@@ -993,9 +1039,31 @@ int main(int argc, char ** argv)
     g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
     g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
     for(unsigned r = 0; r < 4; r++) {
-        check_video(320, 480, rots[r], false, false);
-        check_video(320, 480, rots[r], true, false);
-        check_video(320, 480, rots[r], true, true);
+        check_video(320, 480, rots[r], false, false, false);
+        check_video(320, 480, rots[r], true, false, false);
+        check_video(320, 480, rots[r], true, true, false);
+        check_video(320, 480, rots[r], false, false, true);
+        check_video(320, 480, rots[r], true, false, true);
+    }
+
+    /* The three camera boards as the household's YAML sets them up, at their
+     * real sizes: the sensor's own format, the panel's own size and the
+     * LVGL rotation each one runs at. The video fills the screen, or the part
+     * of it the sensor reaches, at 1:1. */
+    {
+        const video_case_t boards[] = {
+            /* habbit (1).yaml: SC2356 RAW8 1280x720 30 fps, 1 lane, whole screen. */
+            {"M5Stack Tab5, SC2356", 720, 1280, LV_DISPLAY_ROTATION_270, 1280, 720, 0, 0, 0, 0, 0, 0, false, false},
+            /* tab10 .yaml: OV02C10 RAW10 1288x728 30 fps, 1 lane; the centre
+             * 1280x720 of it, under a 1280x800 screen's 80 px of UI. */
+            {"Guition 10\", OV02C10", 800, 1280, LV_DISPLAY_ROTATION_90, 1288, 728, 4, 4, 1280, 720, 0, 80, false, false},
+            /* lvgl-kawaii.yaml: OV5647 RAW10 1280x960 binned 45 fps, 2 lanes;
+             * the centre 1024x600 of it, the whole screen. */
+            {"Waveshare 7\", OV5647", 1024, 600, LV_DISPLAY_ROTATION_180, 1280, 960, 128, 180, 1024, 600, 0, 0, false, false},
+        };
+        g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
+        g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
+        for(unsigned i = 0; i < sizeof(boards) / sizeof(boards[0]); i++) check_video_case(&boards[i]);
     }
 
     /* The household's own camera boards (esp-video's yaml/): a Guition 10"
