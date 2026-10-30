@@ -352,6 +352,98 @@ each second), and the frame rate. Unknown until then: PSRAM bandwidth with
 the scanout, and whether the fork's swap waits for the panel's vsync
 (three buffers are what make that not matter).
 
+## Against Espressif's own ports
+
+Read in their sources (esp-bsp `esp_lvgl_port` 2.9.0; esp-iot-solution
+`esp_lvgl_adapter` 0.7.4 with `esp_display_present` 1.2.0), not remembered:
+
+| | esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho |
+|---|---|---|---|
+| how a turned screen is made | LVGL draws upright; the flush turns each area with the PPA into a buffer of its own (blocking), then copies it into the frame buffer | LVGL draws upright; the turn is fused into the copy into the frame buffer (PPA, or the CPU in 32x64 blocks) | LVGL draws in the panel's orientation; an image is turned once as it is copied in, the rest through one small tile per run |
+| passes over a pixel after the draw | 2 | 1 | 0 for a native image, 1 for anything else, without a full-screen intermediate |
+| redraw only what changed, turned | yes (partial) | **refused**: `DOUBLE_DIRECT` rejects any rotation | **yes** (direct mode) |
+| video with LVGL running around it | no | no: Dummy Draw stops LVGL and blits the frame unturned | **yes**: turned (and scaled) once by the PPA into a window LVGL keeps out of |
+| tear-free frame-buffer swap | no | yes (2 or 3 frame buffers) | with youkorr/lvgl_9.5's `mipi_dsi` only |
+| run on a board | yes | yes | **not yet** |
+
+The adapter's own README says of the PPA: it "reduces CPU load" and
+"usually does not deliver noticeable FPS gains". It also ships a patch for
+a PPA freeze with rotation in `TRIPLE_PARTIAL` on the P4.
+
+On this machine (`make bench`; a PC, not a P4 -- only the ratios mean
+anything, and the PPA is a CPU loop here), best of 20, milliseconds:
+
+| | ESPHome lvgl | esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho |
+|---|---|---|---|---|
+| full-screen picture, 720x1280 at 270 | 1.37 | 1.54 | 1.03 | **0.58** |
+| full-screen picture, 800x1280 at 90 | 1.54 | 1.69 | 1.23 | **0.66** |
+| Tab5 camera 1280x720, at 270 | 1.38 | 1.53 | 1.04 | **0.56** (0.19 pre-turned) |
+| the whole test UI redrawn, 720x1280 at 270 | 2.08 | 2.34 | 1.69 | 1.70 |
+
+So: about **1.8x the adapter** on pictures and video, **5x** for a frame
+that arrives already turned, and **level with it in time** on a UI of text,
+shadows and borders. On a PC that is expected: both draw the same widgets
+once and turn the same 1800 KiB once, and a PC's memory is fast enough that
+where the bytes live makes no difference.
+
+**On a P4 it is where the bytes live that counts**, because PSRAM is shared
+by LVGL, the PPA, the JPEG decoder and the display's own scan-out. Counted
+per frame of that same UI (`make bench` prints it; drawn bytes include
+overdraw, 4056 KiB):
+
+| | PSRAM bytes per frame | how |
+|---|---|---|
+| ESPHome lvgl / esp_lvgl_port | 11256 KiB | draw into PSRAM, read it, PPA writes a turned copy, read that, write the frame buffer |
+| esp_lvgl_adapter | 7656 KiB | draw into PSRAM, read it, write the frame buffer turned |
+| lv_draw_ortho | **1800 KiB** (4.3x less) | draw in a 128 KiB tile in **internal RAM**, write the frame buffer turned |
+
+Three changes made that so, all measured here:
+
+- **The tile is taken from internal RAM** (`heap_caps_malloc` with
+  `MALLOC_CAP_INTERNAL`; ESPHome's LVGL allocator would have put it in
+  PSRAM). The boot log says where it landed: `Drawing tile: 128 KiB in
+  internal RAM`, or `PSRAM` if there was no room.
+- **Small images stay in the batch.** Only native frames and images over
+  32 KiB are drawn alone; an icon used to split a batch and force the tile
+  to be read back from the frame buffer. Turned bytes for the UI fell from
+  2095 to 1800 KiB: every tile is now written once and never read back.
+- **The 16-bit turn moves two rows at a time**, two 32-bit reads into two
+  32-bit writes, about 15% faster than pixel by pixel.
+
+Whether 4.3x less PSRAM traffic is faster on the glass is what the board
+says -- the next section.
+
+### Measuring it on the board
+
+`components/lvgl_bench` times every LVGL refresh on the board itself, from
+LVGL's `RENDER_START` to its `REFR_READY` -- the drawing, any turn, and the
+flush to the panel. It works with ESPHome's own lvgl and with lvgl_ortho
+alike, so the same lines in two firmwares compare them, and the figures
+reach Home Assistant, readable from a phone:
+
+```yaml
+external_components:
+  - source: github://youkorr/ppa-alternative-@main
+    components: [lvgl_bench]          # add lvgl_ortho for the new firmware
+
+lvgl_bench:
+  ms_per_frame:
+    name: "LVGL ms per frame"
+  max_fps:
+    name: "LVGL max fps"
+
+button:
+  - platform: template
+    name: "LVGL bench"
+    on_press:
+      - lvgl_bench.run: 10s           # redraws the whole screen, then reports
+```
+
+Flash the board's old YAML with these lines, press the button, note the two
+figures; flash the lvgl_ortho YAML with the same lines, press it again.
+LVGL refreshes at most every 33 ms by default, so the rate of refreshes says
+little: **ms per frame** is the figure that compares.
+
 ## The three boards
 
 `yaml/` holds the full configurations of the three boards this was written

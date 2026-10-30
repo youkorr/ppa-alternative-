@@ -184,6 +184,10 @@ void LvglOrtho::dump_config() {
   ESP_LOGCONFIG(TAG, "LVGL ortho:");
   ESP_LOGCONFIG(TAG, "  Rotation: %d (ESPHome, clockwise)", this->degrees_);
   ESP_LOGCONFIG(TAG, "  Panel: %dx%d, buffer in PSRAM", (int) this->width_, (int) this->height_);
+  // Where every widget is drawn before it is turned: internal RAM keeps the
+  // drawing off the bus the frame buffer and the scan-out share.
+  ESP_LOGCONFIG(TAG, "  Drawing tile: %u KiB in %s", (unsigned) (LV_DRAW_ORTHO_TILE_BYTES / 1024),
+                lv_draw_ortho_get_stats()->tile_internal ? "internal RAM" : "PSRAM (internal RAM was full)");
 }
 
 void LvglOrtho::read_cb_(lv_indev_t *indev, lv_indev_data_t *data) {
