@@ -648,6 +648,148 @@ static int lvgl_quirk(void)
     return 0;
 }
 
+/* ------------------------------------------------------------------------ */
+/* The camera, shown the way esp-video's lvgl_camera_display shows it        */
+/* ------------------------------------------------------------------------ */
+
+/* lvgl_camera_display points one lv_draw_buf_t at the camera's DMA buffer,
+ * hands it to a canvas with lv_canvas_set_draw_buf(), and for every new frame
+ * changes `.data`, calls lv_canvas_set_draw_buf() again and invalidates. No
+ * copy: the frame IS the picture. This does exactly the same. */
+static lv_draw_buf_t g_cam;
+static lv_obj_t * g_cam_canvas;
+
+static void cam_point(const lv_image_dsc_t * frame)
+{
+    const bool native = frame->header.flags & LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE;
+    /* lv_draw_buf_init checks the stride against the width, which a native
+     * frame does not satisfy (its rows are the other way), so set it after. */
+    lv_draw_buf_init(&g_cam, frame->header.w, frame->header.h, LV_COLOR_FORMAT_RGB565,
+                     frame->header.w * 2, (void *)frame->data,
+                     LV_MAX(frame->data_size, (uint32_t)frame->header.w * frame->header.h * 2));
+    g_cam.header.stride = frame->header.stride;
+    lv_draw_buf_set_flag(&g_cam, LV_IMAGE_FLAGS_MODIFIABLE);
+    if(native) lv_draw_buf_set_flag(&g_cam, LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE);
+}
+
+static const lv_image_dsc_t * g_cam_first;
+static void scene_camera(lv_obj_t * scr)
+{
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x102030), 0);
+    cam_point(g_cam_first);
+    g_cam_canvas = lv_canvas_create(scr);
+    lv_canvas_set_draw_buf(g_cam_canvas, &g_cam);
+    lv_obj_center(g_cam_canvas);
+}
+
+/* What lvgl_camera_display does when a frame arrives. */
+static void cam_next(lv_display_t * disp, const lv_image_dsc_t * frame)
+{
+    g_cam.data = (uint8_t *)frame->data;
+    lv_canvas_set_draw_buf(g_cam_canvas, &g_cam);
+    lv_obj_invalidate(g_cam_canvas);
+    lv_refr_now(disp);
+}
+
+static void check_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int32_t cw, int32_t ch)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const bool swap = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    lv_image_dsc_t * up[2] = {image_of(cw, ch, cf, 21), image_of(cw, ch, cf, 77)};
+    lv_image_dsc_t * nat[2] = {native_image_of(up[0], rot), native_image_of(up[1], rot)};
+    const uint32_t nstride = lv_draw_buf_width_to_stride(nw, cf);
+
+    /* LVGL today: upright, then turned. Two frames in a row. */
+    uint8_t * want[2];
+    g_cam_first = up[0];
+    screen_t * u = make_screen(swap ? nh : nw, swap ? nw : nh, cf, LV_DISPLAY_ROTATION_0, false, false);
+    lv_display_set_default(u->disp);
+    scene_camera(lv_display_get_screen_active(u->disp));
+    for(int f = 0; f < 2; f++) {
+        if(f == 0) lv_refr_now(u->disp);
+        else cam_next(u->disp, up[1]);
+        want[f] = malloc((size_t)nstride * nh);
+        turn_buffer(u->buf, want[f], u->w, u->h, u->stride, nstride, rot, cf);
+    }
+    drop_screen(u);
+
+    for(int native = 0; native < 2; native++) {
+        lv_image_dsc_t ** frames = native ? nat : up;
+        g_cam_first = frames[0];
+        screen_t * s = make_screen(nw, nh, cf, rot, true, false);
+        lv_display_set_default(s->disp);
+        scene_camera(lv_display_get_screen_active(s->disp));
+        for(int f = 0; f < 2; f++) {
+            lv_draw_ortho_reset_stats();
+            if(f == 0) lv_refr_now(s->disp);
+            else cam_next(s->disp, frames[1]);
+            const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+            char what[200];
+            snprintf(what, sizeof(what), "camera %dx%d on %dx%d at %s, %s, frame %d (%u turned, %u straight)",
+                     (int)cw, (int)ch, (int)nw, (int)nh, rot_name(rot), native ? "frames pre-turned" : "frames upright",
+                     f + 1, st->images_turned, st->images_native);
+            expect_same(what, s, want[f], cf);
+            if((native ? st->images_native : st->images_turned) == 0) {
+                g_failures++;
+                printf("  FAIL  ...and the frame did not take its fast path\n");
+            }
+        }
+        drop_screen(s);
+    }
+    free(want[0]);
+    free(want[1]);
+}
+
+/* A camera frame every time, the way lvgl_camera_display's timer does it. */
+static void bench_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int32_t cw, int32_t ch,
+                         const char * board)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const bool swap = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    lv_image_dsc_t * up = image_of(cw, ch, cf, 5);
+    lv_image_dsc_t * nat = native_image_of(up, rot);
+    const int n = 20;
+    double t[3];
+    lv_draw_ortho_stats_t stats[3];
+
+    for(int way = 0; way < 3; way++) {
+        const bool today = way == 0;
+        g_cam_first = way == 2 ? nat : up;
+        screen_t * s = today ? make_screen(swap ? nh : nw, swap ? nw : nh, cf, LV_DISPLAY_ROTATION_0, false, false)
+                       : make_screen(nw, nh, cf, rot, true, false);
+        lv_display_set_default(s->disp);
+        scene_camera(lv_display_get_screen_active(s->disp));
+        lv_refr_now(s->disp);
+        uint8_t * fb = malloc(lv_draw_buf_width_to_stride(nw, cf) * nh);
+        double best = 1e9;
+        for(int i = 0; i < n; i++) {
+            double t0 = now_ms();
+            cam_next(s->disp, g_cam_first);
+            if(today) turn_buffer(s->buf, fb, s->w, s->h, s->stride, lv_draw_buf_width_to_stride(nw, cf), rot, cf);
+            double dt = now_ms() - t0;
+            if(dt < best) best = dt;
+        }
+        t[way] = best;
+        if(!today) {
+            lv_draw_ortho_reset_stats();
+            cam_next(s->disp, g_cam_first);
+            const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+            stats[way] = *st;
+        }
+        free(fb);
+        drop_screen(s);
+    }
+    printf("  %s: camera %dx%d on a %dx%d panel at %s, one frame, best of %d:\n", board, (int)cw, (int)ch,
+           (int)nw, (int)nh, rot_name(rot), n);
+    printf("    LVGL today, draw upright then turn in flush : %7.2f ms\n", t[0]);
+    printf("    lv_draw_ortho, frame turned in one pass     : %7.2f ms (%.1fx)\n", t[1], t[0] / t[1]);
+    printf("    lv_draw_ortho, frame pre-turned             : %7.2f ms (%.1fx)\n", t[2], t[0] / t[2]);
+    for(int w = 1; w < 3; w++)
+        printf("      %s: %u tasks through tiles, %.0f KiB turned, %.0f KiB copied straight\n",
+               w == 1 ? "turned" : "pre-turned", stats[w].tasks_general,
+               stats[w].bytes_turned / 1024.0, stats[w].bytes_straight / 1024.0);
+}
+
 int main(int argc, char ** argv)
 {
     bool run_bench = argc > 1 && strcmp(argv[1], "--bench") == 0;
@@ -673,9 +815,20 @@ int main(int argc, char ** argv)
         }
     }
 
+    /* The household's own camera boards (esp-video's yaml/): a Guition 10"
+     * turned 90 with a 1288x728 sensor frame, a Waveshare 7" turned 180 with
+     * 1280x960 -- bigger than its screen, so clipped -- scaled down to keep
+     * the test quick, and a frame smaller than its screen. */
+    check_camera(400, 640, LV_DISPLAY_ROTATION_90, 322, 182);
+    check_camera(512, 300, LV_DISPLAY_ROTATION_180, 640, 480);
+    check_camera(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
+
     printf("%d of %d cases passed\n", g_cases - g_failures, g_cases);
 
     if(run_bench) {
+        bench_camera(800, 1280, LV_DISPLAY_ROTATION_90, 1288, 728, "Guition 10\" (tab10)");
+        bench_camera(1024, 600, LV_DISPLAY_ROTATION_180, 1280, 960, "Waveshare 7\" (lvgl-kawaii)");
+        bench_camera(720, 1280, LV_DISPLAY_ROTATION_270, 1280, 720, "Tab5 in landscape");
         bench(720, 1280, LV_DISPLAY_ROTATION_270);
         bench(800, 1280, LV_DISPLAY_ROTATION_90);
         g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);

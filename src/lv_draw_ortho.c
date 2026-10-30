@@ -357,17 +357,26 @@ static bool job_touches(const job_t * j, const lv_area_t * tile)
     return true;
 }
 
-static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t * tile,
+static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t * whole_tile,
                       uint8_t * mem, size_t mem_size)
 {
+    /* Only the part of the tile the jobs reach: a run of a scroll bar down
+     * the right edge and another along the bottom spans the whole screen, and
+     * turning the empty middle of it is all cost and no picture. */
     int32_t first = -1;
+    lv_area_t reach = {0, 0, -1, -1};
     for(int32_t i = 0; i < n; i++) {
-        if(job_touches(&jobs[i], tile)) {
+        lv_area_t a;
+        if(!job_touches(&jobs[i], whole_tile)) continue;
+        lv_area_intersect(&a, &jobs[i].todo, whole_tile);
+        if(first < 0) {
             first = i;
-            break;
+            reach = a;
         }
+        else lv_area_join(&reach, &reach, &a);
     }
     if(first < 0) return;
+    const lv_area_t * tile = &reach;
 
     lv_layer_t * target = jobs[first].t->target_layer;
     lv_draw_buf_t * nb = target->draw_buf;

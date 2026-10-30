@@ -46,7 +46,7 @@ for pixel.
 
 - `test/` builds LVGL and renders the same UI two ways: upright and then
   turned (what a flush callback does today), and straight to native with
-  `lv_draw_ortho`. **70 of 70 cases match on both 9.5.0 and 9.6.0**: 90, 180
+  `lv_draw_ortho`. **82 of 82 cases match on both 9.5.0 and 9.6.0**: 90, 180
   and 270°, RGB565 and XRGB8888, two panel sizes (one odd), direct and partial
   render modes, fast paths on and off, batched and task by task, plus
   pre-turned pictures. The scene has gradients both ways, a shadow, borders,
@@ -83,6 +83,40 @@ for pixel.
   or camera pipeline that writes its frames in the panel's orientation gets the
   last line.
 
+### The ESP32-P4 camera (esp-video)
+
+`lvgl_camera_display` in `youkorr/esphome_esp-video` shows the camera without
+copying it: one `lv_draw_buf_t` pointed at the camera's DMA buffer, given to a
+canvas with `lv_canvas_set_draw_buf()`, its `.data` changed for every frame.
+That is exactly the shape this unit's fast path takes, an opaque unscaled
+RGB565 image, so **a camera frame goes from the DMA buffer to the frame buffer
+in one pass**, where today LVGL copies it into its own buffer and then turns
+that in the flush. `test/` does what that component does, frame after frame,
+and checks every frame against LVGL: 12 cases, at 90, 180 and 270°, frames
+smaller and bigger than the screen, upright and pre-turned.
+
+Timed on the households' own boards' geometry (the build machine again, not a
+P4):
+
+| board (esp-video `yaml/`) | camera | LVGL today | turned in one pass | frame pre-turned |
+|---|---|---|---|---|
+| Guition 10", 800×1280 at 90° (`tab10`) | 1288×728 | 1.35 ms | 0.57 ms (2.4×) | 0.19 ms (7.1×) |
+| Tab5 in landscape, 720×1280 at 270° | 1280×720 | 1.42 ms | 0.57 ms (2.5×) | 0.19 ms (7.5×) |
+| Waveshare 7", 1024×600 at 180° (`lvgl-kawaii`) | 1280×960 | 0.31 ms | 0.34 ms (0.9×) | 0.11 ms (2.8×) |
+
+A half turn is a copy read backwards, which is cheap for LVGL too, so at 180°
+the gain needs the frames pre-turned. That one is nearly free: a 180° native
+frame is the frame mirrored both ways, which the camera's own PPA pass does
+with `mirror_x: true` and `mirror_y: true` (not the sensor's own flip, which
+pixellates the OV02C10's Bayer pattern, as `ov02c10_custom_formats.h` notes).
+At 90 and 270°, the camera's `rotation:` makes the same PPA pass turn the
+frame. Either way the turn moves out of LVGL's flush and into the camera's one
+hardware pass, and the CPU only copies rows.
+
+On a Tab5 today, LVGL takes 50-73 ms per camera frame (10-15 fps). How much of
+that this removes is what a board will say: one memory pass instead of two or
+three is the mechanism, not a measured frame rate.
+
 What is **not** done yet:
 
 - Running on an ESP32-P4, and a number from one.
@@ -91,6 +125,10 @@ What is **not** done yet:
 - ESPHome glue: its `lvgl:` component turns in its flush. With this unit the
   display is created with `lv_display_set_rotation()` and
   `lv_display_set_matrix_rotation(true)`, and the flush copies straight.
+- In `lvgl_camera_display`, marking a camera frame
+  `LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE` (with the native stride) when the camera
+  turned it. It must only ever be set with this unit running: LVGL alone
+  would read the rows the wrong way.
 - Objects with a free transform angle (`transform_rotation: 300`) under a
   turned display: the matrix is then not a quarter turn, so this unit counts
   the task in `tasks_refused` rather than drawing it wrongly.
@@ -138,7 +176,7 @@ store the rows as they will be on the glass, give the native row length in
 ```
 git clone --depth 1 -b v9.6.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 70 cases
+make LVGL=/tmp/lvgl run            # 82 cases
 make LVGL=/tmp/lvgl bench          # timings
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 ```
