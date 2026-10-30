@@ -51,11 +51,13 @@ extern "C" {
 #error "lv_draw_ortho needs LV_DRAW_TRANSFORM_USE_MATRIX 1 (and so LV_USE_MATRIX and LV_USE_FLOAT)"
 #endif
 
-/** Bytes of the upright tile the general path draws into. Small enough to
- *  stay in internal RAM and in the data cache, large enough that a line of
- *  text is one or two tiles. */
+/** Bytes of the upright tile the general path draws into. Every tile costs
+ *  each task touching it a call into the software renderer (a label lays its
+ *  text out again), so a tile too small is slower than LVGL's own way. On a
+ *  PC with the test UI at 720x1280: 32 KiB 2.6 ms, 64 KiB 1.8, 128 KiB 1.45,
+ *  256 KiB 1.3, against 1.7 for drawing upright and turning in flush. */
 #ifndef LV_DRAW_ORTHO_TILE_BYTES
-#define LV_DRAW_ORTHO_TILE_BYTES (32 * 1024)
+#define LV_DRAW_ORTHO_TILE_BYTES (128 * 1024)
 #endif
 
 /** An image carrying this flag stores its pixels in the panel's native
@@ -70,6 +72,8 @@ typedef struct {
     uint32_t images_turned;    /**< images copied with their turn in one pass */
     uint32_t images_native;    /**< pre-turned images copied row by row */
     uint32_t tiles;            /**< upright tiles drawn by the software renderer */
+    uint32_t tiles_unread;     /**< of which, painted over wholly so never read back */
+    uint32_t batches;          /**< runs of tasks drawn through one set of tiles */
     uint32_t tasks_general;    /**< tasks drawn through tiles */
     uint32_t tasks_refused;    /**< tasks whose matrix was not a quarter turn */
     uint64_t bytes_turned;     /**< bytes moved through a turn */
@@ -90,6 +94,9 @@ void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb);
 
 /** Turn the fast paths off, so every task goes through tiles. For tests. */
 void lv_draw_ortho_set_fast_paths(bool enable);
+
+/** Draw every task on its own instead of in runs. For tests. */
+void lv_draw_ortho_set_batching(bool enable);
 
 const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void);
 void lv_draw_ortho_reset_stats(void);

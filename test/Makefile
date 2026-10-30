@@ -14,7 +14,10 @@ FLAGS = $(CFLAGS) -DLV_CONF_INCLUDE_SIMPLE -I. -I../src -I$(SRC) -Wall -Wextra -
 # LVGL is copied and the patches in ../patches applied to the copy, so the
 # tree given is never modified.
 SRC := $(BUILD)/lvgl-src
-PATCHES := $(wildcard ../patches/*.patch)
+# The patches for exactly the LVGL given: lvgl-<major>.<minor>.<patch>-*.patch
+VERSION_H := $(firstword $(wildcard $(LVGL)/include/lvgl/lv_version.h) $(LVGL)/lv_version.h)
+LV_VERSION := $(shell awk '/define LVGL_VERSION_(MAJOR|MINOR|PATCH) /{v=v (v?".":"") $$3} END{print v}' $(VERSION_H))
+PATCHES := $(wildcard ../patches/lvgl-$(LV_VERSION)-*.patch)
 LV_SRC := $(patsubst $(LVGL)/%,$(SRC)/%,$(shell find $(LVGL)/src -name '*.c'))
 LV_OBJ := $(patsubst $(SRC)/%.c,$(BUILD)/lvgl/%.o,$(LV_SRC))
 
@@ -23,6 +26,8 @@ all: $(BUILD)/ortho_test
 $(SRC)/.patched: $(PATCHES)
 	@rm -rf $(SRC) && mkdir -p $(SRC)
 	@cp -r $(LVGL)/src $(LVGL)/lvgl.h $(LVGL)/lv_version.h $(LVGL)/lvgl_private.h $(SRC)/
+	@if [ -d $(LVGL)/include ]; then cp -r $(LVGL)/include $(SRC)/; fi
+	@echo "LVGL $(LV_VERSION), patches: $(notdir $(PATCHES))"
 	@for p in $(PATCHES); do patch -s -p1 -d $(SRC) < $$p || exit 1; done
 	@touch $@
 
