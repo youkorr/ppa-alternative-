@@ -9,7 +9,7 @@ LVGL  ?= $(error give LVGL=/path/to/lvgl, see the top of this file)
 BUILD ?= build
 CC    ?= cc
 CFLAGS ?= -O2 -g
-FLAGS = $(CFLAGS) -DLV_CONF_INCLUDE_SIMPLE -I. -I../src -I$(SRC) -Wall -Wextra -Wno-unused-parameter
+FLAGS = $(CFLAGS) -DLV_CONF_INCLUDE_SIMPLE -I. -I../components/lvgl_ortho -I$(SRC) -Wall -Wextra -Wno-unused-parameter
 
 # LVGL is copied and the patches in ../patches applied to the copy, so the
 # tree given is never modified.
@@ -21,7 +21,7 @@ PATCHES := $(wildcard ../patches/lvgl-$(LV_VERSION)-*.patch)
 LV_SRC := $(patsubst $(LVGL)/%,$(SRC)/%,$(shell find $(LVGL)/src -name '*.c'))
 LV_OBJ := $(patsubst $(SRC)/%.c,$(BUILD)/lvgl/%.o,$(LV_SRC))
 
-all: $(BUILD)/ortho_test
+all: $(BUILD)/ortho_test $(BUILD)/esphome_test
 
 $(SRC)/.patched: $(PATCHES)
 	@rm -rf $(SRC) && mkdir -p $(SRC)
@@ -42,13 +42,27 @@ $(BUILD)/lvgl.a: $(LV_OBJ)
 
 # p4stub/ stands in for ESP-IDF's PPA and cache, so the ESP32-P4 video
 # producer is built and run here against a PPA that behaves like the board's.
-VIDEO := ../src/esp32p4/lv_draw_ortho_video.c p4stub/p4fake.c
+VIDEO := ../components/lvgl_ortho/lv_draw_ortho_video.c p4stub/p4fake.c
 
-$(BUILD)/ortho_test: $(SRC)/.patched main.c ../src/lv_draw_ortho.c ../src/lv_draw_ortho.h ../src/esp32p4/lv_draw_ortho_video.h $(VIDEO) lv_conf.h $(BUILD)/lvgl.a
-	$(CC) $(FLAGS) -Ip4stub -Werror main.c ../src/lv_draw_ortho.c $(VIDEO) $(BUILD)/lvgl.a -lm -o $@
+$(BUILD)/ortho_test: $(SRC)/.patched main.c ../components/lvgl_ortho/lv_draw_ortho.c ../components/lvgl_ortho/lv_draw_ortho.h ../components/lvgl_ortho/lv_draw_ortho_video.h $(VIDEO) lv_conf.h $(BUILD)/lvgl.a
+	$(CC) $(FLAGS) -Ip4stub -Werror main.c ../components/lvgl_ortho/lv_draw_ortho.c $(VIDEO) $(BUILD)/lvgl.a -lm -o $@
 
-run: $(BUILD)/ortho_test
+run: $(BUILD)/ortho_test $(BUILD)/esphome_test
 	cd $(BUILD) && ./ortho_test
+	cd $(BUILD) && for r in 90 180 270 0; do ./esphome_test $$r || exit 1; done
+	cd $(BUILD) && ./esphome_test 270 720 1280 && ./esphome_test 90 800 1280
+
+# The ESPHome component itself (../components/lvgl_ortho/lvgl_ortho.cpp, the
+# shipped file) against stand-ins for ESPHome's Component and Display.
+CXX ?= c++
+ORTHO := ../components/lvgl_ortho
+$(BUILD)/esphome_test: $(SRC)/.patched esphome_test.cpp $(ORTHO)/lvgl_ortho.cpp $(ORTHO)/lvgl_ortho.h $(ORTHO)/lv_draw_ortho.c $(VIDEO) $(wildcard esphome_stub/*.h esphome_stub/*/*/*.h esphome_stub/*/*/*/*.h) lv_conf.h $(BUILD)/lvgl.a
+	@mkdir -p $(BUILD)/esphome
+	$(CC) $(FLAGS) -Ip4stub -Werror -c $(ORTHO)/lv_draw_ortho.c -o $(BUILD)/esphome/lv_draw_ortho.o
+	$(CC) $(FLAGS) -Ip4stub -Werror -c $(ORTHO)/lv_draw_ortho_video.c -o $(BUILD)/esphome/lv_draw_ortho_video.o
+	$(CC) $(FLAGS) -Ip4stub -Werror -c p4stub/p4fake.c -o $(BUILD)/esphome/p4fake.o
+	$(CXX) $(CFLAGS) -std=c++17 -DLV_CONF_INCLUDE_SIMPLE -I. -I$(ORTHO) -I$(SRC) -Iesphome_stub -Ip4stub -Wall -Wextra -Werror \
+		esphome_test.cpp $(ORTHO)/lvgl_ortho.cpp $(BUILD)/esphome/*.o $(BUILD)/lvgl.a -lm -o $@
 
 bench: $(BUILD)/ortho_test
 	cd $(BUILD) && ./ortho_test --bench

@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 youkorr
+// Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#pragma once
+
+// lv_draw_ortho on an ESPHome board.
+//
+// ESPHome's lvgl renders a turned screen upright in small bands and turns
+// every band in its flush, through the PPA on an ESP32-P4. This component
+// takes LVGL's display over once lvgl has set it up:
+//
+//  - LVGL renders into ONE buffer of the panel's own size and orientation
+//    (LV_DISPLAY_RENDER_MODE_DIRECT), through lv_draw_ortho, so nothing is
+//    ever turned after it is drawn;
+//  - the flush copies the rows that changed to the display as they are;
+//  - a video (the P4's camera) is turned once by the PPA straight into a
+//    window of that buffer that LVGL keeps out of (show_video).
+//
+// The lvgl: block must carry NO rotation: -- the turn is this component's,
+// and LVGL's resolution must still be the panel's when it takes over.
+
+#include "esphome/core/component.h"
+#include "esphome/components/display/display.h"
+
+#include <lvgl.h>
+
+#include "lv_draw_ortho.h"
+#include "lv_draw_ortho_video.h"
+
+namespace esphome {
+namespace lvgl_ortho {
+
+class LvglOrtho : public Component {
+ public:
+  void set_display(display::Display *display) { this->display_ = display; }
+  // ESPHome's degrees, clockwise -- the number the lvgl: block would have.
+  void set_rotation(int degrees) { this->degrees_ = degrees; }
+
+  void setup() override;
+  void loop() override;
+  void dump_config() override;
+  // After lvgl, which builds the display in its own setup().
+  float get_setup_priority() const override { return setup_priority::LATE; }
+
+  /// Show one video frame (RGB565, `width` x `height`) in `obj`'s place,
+  /// turned once by the PPA. The frame is centred in the object the way an
+  /// lv_image centres its source; whatever does not fit is cropped. Call it
+  /// from the loop (an interval, an lv_timer) -- never from another task.
+  /// False if the frame could not be shown; the reason is logged once.
+  bool show_video(lv_obj_t *obj, const uint8_t *frame, uint16_t width, uint16_t height, bool mirror_x = false,
+                  bool mirror_y = false);
+  /// Give the window back to LVGL, which redraws what is under it.
+  void clear_video();
+
+  bool is_ready() const { return this->ready_; }
+
+ protected:
+  static void flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map);
+  static void read_cb_(lv_indev_t *indev, lv_indev_data_t *data);
+  void copy_native_(const lv_area_t &native);
+  bool on_screen_(lv_obj_t *obj) const;
+
+  display::Display *display_{nullptr};
+  int degrees_{0};
+  lv_display_t *disp_{nullptr};
+  uint8_t *buf_{nullptr};
+  uint32_t stride_{0};
+  int32_t width_{0}, height_{0};  // the panel's
+  uint8_t *scratch_{nullptr};     // a narrow area packed into rows before it goes out
+  size_t scratch_len_{0};
+  bool ready_{false};
+
+  lv_draw_ortho_video_t video_{};
+  bool video_init_{false};
+  lv_obj_t *video_obj_{nullptr};
+  lv_area_t video_ui_{};      // the part of the object the frame covers
+  lv_area_t video_crop_{};    // the part of the frame shown
+  bool video_failed_{false};  // said once
+
+  // Time spent, summed between two dump lines (see loop()).
+  uint32_t flush_us_{0}, flush_rows_{0}, video_us_{0}, video_frames_{0}, last_report_{0};
+};
+
+}  // namespace lvgl_ortho
+}  // namespace esphome

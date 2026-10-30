@@ -10,4 +10,10 @@
 #define ESP_CACHE_MSYNC_FLAG_DIR_M2C       BIT(3)
 #define ESP_CACHE_MSYNC_FLAG_TYPE_DATA     BIT(4)
 #define ESP_CACHE_MSYNC_FLAG_TYPE_INST     BIT(5)
+#ifdef __cplusplus
+extern "C" {
+#endif
 esp_err_t esp_cache_msync(void *addr, size_t size, int flags);
+#ifdef __cplusplus
+}
+#endif
