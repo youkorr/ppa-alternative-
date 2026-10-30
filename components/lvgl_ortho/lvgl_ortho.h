@@ -27,6 +27,16 @@
 #include "lv_draw_ortho.h"
 #include "lv_draw_ortho_video.h"
 
+// youkorr/lvgl_9.5's mipi_dsi publishes the panel's own scan-out buffers
+// here when it is given `framebuffers: 2` or `3`. ESPHome's own mipi_dsi has
+// no such header, and then this component copies into the display instead.
+#if __has_include("esphome/components/mipi_dsi/mipi_dsi_fast_present.h")
+#include "esphome/components/mipi_dsi/mipi_dsi_fast_present.h"
+#define LVGL_ORTHO_FAST_PRESENT 1
+#else
+#define LVGL_ORTHO_FAST_PRESENT 0
+#endif
+
 namespace esphome {
 namespace lvgl_ortho {
 
@@ -53,6 +63,8 @@ class LvglOrtho : public Component {
   void clear_video();
 
   bool is_ready() const { return this->ready_; }
+  /// True when LVGL draws straight into the panel's own frame buffers.
+  bool on_panel_buffers() const { return this->panel_fbs_ > 0; }
 
  protected:
   static void flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map);
@@ -69,6 +81,11 @@ class LvglOrtho : public Component {
   uint8_t *scratch_{nullptr};     // a narrow area packed into rows before it goes out
   size_t scratch_len_{0};
   bool ready_{false};
+  // How many of the panel's own frame buffers LVGL draws into: 0 (copy mode),
+  // 2 or 3. Shown by swapping the scan-out pointer, so nothing is copied.
+  int panel_fbs_{0};
+  lv_draw_buf_t third_{};
+  uint32_t presents_{0};
 
   lv_draw_ortho_video_t video_{};
   bool video_init_{false};
@@ -79,6 +96,7 @@ class LvglOrtho : public Component {
 
   // Time spent, summed between two dump lines (see loop()).
   uint32_t flush_us_{0}, flush_rows_{0}, video_us_{0}, video_frames_{0}, last_report_{0};
+  bool use_panel_buffers_();
 };
 
 }  // namespace lvgl_ortho

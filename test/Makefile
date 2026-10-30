@@ -21,7 +21,7 @@ PATCHES := $(wildcard ../patches/lvgl-$(LV_VERSION)-*.patch)
 LV_SRC := $(patsubst $(LVGL)/%,$(SRC)/%,$(shell find $(LVGL)/src -name '*.c'))
 LV_OBJ := $(patsubst $(SRC)/%.c,$(BUILD)/lvgl/%.o,$(LV_SRC))
 
-all: $(BUILD)/ortho_test $(BUILD)/esphome_test
+all: $(BUILD)/ortho_test $(BUILD)/esphome_test $(BUILD)/esphome_test_fb
 
 $(SRC)/.patched: $(PATCHES)
 	@rm -rf $(SRC) && mkdir -p $(SRC)
@@ -47,10 +47,12 @@ VIDEO := ../components/lvgl_ortho/lv_draw_ortho_video.c p4stub/p4fake.c
 $(BUILD)/ortho_test: $(SRC)/.patched main.c ../components/lvgl_ortho/lv_draw_ortho.c ../components/lvgl_ortho/lv_draw_ortho.h ../components/lvgl_ortho/lv_draw_ortho_video.h $(VIDEO) lv_conf.h $(BUILD)/lvgl.a
 	$(CC) $(FLAGS) -Ip4stub -Werror main.c ../components/lvgl_ortho/lv_draw_ortho.c $(VIDEO) $(BUILD)/lvgl.a -lm -o $@
 
-run: $(BUILD)/ortho_test $(BUILD)/esphome_test
+run: $(BUILD)/ortho_test $(BUILD)/esphome_test $(BUILD)/esphome_test_fb
 	cd $(BUILD) && ./ortho_test
 	cd $(BUILD) && for r in 90 180 270 0; do ./esphome_test $$r || exit 1; done
 	cd $(BUILD) && ./esphome_test 270 720 1280 && ./esphome_test 90 800 1280
+	cd $(BUILD) && for r in 90 180 270 0; do ./esphome_test_fb $$r || exit 1; done
+	cd $(BUILD) && ./esphome_test_fb 270 720 1280 3 && ./esphome_test_fb 90 800 1280 2
 
 # The ESPHome component itself (../components/lvgl_ortho/lvgl_ortho.cpp, the
 # shipped file) against stand-ins for ESPHome's Component and Display.
@@ -62,6 +64,12 @@ $(BUILD)/esphome_test: $(SRC)/.patched esphome_test.cpp $(ORTHO)/lvgl_ortho.cpp 
 	$(CC) $(FLAGS) -Ip4stub -Werror -c $(ORTHO)/lv_draw_ortho_video.c -o $(BUILD)/esphome/lv_draw_ortho_video.o
 	$(CC) $(FLAGS) -Ip4stub -Werror -c p4stub/p4fake.c -o $(BUILD)/esphome/p4fake.o
 	$(CXX) $(CFLAGS) -std=c++17 -DLV_CONF_INCLUDE_SIMPLE -I. -I$(ORTHO) -I$(SRC) -Iesphome_stub -Ip4stub -Wall -Wextra -Werror \
+		esphome_test.cpp $(ORTHO)/lvgl_ortho.cpp $(BUILD)/esphome/*.o $(BUILD)/lvgl.a -lm -o $@
+
+# The same test with youkorr/lvgl_9.5's mipi_dsi header on the include path:
+# LVGL draws into the panel's own frame buffers and nothing is copied.
+$(BUILD)/esphome_test_fb: $(BUILD)/esphome_test esphome_stub_fb/esphome/components/mipi_dsi/mipi_dsi_fast_present.h
+	$(CXX) $(CFLAGS) -std=c++17 -DLV_CONF_INCLUDE_SIMPLE -I. -I$(ORTHO) -I$(SRC) -Iesphome_stub -Iesphome_stub_fb -Ip4stub -Wall -Wextra -Werror \
 		esphome_test.cpp $(ORTHO)/lvgl_ortho.cpp $(BUILD)/esphome/*.o $(BUILD)/lvgl.a -lm -o $@
 
 bench: $(BUILD)/ortho_test

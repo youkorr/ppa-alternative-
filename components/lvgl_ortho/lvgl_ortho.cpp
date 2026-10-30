@@ -89,21 +89,23 @@ void LvglOrtho::setup() {
 
   // No padding at the end of a row: the flush hands whole rows to the
   // display, whose draw_pixels_at() copies a block in one go only when its
-  // rows follow each other.
+  // rows follow each other -- and the panel's own frame buffers have none.
   this->stride_ = (uint32_t) this->width_ * 2;
-  const size_t size = ((size_t) this->stride_ * this->height_ + LINE - 1) & ~(LINE - 1);
-  this->buf_ = (uint8_t *) heap_caps_aligned_alloc(LINE, size, MALLOC_CAP_SPIRAM);
-  if (this->buf_ == nullptr) {
-    ESP_LOGE(TAG, "No %u bytes of PSRAM for the panel-sized buffer", (unsigned) size);
-    this->mark_failed();
-    return;
-  }
-  memset(this->buf_, 0, size);
 
   g_self = this;
   lv_draw_ortho_init();
-  lv_display_set_buffers_with_stride(this->disp_, this->buf_, nullptr, size, this->stride_,
-                                     LV_DISPLAY_RENDER_MODE_DIRECT);
+  if (!this->use_panel_buffers_()) {
+    const size_t size = ((size_t) this->stride_ * this->height_ + LINE - 1) & ~(LINE - 1);
+    this->buf_ = (uint8_t *) heap_caps_aligned_alloc(LINE, size, MALLOC_CAP_SPIRAM);
+    if (this->buf_ == nullptr) {
+      ESP_LOGE(TAG, "No %u bytes of PSRAM for the panel-sized buffer", (unsigned) size);
+      this->mark_failed();
+      return;
+    }
+    memset(this->buf_, 0, size);
+    lv_display_set_buffers_with_stride(this->disp_, this->buf_, nullptr, size, this->stride_,
+                                       LV_DISPLAY_RENDER_MODE_DIRECT);
+  }
   lv_display_set_flush_cb(this->disp_, flush_cb_);
   lv_display_set_rotation(this->disp_, lv_rotation(this->degrees_));
   lv_display_set_matrix_rotation(this->disp_, true);
@@ -134,6 +136,48 @@ void LvglOrtho::setup() {
   this->ready_ = true;
   ESP_LOGI(TAG, "LVGL draws the panel's %dx%d directly at ESPHome rotation %d (%d touch device(s) turned)",
            (int) this->width_, (int) this->height_, this->degrees_, n);
+  if (this->panel_fbs_ > 0) {
+    ESP_LOGI(TAG, "...into the panel's own %d frame buffers: nothing is turned and nothing is copied", this->panel_fbs_);
+  } else {
+    ESP_LOGI(TAG, "...into a buffer of its own, copied to the display. For no copy at all, use youkorr/lvgl_9.5's "
+                  "mipi_dsi with framebuffers: 3");
+  }
+}
+
+bool LvglOrtho::use_panel_buffers_() {
+#if LVGL_ORTHO_FAST_PRESENT
+  // The panel's own scan-out buffers, as youkorr/lvgl_9.5's mipi_dsi
+  // publishes them. LVGL renders straight into one while the panel shows
+  // another, and a flush only swaps the pointer the panel reads -- in the
+  // panel's orientation, which is the half Espressif's presenter refuses
+  // (its DOUBLE_DIRECT mode rejects any rotation).
+  const auto &fp = mipi_dsi::g_fast_present;
+  if (fp.num_fbs < 2 || fp.present == nullptr || fp.fb[0] == nullptr || fp.fb[1] == nullptr)
+    return false;
+  if (fp.w != this->width_ || fp.h != this->height_) {
+    ESP_LOGE(TAG, "The panel's frame buffers are %dx%d and the display %dx%d; copying instead", fp.w, fp.h,
+             (int) this->width_, (int) this->height_);
+    return false;
+  }
+  const size_t size = (size_t) this->stride_ * this->height_;
+  lv_display_set_buffers_with_stride(this->disp_, fp.fb[0], fp.fb[1], size, this->stride_,
+                                     LV_DISPLAY_RENDER_MODE_DIRECT);
+  this->panel_fbs_ = 2;
+  if (fp.num_fbs >= 3 && fp.fb[2] != nullptr) {
+    // Three: the buffer LVGL draws into was last shown two swaps ago, so it
+    // is never the one on the glass, nor the one waiting for the next frame.
+    lv_draw_buf_init(&this->third_, this->width_, this->height_, lv_display_get_color_format(this->disp_),
+                     this->stride_, fp.fb[2], size);
+    lv_display_set_3rd_draw_buffer(this->disp_, &this->third_);
+    this->panel_fbs_ = 3;
+  } else {
+    ESP_LOGW(TAG, "Two frame buffers: LVGL may draw into the one just swapped out before the panel has left it "
+                  "(a tear for one frame). framebuffers: 3 on mipi_dsi removes it");
+  }
+  return true;
+#else
+  return false;
+#endif
 }
 
 void LvglOrtho::dump_config() {
@@ -156,7 +200,22 @@ void LvglOrtho::read_cb_(lv_indev_t *indev, lv_indev_data_t *data) {
 
 void LvglOrtho::flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   (void) px_map;  // the buffer is ours and already in the panel's orientation
+#if LVGL_ORTHO_FAST_PRESENT
+  if (g_self != nullptr && g_self->panel_fbs_ > 0) {
+    // LVGL drew into one of the panel's own buffers. Once the whole frame is
+    // drawn, the panel is told to show it: a pointer swap, no pixel moves.
+    if (lv_display_flush_is_last(disp)) {
+      const auto &fp = mipi_dsi::g_fast_present;
+      fp.present(fp.instance, px_map);
+      g_self->presents_++;
+    }
+    lv_display_flush_ready(disp);
+    return;
+  }
+#endif
   if (g_self != nullptr) {
+    if (lv_display_flush_is_last(disp))
+      g_self->presents_++;
     // In direct mode LVGL hands over the area as the UI sees it.
     lv_area_t native;
     lv_draw_ortho_native_area(disp, area, &native);
@@ -281,7 +340,15 @@ bool LvglOrtho::show_video(lv_obj_t *obj, const uint8_t *frame, uint16_t width, 
   // The PPA wrote PSRAM behind the cache. lv_draw_ortho_video_show() cleaned
   // and dropped the window's rows before, so the CPU holds nothing stale;
   // the display reads PSRAM by DMA. Now put the window on the glass.
-  this->copy_native_(this->video_.native);
+  if (this->panel_fbs_ > 0) {
+    // The frame went into the panel buffer LVGL draws next. Its next refresh
+    // draws around the window and swaps that buffer onto the glass; the
+    // object being redrawn also keeps LVGL from syncing an older frame over
+    // the window from the buffer on the glass.
+    lv_obj_invalidate(obj);
+  } else {
+    this->copy_native_(this->video_.native);
+  }
   this->video_us_ += micros() - t0;
   this->video_frames_++;
   return true;
@@ -308,12 +375,13 @@ void LvglOrtho::loop() {
   if (now - this->last_report_ >= REPORT_MS) {
     const float s = (now - this->last_report_) / 1000.0f;
     if (this->last_report_ != 0 && s > 0) {
-      ESP_LOGD(TAG, "Last %.0fs: %.1f video frames/s (%.1f ms each, PPA and copy), %.0f panel rows/s copied (%.1f ms/s)",
+      // INFO, not DEBUG: this line is what says, on the board, whether it is fast.
+      ESP_LOGI(TAG, "Last %.0fs: %.1f video frames/s (%.1f ms each), %.1f screens/s shown, %.0f panel rows/s copied (%.1f ms/s)",
                s, this->video_frames_ / s, this->video_frames_ ? this->video_us_ / 1000.0f / this->video_frames_ : 0.0f,
-               this->flush_rows_ / s, this->flush_us_ / 1000.0f / s);
+               this->presents_ / s, this->flush_rows_ / s, this->flush_us_ / 1000.0f / s);
     }
     this->last_report_ = now;
-    this->video_us_ = this->video_frames_ = this->flush_us_ = this->flush_rows_ = 0;
+    this->video_us_ = this->video_frames_ = this->flush_us_ = this->flush_rows_ = this->presents_ = 0;
   }
 }
 

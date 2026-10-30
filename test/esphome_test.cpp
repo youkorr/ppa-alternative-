@@ -48,6 +48,30 @@ uint32_t micros() {
 }
 }  // namespace esphome
 
+#if LVGL_ORTHO_FAST_PRESENT
+// youkorr/lvgl_9.5's mipi_dsi, played: three (or two) scan-out buffers, and a
+// present() that makes one of them the one on the glass. Built with
+// -Iesphome_stub_fb, which carries that fork's own header.
+static constexpr int MAX_FBS = 3;
+static uint8_t *g_fb[MAX_FBS];
+static const uint8_t *g_shown = nullptr, *g_was_shown = nullptr;
+static int g_presents = 0, g_bad_render = 0;
+static void fake_present(void *, void *fb) {
+  g_was_shown = g_shown;
+  g_shown = (const uint8_t *) fb;
+  g_presents++;
+}
+// LVGL is about to draw: never into the buffer on the glass, and with three
+// never into the one that left it at the last swap either (the panel may
+// still be reading it until its next frame).
+static void render_start(lv_event_t *e) {
+  lv_display_t *d = (lv_display_t *) lv_event_get_target(e);
+  const uint8_t *into = lv_display_get_buf_active(d)->data;
+  if (into == g_shown || (esphome::mipi_dsi::g_fast_present.num_fbs >= 3 && into == g_was_shown))
+    g_bad_render++;
+}
+#endif
+
 using esphome::display::Display;
 using esphome::lvgl_ortho::LvglOrtho;
 
@@ -169,6 +193,8 @@ int main(int argc, char **argv) {
   std::vector<uint8_t> want = reference(nw, nh, deg, blank, nullptr);
   std::vector<uint8_t> want_changed = reference(nw, nh, deg, blank, small_change);
   std::vector<uint8_t> want_video = reference(nw, nh, deg, frame, small_change);
+  lv_draw_buf_t *frame2 = make_frame(fw, fh, 0x0f0f);
+  std::vector<uint8_t> want_video2 = reference(nw, nh, deg, frame2, small_change);
 
   // The board: ESPHome's lvgl has built a panel-sized display with a small
   // partial buffer and its own flush (which would turn); no rotation on it.
@@ -187,6 +213,29 @@ int main(int argc, char **argv) {
   Scene s = build(lv_display_get_screen_active(disp), uw, uh, blank);
 
   Display panel(nw, nh);
+#if LVGL_ORTHO_FAST_PRESENT
+  const int fbs = argc > 4 ? std::atoi(argv[4]) : 3;
+  auto &fp = esphome::mipi_dsi::g_fast_present;
+  fp.num_fbs = fbs;
+  for (int i = 0; i < fbs; i++) {
+    g_fb[i] = (uint8_t *) aligned_alloc(128, size_t(nw) * nh * 2);
+    std::memset(g_fb[i], 0xA5, size_t(nw) * nh * 2);  // garbage, as a panel starts
+    fp.fb[i] = g_fb[i];
+  }
+  fp.w = nw;
+  fp.h = nh;
+  fp.present = fake_present;
+  std::printf("  (the panel's own %d frame buffers)\n", fbs);
+  // The glass is whatever buffer the panel shows.
+  auto glass = [&]() {
+    std::vector<uint8_t> g(size_t(nw) * nh * 2, 0);
+    if (g_shown)
+      std::memcpy(g.data(), g_shown, g.size());
+    return g;
+  };
+#else
+  auto glass = [&]() { return panel.glass; };
+#endif
   LvglOrtho ortho;
   ortho.set_display(&panel);
   ortho.set_rotation(deg);
@@ -195,9 +244,13 @@ int main(int argc, char **argv) {
   expect(lv_display_get_horizontal_resolution(disp) == uw && lv_display_get_vertical_resolution(disp) == uh,
          "LVGL now sees the UI's size");
   lv_obj_set_pos(s.box, uw / 10, uh / 12);  // what a re-laid-out page would hold
+#if LVGL_ORTHO_FAST_PRESENT
+  lv_display_add_event_cb(disp, render_start, LV_EVENT_RENDER_START, nullptr);
+  expect(ortho.on_panel_buffers(), "it draws into the panel's own buffers");
+#endif
   lv_refr_now(disp);
   char what[200];
-  size_t d = diffs(panel.glass, want);
+  size_t d = diffs(glass(), want);
   std::snprintf(what, sizeof what, "the glass equals LVGL's upright UI turned (%zu pixels differ, %d draws)", d,
                 panel.calls);
   expect(d == 0 && panel.bad == 0, what);
@@ -207,10 +260,15 @@ int main(int argc, char **argv) {
   const uint64_t pixels = panel.pixels;
   small_change(s);
   lv_refr_now(disp);
-  d = diffs(panel.glass, want_changed);
+  d = diffs(glass(), want_changed);
   std::snprintf(what, sizeof what, "a small change: glass right (%zu differ), %llu pixels sent of %d", d,
                 (unsigned long long) (panel.pixels - pixels), nw * nh);
+#if LVGL_ORTHO_FAST_PRESENT
+  (void) calls;
+  expect(d == 0, what);  // a swap, not a copy: nothing is sent at all
+#else
   expect(d == 0 && panel.calls > calls && panel.pixels - pixels < uint64_t(nw) * nh / 4, what);
+#endif
 
   // The camera, through the PPA, in the canvas's place. LVGL holds the blank
   // frame as the image's source and must never draw it over the video.
@@ -218,7 +276,7 @@ int main(int argc, char **argv) {
   bool shown = ortho.show_video(s.canvas, frame->data, fw, fh);
   lv_obj_invalidate(lv_display_get_screen_active(disp));  // and LVGL redraws everything around it
   lv_refr_now(disp);
-  d = diffs(panel.glass, want_video);
+  d = diffs(glass(), want_video);
   std::snprintf(what, sizeof what, "a camera frame through show_video(): glass right (%zu differ), %d PPA pass",
                 d, g_p4.srm_count - srm);
   expect(shown && d == 0 && g_p4.srm_count - srm == 1, what);
@@ -235,6 +293,44 @@ int main(int argc, char **argv) {
   std::snprintf(what, sizeof what, "touch at glass %d,%d reads UI %d,%d (want %d,%d)", (int) n.x1, (int) n.y1,
                 (int) data.point.x, (int) data.point.y, (int) ui.x, (int) ui.y);
   expect(data.point.x == ui.x && data.point.y == ui.y, what);
+
+#if LVGL_ORTHO_FAST_PRESENT
+  // Many frames, each with a change, so every buffer takes its turn.
+  for (int i = 0; i < 12; i++) {
+    lv_obj_set_style_bg_color(s.small, lv_color_hex(i & 1 ? 0xff00ff : 0x00ff00), 0);
+    ortho.show_video(s.canvas, frame->data, fw, fh);
+    lv_refr_now(disp);
+  }
+  d = diffs(glass(), want_video);
+  std::snprintf(what, sizeof what, "after 12 more frames in turn: glass right (%zu differ), %d swaps", d, g_presents);
+  expect(d == 0 && g_presents >= 12, what);
+
+  // A camera frame and nothing else changing: it must still reach the glass.
+  ortho.show_video(s.canvas, frame2->data, fw, fh);
+  lv_refr_now(disp);
+  d = diffs(glass(), want_video2);
+  std::snprintf(what, sizeof what, "a new camera frame alone reaches the glass (%zu differ)", d);
+  expect(d == 0, what);
+
+  // Two changes far apart are two areas, flushed one after the other: the
+  // panel must be given the buffer once, when the frame is whole.
+  const int before = g_presents;
+  lv_label_set_text(s.label, "Portall 12:35");
+  lv_obj_set_style_bg_color(s.small, lv_color_hex(0x00ff00), 0);
+  lv_refr_now(disp);
+  lv_label_set_text(s.label, "Portall 12:34");
+  lv_obj_set_style_bg_color(s.small, lv_color_hex(0xff00ff), 0);
+  lv_refr_now(disp);
+  d = diffs(glass(), want_video2);
+  std::snprintf(what, sizeof what, "two areas in one frame are shown once, whole (%d swaps for 2 frames, %zu differ)",
+                g_presents - before, d);
+  expect(g_presents - before == 2 && d == 0, what);
+  std::snprintf(what, sizeof what, "nothing was copied to the display (%d draw_pixels_at calls)", panel.calls);
+  expect(panel.calls == 0, what);
+  std::snprintf(what, sizeof what, "LVGL never drew into a buffer the panel could be showing (%d times it did)",
+                g_bad_render);
+  expect(g_bad_render == 0, what);
+#endif
 
   std::printf("%d of %d cases passed\n", g_cases - g_fail, g_cases);
   return g_fail ? 1 : 0;

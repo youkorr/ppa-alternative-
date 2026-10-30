@@ -40,4 +40,6 @@ jobs:
           python-version: "3.12"
       - run: pip install esphome==2026.10.0
       - name: esphome config
-        run: esphome config example/guition-lvgl-ortho.yaml
+        run: |
+          esphome config example/guition-lvgl-ortho.yaml
+          esphome config example/guition-lvgl-ortho-panel-buffers.yaml

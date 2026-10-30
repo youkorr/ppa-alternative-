@@ -285,10 +285,54 @@ A touch on the glass reads back as the UI point drawn there.
 flush area not turned, narrow area packed from the wrong column, ESPHome's 90
 taken as LVGL's 90, frame not centred) and the test catches every one.
 
+### No copy at all: the panel's own frame buffers
+
+With youkorr/lvgl_9.5's `mipi_dsi` and `framebuffers: 3`, `lvgl_ortho` gives
+LVGL the panel's **own scan-out buffers**: LVGL draws straight into one, in
+the panel's orientation, and a finished frame is shown by swapping the
+pointer the panel reads. The interface is never turned and never copied; a
+camera frame is one PPA pass into the buffer drawn next. With three buffers
+LVGL never draws into the one on the glass nor the one that has just left
+it, so nothing tears. Nothing to set on `lvgl_ortho`: it finds the buffers
+itself, and says in the log which way it is drawing.
+`example/guition-lvgl-ortho-panel-buffers.yaml` is the whole board.
+
+**Against Espressif's own pipeline** (read in esp-iot-solution on
+2026-10-30: `esp_lvgl_adapter` 0.7.4 and `esp_display_present` 1.2.0, which
+ESP-GSP also presents through): their rotated modes render upright and turn
+during a copy into the frame buffer ("Rotation is fused into partition
+copies"), and their direct mode, `DOUBLE_DIRECT`, **rejects any rotation**.
+This is that missing mode: direct, rotated, double or triple buffered.
+
+| | interface, rotated screen | camera, rotated screen |
+|---|---|---|
+| ESPHome's lvgl today | draw upright, turn every band (PPA or CPU) | copy into a canvas, draw, turn |
+| Espressif's presenter | draw upright in bands, turn while copying | turn into a frame buffer |
+| `lvgl_ortho`, copy mode | draw in place, copy the rows that changed | one PPA pass, then the copy |
+| `lvgl_ortho`, panel's buffers | **draw in place, swap a pointer** | **one PPA pass, swap a pointer** |
+
+What Espressif still has that this does not: years of boards, their TE
+synchronisation for panels with their own memory, and a workaround for a PPA
+hardware hang (DIG-734) that they hit with rotated partial modes -- the
+video path here makes one large PPA transfer a frame rather than many small
+ones, but it has not run on a board.
+
+**Tested on a PC.** The same `esphome_test.cpp`, built with that fork's
+header on the include path, plays a panel with three (or two) buffers: the
+buffer on the glass equals LVGL's upright UI turned at every angle and at
+the Tab5's and Guition's sizes, nothing is ever passed to
+`draw_pixels_at()`, a camera frame alone reaches the glass, a frame with two
+changed areas is shown once and whole, and LVGL never starts drawing into a
+buffer the panel could be showing. LVGL's own copy of the changed areas
+between buffers handles the rotation already (`refr_sync_areas`, 9.5). The
+mutants include a third buffer not handed over, a frame shown before it is
+whole, and a camera frame never made to show; each is caught.
+
 **Not compiled by ESP-IDF and not flashed.** What a board will say: the
-`lvgl_ortho` lines in its log, and the frame rate. Unknown until then: PSRAM
-bandwidth with the scanout, and tearing (the panel's frame buffer is still
-ESPHome's, copied into by DMA).
+`lvgl_ortho` lines in its log (video frames, screens shown and rows copied
+each second), and the frame rate. Unknown until then: PSRAM bandwidth with
+the scanout, and whether the fork's swap waits for the panel's vsync
+(three buffers are what make that not matter).
 
 ## Use
 

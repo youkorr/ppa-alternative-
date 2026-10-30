@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# The same Guition board with NO COPY AT ALL: youkorr/lvgl_9.5's mipi_dsi
+# with three frame buffers, so LVGL draws straight into the buffers the panel
+# shows, in the panel's orientation, and a frame is shown by swapping a
+# pointer. The lines that differ from guition-lvgl-ortho.yaml are marked >>>.
+# Validated with `esphome config` (ESPHome 2026.10.0). Not flashed.
+esphome:
+  name: guition-ortho-fb
+
+esp32:
+  variant: esp32p4
+  board: esp32-p4-evboard
+  framework:
+    type: esp-idf
+
+psram:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    # From a board's own YAML instead:
+    #   source: github://youkorr/ppa-alternative-@main
+    components: [lvgl_ortho]
+  # >>> The fork's lvgl and, above all, its mipi_dsi.
+  - source:
+      type: git
+      url: https://github.com/youkorr/lvgl_9.5
+      ref: claude/jolly-lamport-ERZOC
+    components: [lvgl, image, font, mipi_dsi]
+
+logger:
+
+esp_ldo:
+  - voltage: 2.5V
+    channel: 3
+
+display:
+  - platform: mipi_dsi
+    id: panel
+    model: JC8012P4A1
+    reset_pin: GPIO27
+    framebuffers: 3     # >>> the panel's own buffers, which lvgl_ortho draws into
+
+lvgl:
+  # >>> NO rotation: here. It moves to lvgl_ortho below.
+  buffer_size: 10%      # LVGL's own buffer is replaced; keep it small
+  pages:
+    - id: home
+      widgets:
+        - label:
+            text: "LVGL, drawn in the panel's orientation"
+            align: CENTER
+        - canvas:
+            id: camera_canvas
+            width: 800
+            height: 600
+            x: 80
+            y: 100
+
+# >>> The turn, in ESPHome's degrees (the number lvgl: had).
+lvgl_ortho:
+  id: ortho
+  rotation: 90
+
+# A camera through youkorr/esphome_esp-video goes into the same window, turned
+# once by the PPA, with one line on its lvgl_camera_display block:
+#
+#   lvgl_camera_display:
+#     camera_id: my_cam
+#     canvas_id: camera_canvas
+#     ortho_id: ortho
