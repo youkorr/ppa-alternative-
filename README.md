@@ -334,6 +334,25 @@ each second), and the frame rate. Unknown until then: PSRAM bandwidth with
 the scanout, and whether the fork's swap waits for the panel's vsync
 (three buffers are what make that not matter).
 
+## The three boards
+
+`yaml/` holds the full configurations of the three boards this was written
+for, on `lvgl_ortho`, each with its camera turned once by the PPA into the
+window:
+
+| file | board | screen | turn | camera |
+|---|---|---|---|---|
+| `tab5-lvgl-ortho.yaml` | M5Stack Tab5 | 720x1280 | 270 | SC2356 |
+| `guition-jc8012p4a1-lvgl-ortho.yaml` | Guition JC8012P4A1 | 800x1280 | 90 | OV02C10 |
+| `waveshare-lvgl-ortho.yaml` | Waveshare 7B | 1024x600 | 180 | OV5647 |
+
+All three take only `lvgl` from `youkorr/lvgl_9.5`, keep `buffer_size:
+100%`, and build for ESP32-P4 silicon before v3.0 (`board:
+esp32-p4-evboard`). Passwords and addresses come from `secrets.yaml`
+(`api_encryption_key`, `rtsp_url`, `webdav_username`, `webdav_password`).
+They load with ESPHome 2026.10.0; their fonts and images are the
+household's own and are not in this repository. Not flashed.
+
 ## Use
 
 ```c
