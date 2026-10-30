@@ -40,8 +40,12 @@ $(BUILD)/lvgl/%.o: $(SRC)/%.c lv_conf.h $(SRC)/.patched
 $(BUILD)/lvgl.a: $(LV_OBJ)
 	@rm -f $@ && ar rcs $@ $^
 
-$(BUILD)/ortho_test: $(SRC)/.patched main.c ../src/lv_draw_ortho.c ../src/lv_draw_ortho.h lv_conf.h $(BUILD)/lvgl.a
-	$(CC) $(FLAGS) -Werror main.c ../src/lv_draw_ortho.c $(BUILD)/lvgl.a -lm -o $@
+# p4stub/ stands in for ESP-IDF's PPA and cache, so the ESP32-P4 video
+# producer is built and run here against a PPA that behaves like the board's.
+VIDEO := ../src/esp32p4/lv_draw_ortho_video.c p4stub/p4fake.c
+
+$(BUILD)/ortho_test: $(SRC)/.patched main.c ../src/lv_draw_ortho.c ../src/lv_draw_ortho.h ../src/esp32p4/lv_draw_ortho_video.h $(VIDEO) lv_conf.h $(BUILD)/lvgl.a
+	$(CC) $(FLAGS) -Ip4stub -Werror main.c ../src/lv_draw_ortho.c $(VIDEO) $(BUILD)/lvgl.a -lm -o $@
 
 run: $(BUILD)/ortho_test
 	cd $(BUILD) && ./ortho_test
