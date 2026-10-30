@@ -1001,6 +1001,85 @@ static void check_video(int32_t nw, int32_t nh, lv_display_rotation_t rot, bool 
     check_video_case(&c);
 }
 
+/* The fake PPA is only worth the hardware it imitates. These are the software
+ * rotation loops of youkorr/lvgl_9.5's lvgl_esphome.cpp (draw_buffer_, RGB565,
+ * with height_rounded = height), copied: the household's Tab5 shows a correct
+ * UI through them, and through the PPA path beside them, which uses
+ * ANGLE_270 for ESPHome's 90, 180 for 180 and ANGLE_90 for 270. The fake must
+ * turn exactly as those loops do. And LVGL's own lv_draw_rotate must agree
+ * with ESPHome's loop for the opposite angle: ESPHome's 270 is LVGL's 90. */
+static void fork_turn(int esphome_deg, const uint16_t * ptr, uint16_t * dst, int32_t width, int32_t height)
+{
+    const int32_t height_rounded = height;
+    switch(esphome_deg) {
+        case 90:
+            for(int32_t x = height; x-- != 0;)
+                for(int32_t y = 0; y != width; y++) dst[y * height_rounded + x] = *ptr++;
+            break;
+        case 180:
+            for(int32_t y = height; y-- != 0;)
+                for(int32_t x = width; x-- != 0;) dst[y * width + x] = *ptr++;
+            break;
+        case 270:
+            for(int32_t x = 0; x != height; x++)
+                for(int32_t y = width; y-- != 0;) dst[y * height_rounded + x] = *ptr++;
+            break;
+    }
+}
+
+static void check_fake_ppa_against_the_board(void)
+{
+    const int32_t w = 37, h = 23;  /* odd and unequal, so nothing lines up by luck */
+    uint16_t src[37 * 23];
+    for(int32_t i = 0; i < w * h; i++) src[i] = (uint16_t)(i * 2654435761u >> 16);
+    const int degs[] = {90, 180, 270};
+    const ppa_srm_rotation_angle_t fork_angle[] = {PPA_SRM_ROTATION_ANGLE_270, PPA_SRM_ROTATION_ANGLE_180,
+                                                   PPA_SRM_ROTATION_ANGLE_90
+                                                  };
+    const lv_display_rotation_t lvgl_same[] = {LV_DISPLAY_ROTATION_270, LV_DISPLAY_ROTATION_180, LV_DISPLAY_ROTATION_90};
+    for(int i = 0; i < 3; i++) {
+        const bool across = degs[i] != 180;
+        const int32_t ow = across ? h : w, oh = across ? w : h;
+        static uint16_t sw[37 * 23], hw[37 * 23 + 64], lv[37 * 23];
+        fork_turn(degs[i], src, sw, w, h);
+
+        uint16_t * out = (uint16_t *)(((uintptr_t)hw + 127) & ~(uintptr_t)127);
+        static uint8_t big[4096] __attribute__((aligned(128)));
+        ppa_srm_oper_config_t op;
+        memset(&op, 0, sizeof(op));
+        op.in.buffer = src;
+        op.in.pic_w = w;
+        op.in.pic_h = h;
+        op.in.block_w = w;
+        op.in.block_h = h;
+        op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+        op.out.buffer = big;
+        op.out.buffer_size = sizeof(big);
+        op.out.pic_w = ow;
+        op.out.pic_h = oh;
+        op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+        op.rotation_angle = fork_angle[i];
+        op.scale_x = op.scale_y = 1.0f;
+        ppa_client_handle_t c;
+        ppa_register_client(NULL, &c);
+        esp_err_t err = ppa_do_scale_rotate_mirror(c, &op);
+        memcpy(out, big, (size_t)ow * oh * 2);
+        turn_buffer(src, lv, w, h, w * 2, ow * 2, lvgl_same[i], LV_COLOR_FORMAT_RGB565);
+
+        g_cases++;
+        const bool ppa_ok = err == ESP_OK && memcmp(out, sw, (size_t)ow * oh * 2) == 0;
+        const bool lv_ok = memcmp(lv, sw, (size_t)ow * oh * 2) == 0;
+        if(ppa_ok && lv_ok)
+            printf("  ok    the fake PPA and LVGL %s turn as the Tab5's own LVGL fork does for ESPHome's %d\n",
+                   rot_name(lvgl_same[i]), degs[i]);
+        else {
+            g_failures++;
+            printf("  FAIL  ESPHome's %d: fake PPA %s, LVGL %s %s the fork's loop\n", degs[i],
+                   ppa_ok ? "matches" : "DIFFERS FROM", rot_name(lvgl_same[i]), lv_ok ? "matches" : "differs from");
+        }
+    }
+}
+
 int main(int argc, char ** argv)
 {
     bool run_bench = argc > 1 && strcmp(argv[1], "--bench") == 0;
@@ -1036,6 +1115,7 @@ int main(int argc, char ** argv)
         }
     }
 
+    check_fake_ppa_against_the_board();
     g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
     g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
     for(unsigned r = 0; r < 4; r++) {
@@ -1052,11 +1132,13 @@ int main(int argc, char ** argv)
      * of it the sensor reaches, at 1:1. */
     {
         const video_case_t boards[] = {
-            /* habbit (1).yaml: SC2356 RAW8 1280x720 30 fps, 1 lane, whole screen. */
-            {"M5Stack Tab5, SC2356", 720, 1280, LV_DISPLAY_ROTATION_270, 1280, 720, 0, 0, 0, 0, 0, 0, false, false},
+            /* habbit (1).yaml: SC2356 RAW8 1280x720 30 fps, 1 lane, whole
+             * screen. ESPHome's `rotation: 270` is LVGL's 90: ESPHome counts
+             * the other way. */
+            {"M5Stack Tab5, SC2356", 720, 1280, LV_DISPLAY_ROTATION_90, 1280, 720, 0, 0, 0, 0, 0, 0, false, false},
             /* tab10 .yaml: OV02C10 RAW10 1288x728 30 fps, 1 lane; the centre
              * 1280x720 of it, under a 1280x800 screen's 80 px of UI. */
-            {"Guition 10\", OV02C10", 800, 1280, LV_DISPLAY_ROTATION_90, 1288, 728, 4, 4, 1280, 720, 0, 80, false, false},
+            {"Guition 10\", OV02C10", 800, 1280, LV_DISPLAY_ROTATION_270, 1288, 728, 4, 4, 1280, 720, 0, 80, false, false},
             /* lvgl-kawaii.yaml: OV5647 RAW10 1280x960 binned 45 fps, 2 lanes;
              * the centre 1024x600 of it, the whole screen. */
             {"Waveshare 7\", OV5647", 1024, 600, LV_DISPLAY_ROTATION_180, 1280, 960, 128, 180, 1024, 600, 0, 0, false, false},
