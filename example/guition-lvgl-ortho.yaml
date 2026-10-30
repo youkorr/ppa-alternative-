@@ -23,7 +23,7 @@ external_components:
       path: ../components
     # From a board's own YAML instead:
     #   source: github://youkorr/ppa-alternative-@main
-    components: [lvgl_ortho]
+    components: [lvgl_ortho, lvgl_bench]
 
 logger:
 
@@ -57,6 +57,20 @@ lvgl:
 lvgl_ortho:
   id: ortho
   rotation: 90
+
+# How long a whole-screen redraw takes, in Home Assistant. Put the same lines
+# in a firmware without lvgl_ortho to compare the two.
+lvgl_bench:
+  ms_per_frame:
+    name: "LVGL ms per frame"
+  max_fps:
+    name: "LVGL max fps"
+
+button:
+  - platform: template
+    name: "LVGL bench"
+    on_press:
+      - lvgl_bench.run: 10s
 
 # A camera through youkorr/esphome_esp-video goes into the same window, turned
 # once by the PPA, with one line on its lvgl_camera_display block:

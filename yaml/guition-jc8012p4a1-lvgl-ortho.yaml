@@ -324,7 +324,7 @@ external_components:
     refresh: always
   # lv_draw_ortho: LVGL draws in the panel's orientation, nothing is turned
   - source: github://youkorr/ppa-alternative-@main
-    components: [lvgl_ortho]
+    components: [lvgl_ortho, lvgl_bench]
     refresh: always
 
 
@@ -2199,6 +2199,21 @@ display:
 
 # The screen's turn, done by drawing in the panel's orientation instead of
 # turning every frame afterwards. The number lvgl: had (ESPHome's degrees).
+# How long LVGL takes to redraw the whole screen, in Home Assistant: press
+# "LVGL bench" and read "LVGL ms per frame". Put the same lines in the old
+# firmware (without lvgl_ortho) to compare the two.
+lvgl_bench:
+  ms_per_frame:
+    name: "LVGL ms per frame"
+  max_fps:
+    name: "LVGL max fps"
+
+button:
+  - platform: template
+    name: "LVGL bench"
+    on_press:
+      - lvgl_bench.run: 10s
+
 lvgl_ortho:
   id: ortho
   rotation: 90

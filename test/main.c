@@ -546,6 +546,111 @@ static void flush_turn(void * p)
                       lv_display_get_color_format(a->up->disp));
 }
 
+/* How Espressif's two ports present a turned picture, so the bench compares
+ * against them and not only against ESPHome:
+ *
+ *  - esp_lvgl_port (esp-bsp 2.9.0, lvgl_port_flush_callback): the flushed
+ *    area is turned by the PPA into a buffer of its own, then
+ *    esp_lcd_panel_draw_bitmap copies that buffer into the frame buffer.
+ *    Two passes after the draw.
+ *  - esp_lvgl_adapter 0.7.4 / esp_display_present 1.2.0 (present_rotate.c):
+ *    the turn is fused into the copy into the frame buffer, in blocks of
+ *    32x64 pixels so source and destination stay in the cache. One pass
+ *    after the draw.
+ *
+ * Written here from that description, not copied. The PPA is a CPU loop on
+ * this machine, so only how many passes each makes, and in what order, is
+ * compared -- not the P4's own speeds. */
+static inline void turn_px(int32_t x, int32_t y, int32_t w, int32_t h, lv_display_rotation_t rot, int32_t * dx,
+                           int32_t * dy)
+{
+    /* LVGL's own mapping (lv_draw_sw_utils.c, rotateNN_rgb565). */
+    switch(rot) {
+        case LV_DISPLAY_ROTATION_90: *dx = y; *dy = w - 1 - x; break;
+        case LV_DISPLAY_ROTATION_180: *dx = w - 1 - x; *dy = h - 1 - y; break;
+        case LV_DISPLAY_ROTATION_270: *dx = h - 1 - y; *dy = x; break;
+        default: *dx = x; *dy = y; break;
+    }
+}
+
+static void turn_blocked(const uint8_t * src, uint8_t * dst, int32_t w, int32_t h, uint32_t sstride,
+                         uint32_t dstride, lv_display_rotation_t rot)
+{
+    const bool quarter = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    const int32_t bw = quarter ? 32 : 64, bh = quarter ? 64 : 32;
+    for(int32_t by = 0; by < h; by += bh) {
+        const int32_t ey = LV_MIN(by + bh, h);
+        for(int32_t bx = 0; bx < w; bx += bw) {
+            const int32_t ex = LV_MIN(bx + bw, w);
+            for(int32_t y = by; y < ey; y++) {
+                const uint16_t * s16 = (const uint16_t *)(src + (size_t)y * sstride);
+                for(int32_t x = bx; x < ex; x++) {
+                    int32_t dx, dy;
+                    turn_px(x, y, w, h, rot, &dx, &dy);
+                    ((uint16_t *)(dst + (size_t)dy * dstride))[dx] = s16[x];
+                }
+            }
+        }
+    }
+}
+
+typedef struct {
+    turn_arg_t t;
+    uint8_t * staging;  /* esp_lvgl_port's PPA output buffer */
+    int checked;
+} port_arg_t;
+
+/* esp_lvgl_port: turn into the PPA's own buffer, then copy that buffer into
+ * the frame buffer. */
+static void flush_port(void * p)
+{
+    port_arg_t * a = p;
+    const lv_color_format_t cf = lv_display_get_color_format(a->t.up->disp);
+    turn_buffer(a->t.up->buf, a->staging, a->t.up->w, a->t.up->h, a->t.up->stride, a->t.fb_stride, a->t.rot, cf);
+    const bool quarter = a->t.rot == LV_DISPLAY_ROTATION_90 || a->t.rot == LV_DISPLAY_ROTATION_270;
+    memcpy(a->t.fb, a->staging, (size_t)a->t.fb_stride * (quarter ? a->t.up->w : a->t.up->h));
+}
+
+/* esp_lvgl_adapter: the turn IS the copy, in cache-sized blocks. Checked
+ * once against LVGL's own turn, so the bench cannot time a wrong picture. */
+static void flush_adapter(void * p)
+{
+    port_arg_t * a = p;
+    turn_blocked(a->t.up->buf, a->t.fb, a->t.up->w, a->t.up->h, a->t.up->stride, a->t.fb_stride, a->t.rot);
+    if(!a->checked) {
+        const lv_color_format_t cf = lv_display_get_color_format(a->t.up->disp);
+        turn_buffer(a->t.up->buf, a->staging, a->t.up->w, a->t.up->h, a->t.up->stride, a->t.fb_stride, a->t.rot, cf);
+        const bool quarter = a->t.rot == LV_DISPLAY_ROTATION_90 || a->t.rot == LV_DISPLAY_ROTATION_270;
+        if(memcmp(a->t.fb, a->staging, (size_t)a->t.fb_stride * (quarter ? a->t.up->w : a->t.up->h)) != 0) {
+            g_failures++;
+            printf("  FAIL  the bench's esp_lvgl_adapter turn differs from LVGL's\n");
+        }
+        a->checked = 1;
+    }
+}
+
+/* The three, one after the other, on the same upright screen. */
+static void time_espressif(screen_t * up, lv_obj_t * obj, int32_t nw, int32_t nh, lv_display_rotation_t rot, int n,
+                           double out[3])
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const uint32_t fs = lv_draw_buf_width_to_stride(nw, cf);
+    port_arg_t a = {{up, malloc((size_t)fs * nh), fs, rot}, malloc((size_t)fs * nh), 0};
+    out[0] = time_frames(up->disp, obj, n, flush_turn, &a.t);
+    out[1] = time_frames(up->disp, obj, n, flush_port, &a);
+    out[2] = time_frames(up->disp, obj, n, flush_adapter, &a);
+    free(a.t.fb);
+    free(a.staging);
+}
+
+static void print_three(const double t[3], double ortho)
+{
+    printf("    ESPHome lvgl: draw upright, turn in flush    : %7.2f ms\n", t[0]);
+    printf("    esp_lvgl_port: + turn into PPA buffer + copy : %7.2f ms\n", t[1]);
+    printf("    esp_lvgl_adapter: + turn fused into the copy : %7.2f ms\n", t[2]);
+    printf("    lv_draw_ortho                                : %7.2f ms (%.1fx the adapter)\n", ortho, t[2] / ortho);
+}
+
 static void bench(int32_t nw, int32_t nh, lv_display_rotation_t rot)
 {
     const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
@@ -559,10 +664,9 @@ static void bench(int32_t nw, int32_t nh, lv_display_rotation_t rot)
     lv_obj_t * i1 = lv_image_create(lv_display_get_screen_active(up->disp));
     lv_image_set_src(i1, g_frame);
     lv_refr_now(up->disp);
-    turn_arg_t a = {up, malloc(lv_draw_buf_width_to_stride(nw, cf) * nh), lv_draw_buf_width_to_stride(nw, cf), rot};
-    double classic = time_frames(up->disp, i1, n, flush_turn, &a);
+    double three[3];
+    time_espressif(up, i1, nw, nh, rot, n, three);
     double upright = time_frames(up->disp, i1, n, NULL, NULL);
-    free(a.fb);
     drop_screen(up);
 
     screen_t * nat = make_screen(nw, nh, cf, rot, true, false);
@@ -578,10 +682,9 @@ static void bench(int32_t nw, int32_t nh, lv_display_rotation_t rot)
 
     printf("  %dx%d at %s, one full-screen picture, best of %d (this machine, not a P4):\n",
            (int)nw, (int)nh, rot_name(rot), n);
-    printf("    LVGL today, draw upright then turn in flush : %7.2f ms\n", classic);
-    printf("      of which the upright draw alone           : %7.2f ms\n", upright);
-    printf("    lv_draw_ortho, turned in one pass           : %7.2f ms\n", turned);
-    printf("    lv_draw_ortho, picture already native       : %7.2f ms\n", straight);
+    print_three(three, turned);
+    printf("      the upright draw alone, any of the three   : %7.2f ms\n", upright);
+    printf("    lv_draw_ortho, picture already native        : %7.2f ms\n", straight);
 }
 
 /* A whole UI redrawn: text, shadows, borders, gradients -- the tasks that go
@@ -597,9 +700,8 @@ static void bench_ui(int32_t nw, int32_t nh, lv_display_rotation_t rot)
     lv_obj_t * s1 = lv_display_get_screen_active(up->disp);
     scene_ui(s1);
     lv_refr_now(up->disp);
-    turn_arg_t a = {up, malloc(lv_draw_buf_width_to_stride(nw, cf) * nh), lv_draw_buf_width_to_stride(nw, cf), rot};
-    double classic = time_frames(up->disp, s1, n, flush_turn, &a);
-    free(a.fb);
+    double three[3];
+    time_espressif(up, s1, nw, nh, rot, n, three);
     drop_screen(up);
 
     screen_t * nat = make_screen(nw, nh, cf, rot, true, false);
@@ -615,8 +717,7 @@ static void bench_ui(int32_t nw, int32_t nh, lv_display_rotation_t rot)
     drop_screen(nat);
 
     printf("  %dx%d at %s, the whole test UI redrawn, best of %d:\n", (int)nw, (int)nh, rot_name(rot), n);
-    printf("    LVGL today, draw upright then turn in flush : %7.2f ms\n", classic);
-    printf("    lv_draw_ortho                               : %7.2f ms\n", ortho);
+    print_three(three, ortho);
     printf("      per frame: %u tasks in %u batches, %u tiles (%u not read back), %u fills and %u images direct,\n"
            "      %.0f KiB turned, %.0f KiB copied straight\n",
            st->tasks_general, st->batches, st->tiles, st->tiles_unread, st->fills_direct,
@@ -752,23 +853,28 @@ static void bench_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int3
     lv_image_dsc_t * up = image_of(cw, ch, cf, 5);
     lv_image_dsc_t * nat = native_image_of(up, rot);
     const int n = 20;
-    double t[3];
-    lv_draw_ortho_stats_t stats[3];
+    /* 0 ESPHome, 1 esp_lvgl_port, 2 esp_lvgl_adapter, 3 and 4 lv_draw_ortho. */
+    double t[5];
+    lv_draw_ortho_stats_t stats[5];
 
-    for(int way = 0; way < 3; way++) {
-        const bool today = way == 0;
-        g_cam_first = way == 2 ? nat : up;
+    for(int way = 0; way < 5; way++) {
+        const bool today = way < 3;
+        g_cam_first = way == 4 ? nat : up;
         screen_t * s = today ? make_screen(swap ? nh : nw, swap ? nw : nh, cf, LV_DISPLAY_ROTATION_0, false, false)
                        : make_screen(nw, nh, cf, rot, true, false);
         lv_display_set_default(s->disp);
         scene_camera(lv_display_get_screen_active(s->disp));
         lv_refr_now(s->disp);
-        uint8_t * fb = malloc(lv_draw_buf_width_to_stride(nw, cf) * nh);
+        const uint32_t fs = lv_draw_buf_width_to_stride(nw, cf);
+        port_arg_t pa = {{s, malloc((size_t)fs * nh), fs, rot}, malloc((size_t)fs * nh), 0};
+        uint8_t * fb = pa.t.fb;
         double best = 1e9;
         for(int i = 0; i < n; i++) {
             double t0 = now_ms();
             cam_next(s->disp, g_cam_first);
-            if(today) turn_buffer(s->buf, fb, s->w, s->h, s->stride, lv_draw_buf_width_to_stride(nw, cf), rot, cf);
+            if(way == 0) flush_turn(&pa.t);
+            else if(way == 1) flush_port(&pa);
+            else if(way == 2) flush_adapter(&pa);
             double dt = now_ms() - t0;
             if(dt < best) best = dt;
         }
@@ -780,16 +886,16 @@ static void bench_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int3
             stats[way] = *st;
         }
         free(fb);
+        free(pa.staging);
         drop_screen(s);
     }
     printf("  %s: camera %dx%d on a %dx%d panel at %s, one frame, best of %d:\n", board, (int)cw, (int)ch,
            (int)nw, (int)nh, rot_name(rot), n);
-    printf("    LVGL today, draw upright then turn in flush : %7.2f ms\n", t[0]);
-    printf("    lv_draw_ortho, frame turned in one pass     : %7.2f ms (%.1fx)\n", t[1], t[0] / t[1]);
-    printf("    lv_draw_ortho, frame pre-turned             : %7.2f ms (%.1fx)\n", t[2], t[0] / t[2]);
-    for(int w = 1; w < 3; w++)
+    print_three(t, t[3]);
+    printf("    lv_draw_ortho, frame pre-turned              : %7.2f ms (%.1fx the adapter)\n", t[4], t[2] / t[4]);
+    for(int w = 3; w < 5; w++)
         printf("      %s: %u tasks through tiles, %.0f KiB turned, %.0f KiB copied straight\n",
-               w == 1 ? "turned" : "pre-turned", stats[w].tasks_general,
+               w == 3 ? "turned" : "pre-turned", stats[w].tasks_general,
                stats[w].bytes_turned / 1024.0, stats[w].bytes_straight / 1024.0);
 }
 

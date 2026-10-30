@@ -43,3 +43,29 @@ jobs:
         run: |
           esphome config example/guition-lvgl-ortho.yaml
           esphome config example/guition-lvgl-ortho-panel-buffers.yaml
+
+  compile:
+    # The real thing: ESPHome builds both examples with ESP-IDF for an
+    # ESP32-P4, lv_draw_ortho, lvgl_ortho and lvgl_bench included. Nobody
+    # here has a board attached, so this is what says the C and C++ build for
+    # the chip -- not that they run on it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [guition-lvgl-ortho.yaml, guition-lvgl-ortho-panel-buffers.yaml]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.esphome
+            ~/.platformio
+          key: esp-idf-${{ matrix.example }}-esphome-2026.10.0
+      - run: pip install esphome==2026.10.0
+      - name: esphome compile ${{ matrix.example }}
+        run: esphome compile example/${{ matrix.example }}
