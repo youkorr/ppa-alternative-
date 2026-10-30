@@ -76,6 +76,7 @@ typedef struct {
     uint32_t batches;          /**< runs of tasks drawn through one set of tiles */
     uint32_t tasks_general;    /**< tasks drawn through tiles */
     uint32_t tasks_refused;    /**< tasks whose matrix was not a quarter turn */
+    uint32_t window_skips;     /**< writes cut around the video window */
     uint64_t bytes_turned;     /**< bytes moved through a turn */
     uint64_t bytes_straight;   /**< bytes moved without one */
 } lv_draw_ortho_stats_t;
@@ -97,6 +98,27 @@ void lv_draw_ortho_set_fast_paths(bool enable);
 
 /** Draw every task on its own instead of in runs. For tests. */
 void lv_draw_ortho_set_batching(bool enable);
+
+/**
+ * Keep LVGL out of one rectangle of a display's frame buffer, so a video
+ * source -- a camera through the ESP32-P4's PPA, a JPEG decoder -- can write
+ * its frames straight into the frame buffer, the way Espressif's own camera
+ * examples reach the sensor's frame rate, while LVGL draws everything else.
+ *
+ * `native_area` is in the PANEL's coordinates (see lv_draw_ortho_native_area).
+ * Works only in LV_DISPLAY_RENDER_MODE_DIRECT, where LVGL renders into the
+ * frame buffer itself. One window; NULL clears it.
+ *
+ * The source and LVGL must not both be writing at once, and on a chip with a
+ * data cache the source's frames must be made visible to the CPU (and LVGL's
+ * written back) before the other side runs -- a cache line shared across the
+ * window's edge would otherwise put stale pixels back. That is the caller's,
+ * and the README says how on an ESP32-P4.
+ */
+void lv_draw_ortho_set_window(lv_display_t * disp, const lv_area_t * native_area);
+
+/** Where an area of the UI (an object's coordinates) lands on the panel. */
+void lv_draw_ortho_native_area(lv_display_t * disp, const lv_area_t * area, lv_area_t * native_area);
 
 const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void);
 void lv_draw_ortho_reset_stats(void);

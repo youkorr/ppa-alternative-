@@ -68,6 +68,11 @@ static lv_draw_ortho_copy_cb_t g_copy_cb;
 static bool g_fast = true;
 static bool g_batch = true;
 
+/* The video window: a native rectangle of one display's frame buffer that
+ * LVGL leaves to a source writing there itself. */
+static lv_display_t * g_win_disp;
+static lv_area_t g_win;
+
 /* ------------------------------------------------------------------------ */
 /* The matrix                                                               */
 /* ------------------------------------------------------------------------ */
@@ -138,6 +143,38 @@ static void ortho_unarea(const ortho_t * o, const lv_area_t * in, lv_area_t * ou
     out->x2 = LV_MAX(x1, x2);
     out->y1 = LV_MIN(y1, y2);
     out->y2 = LV_MAX(y1, y2);
+}
+
+/* ------------------------------------------------------------------------ */
+/* The video window                                                         */
+/* ------------------------------------------------------------------------ */
+
+/* Whether writes into this layer must keep out of the window: only the
+ * display's own layer, rendered straight into its frame buffer. A child
+ * layer is a separate buffer, and in partial mode the band is copied by the
+ * flush callback, which is where a window would have to be honoured. */
+static bool has_window(const lv_layer_t * layer)
+{
+    if(g_win_disp == NULL || layer->parent != NULL) return false;
+    if(lv_refr_get_disp_refreshing() != g_win_disp) return false;
+    return lv_display_get_render_mode(g_win_disp) == LV_DISPLAY_RENDER_MODE_DIRECT;
+}
+
+/* The parts of a native rectangle outside the window: up to four. */
+static int32_t outside_window(const lv_layer_t * layer, const lv_area_t * nat, lv_area_t out[4])
+{
+    lv_area_t w;
+    if(!has_window(layer) || !lv_area_intersect(&w, nat, &g_win)) {
+        out[0] = *nat;
+        return 1;
+    }
+    int32_t n = 0;
+    if(nat->y1 < w.y1) lv_area_set(&out[n++], nat->x1, nat->y1, nat->x2, w.y1 - 1);
+    if(nat->y2 > w.y2) lv_area_set(&out[n++], nat->x1, w.y2 + 1, nat->x2, nat->y2);
+    if(nat->x1 < w.x1) lv_area_set(&out[n++], nat->x1, w.y1, w.x1 - 1, w.y2);
+    if(nat->x2 > w.x2) lv_area_set(&out[n++], w.x2 + 1, w.y1, nat->x2, w.y2);
+    g_stats.window_skips++;
+    return n;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -482,8 +519,12 @@ static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
         if(lv_area_intersect(&clip, &jobs[i].t->clip_area, tile)) sw_execute_on(jobs[i].t, &tl, &jobs[i].t->area, &clip);
     }
 
-    move_turned(o, px, nb->data, nb->header.stride, &target->buf_area,
-                tb.data, stride, tile, &nat, true);
+    lv_area_t parts[4];
+    const int32_t np = outside_window(target, &nat, parts);
+    for(int32_t i = 0; i < np; i++) {
+        move_turned(o, px, nb->data, nb->header.stride, &target->buf_area,
+                    tb.data, stride, tile, &parts[i], true);
+    }
     g_stats.tiles++;
 }
 
@@ -536,10 +577,11 @@ static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * to
     lv_draw_fill_dsc_t * dsc = t->draw_dsc;
     if(dsc->grad.dir != LV_GRAD_DIR_NONE) return false;
 
-    lv_area_t area, clip;
+    lv_area_t area, clip, parts[4];
     ortho_area(o, &t->area, &area);
     ortho_area(o, todo, &clip);
-    sw_execute_on(t, t->target_layer, &area, &clip);
+    const int32_t np = outside_window(t->target_layer, &clip, parts);
+    for(int32_t i = 0; i < np; i++) sw_execute_on(t, t->target_layer, &area, &parts[i]);
     g_stats.fills_direct++;
     return true;
 }
@@ -574,8 +616,9 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
     lv_layer_t * target = t->target_layer;
     lv_draw_buf_t * nb = target->draw_buf;
     const int32_t px = lv_color_format_get_size(nb->header.cf);
-    lv_area_t nat;
-    ortho_area(o, todo, &nat);
+    lv_area_t all, parts[4];
+    ortho_area(o, todo, &all);
+    const int32_t np = outside_window(target, &all, parts);
 
     if(img->header.flags & LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE) {
         /* Already in the panel's orientation: its rows ARE native rows. */
@@ -583,20 +626,25 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
         ortho_area(o, &t->area, &whole);
         const int32_t sstride = img->header.stride ? (int32_t)img->header.stride
                                 : lv_area_get_width(&whole) * px;
-        const uint8_t * s = img->data + (intptr_t)(nat.y1 - whole.y1) * sstride +
-                            (intptr_t)(nat.x1 - whole.x1) * px;
-        uint8_t * dst = nb->data + (intptr_t)(nat.y1 - target->buf_area.y1) * nb->header.stride +
-                        (intptr_t)(nat.x1 - target->buf_area.x1) * px;
-        copy_straight(dst, nb->header.stride, s, sstride, lv_area_get_width(&nat) * px,
-                      lv_area_get_height(&nat));
+        for(int32_t i = 0; i < np; i++) {
+            const lv_area_t * nat = &parts[i];
+            const uint8_t * s = img->data + (intptr_t)(nat->y1 - whole.y1) * sstride +
+                                (intptr_t)(nat->x1 - whole.x1) * px;
+            uint8_t * dst = nb->data + (intptr_t)(nat->y1 - target->buf_area.y1) * nb->header.stride +
+                            (intptr_t)(nat->x1 - target->buf_area.x1) * px;
+            copy_straight(dst, nb->header.stride, s, sstride, lv_area_get_width(nat) * px,
+                          lv_area_get_height(nat));
+        }
         g_stats.images_native++;
         return true;
     }
 
     const int32_t sstride = img->header.stride ? (int32_t)img->header.stride
                             : (int32_t)img->header.w * px;
-    move_turned(o, px, nb->data, nb->header.stride, &target->buf_area,
-                (uint8_t *)img->data, sstride, &t->area, &nat, true);
+    for(int32_t i = 0; i < np; i++) {
+        move_turned(o, px, nb->data, nb->header.stride, &target->buf_area,
+                    (uint8_t *)img->data, sstride, &t->area, &parts[i], true);
+    }
     g_stats.images_turned++;
     return true;
 }
@@ -668,8 +716,9 @@ static int32_t evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * task)
     LV_UNUSED(draw_unit);
     ortho_t o;
     if(!ortho_from_matrix(&task->matrix, &o)) return 0;
-    /* An identity matrix is the software renderer's own case. */
-    if(ortho_is_identity(&o)) return 0;
+    /* An identity matrix is the software renderer's own case -- unless a
+     * window has to be kept clear, which only this unit knows about. */
+    if(ortho_is_identity(&o) && !has_window(task->target_layer)) return 0;
     switch(task->type) {
         case LV_DRAW_DSC_TYPE_FILL:
         case LV_DRAW_DSC_TYPE_BORDER:
@@ -815,6 +864,27 @@ void lv_draw_ortho_set_batching(bool enable)
 const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void)
 {
     return &g_stats;
+}
+
+void lv_draw_ortho_set_window(lv_display_t * disp, const lv_area_t * native_area)
+{
+    if(disp == NULL || native_area == NULL) {
+        g_win_disp = NULL;
+        return;
+    }
+    if(lv_display_get_render_mode(disp) != LV_DISPLAY_RENDER_MODE_DIRECT) {
+        LV_LOG_WARN("ortho: a video window needs LV_DISPLAY_RENDER_MODE_DIRECT; ignored");
+        g_win_disp = NULL;
+        return;
+    }
+    g_win = *native_area;
+    g_win_disp = disp;
+}
+
+void lv_draw_ortho_native_area(lv_display_t * disp, const lv_area_t * area, lv_area_t * native_area)
+{
+    *native_area = *area;
+    lv_display_rotate_area(disp, native_area);
 }
 
 void lv_draw_ortho_reset_stats(void)

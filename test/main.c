@@ -26,6 +26,8 @@
 #define turn_buffer lv_draw_sw_rotate
 #endif
 #include "lv_draw_ortho.h"
+#include "esp32p4/lv_draw_ortho_video.h"
+#include "p4fake.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,7 +89,8 @@ static screen_t * make_screen(int32_t w, int32_t h, lv_color_format_t cf, lv_dis
     lv_display_set_color_format(s.disp, cf);
     s.stride = lv_draw_buf_width_to_stride(w, cf);
     size_t size = (size_t)s.stride * h;
-    s.buf = aligned_alloc(LV_DRAW_BUF_ALIGN, (size + LV_DRAW_BUF_ALIGN - 1) / LV_DRAW_BUF_ALIGN * LV_DRAW_BUF_ALIGN);
+    /* 128: the ESP32-P4's L2 cache line, which the PPA needs its output on. */
+    s.buf = aligned_alloc(128, (size + 127) / 128 * 128);
     memset(s.buf, 0x5a, size);
     if(partial) {
         /* An eighth of the screen, odd on purpose so bands split unevenly. */
@@ -790,6 +793,168 @@ static void bench_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int3
                stats[w].bytes_turned / 1024.0, stats[w].bytes_straight / 1024.0);
 }
 
+/* ------------------------------------------------------------------------ */
+/* The video window                                                         */
+/* ------------------------------------------------------------------------ */
+
+/* A source writes its frames straight into a rectangle of the frame buffer,
+ * the way Espressif's camera examples write the camera's DMA into the panel's
+ * frame buffer. LVGL redraws the whole UI around it. The window must come out
+ * of every refresh exactly as the source left it, and everything else exactly
+ * as LVGL draws it. */
+static void check_window(int32_t nw, int32_t nh, lv_color_format_t cf, lv_display_rotation_t rot, bool fast,
+                         bool batch)
+{
+    const int32_t px = lv_color_format_get_size(cf);
+    uint8_t * want = reference(nw, nh, cf, rot, scene_ui);
+    lv_draw_ortho_set_fast_paths(fast);
+    lv_draw_ortho_set_batching(batch);
+
+    screen_t * s = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(s->disp);
+    scene_ui(lv_display_get_screen_active(s->disp));
+
+    /* Somewhere in the middle of the UI, over the panel, text and an image. */
+    const lv_area_t ui = {40, 30, 239, 179};
+    lv_area_t win;
+    lv_draw_ortho_native_area(s->disp, &ui, &win);
+    lv_draw_ortho_set_window(s->disp, &win);
+
+    /* The "video": a pattern nothing in the UI draws. */
+    for(int32_t y = win.y1; y <= win.y2; y++)
+        for(int32_t x = win.x1; x <= win.x2; x++)
+            for(int32_t b = 0; b < px; b++) s->buf[y * s->stride + x * px + b] = (uint8_t)(x * 3 + y * 7 + b);
+
+    long bad_in = 0, bad_out = 0;
+    diffs_t d = {0};
+    for(int pass = 0; pass < 2; pass++) {
+        lv_draw_ortho_reset_stats();
+        if(pass == 1) lv_obj_invalidate(lv_display_get_screen_active(s->disp));
+        lv_refr_now(s->disp);
+    }
+    for(int32_t y = 0; y < nh; y++) {
+        for(int32_t x = 0; x < nw; x++) {
+            const bool inside = x >= win.x1 && x <= win.x2 && y >= win.y1 && y <= win.y2;
+            if(inside) {
+                for(int32_t b = 0; b < px; b++)
+                    if(s->buf[y * s->stride + x * px + b] != (uint8_t)(x * 3 + y * 7 + b)) {
+                        bad_in++;
+                        break;
+                    }
+            }
+            else if(!pixel_same(s->buf, want, s->stride, x, y, cf)) {
+                if(d.n < MAX_EXCUSED) {
+                    d.x[d.n] = x;
+                    d.y[d.n] = y;
+                    d.n++;
+                }
+                bad_out++;
+            }
+        }
+    }
+    g_cases++;
+    char what[200];
+    snprintf(what, sizeof(what), "video window %dx%d %s at %s, fast %s, %s (%u writes cut around it)", (int)nw,
+             (int)nh, cf_name(cf), rot_name(rot), fast ? "on " : "off", batch ? "batched" : "one by one",
+             lv_draw_ortho_get_stats()->window_skips);
+    int32_t excused = bad_in == 0 && bad_out > 0 && bad_out <= MAX_EXCUSED ?
+                      excuse(s, &d, nw, nh, cf, rot, scene_ui) : -1;
+    if(bad_in == 0 && bad_out == 0) printf("  ok    %s\n", what);
+    else if(excused > 0)
+        printf("  ok    %s -- %d pixel(s) exactly as LVGL itself draws them when cut there\n", what, (int)excused);
+    else {
+        g_failures++;
+        printf("  FAIL  %s: %ld pixels of the video overwritten, %ld outside it differ from LVGL\n", what,
+               bad_in, bad_out);
+    }
+    lv_draw_ortho_set_window(NULL, NULL);
+    lv_draw_ortho_set_fast_paths(true);
+    lv_draw_ortho_set_batching(true);
+    drop_screen(s);
+    free(want);
+}
+
+/* ------------------------------------------------------------------------ */
+/* A camera written straight into the frame buffer by the PPA                */
+/* ------------------------------------------------------------------------ */
+
+/* The reference: the UI with the camera frame drawn by LVGL as an ordinary
+ * image on top, upright, then turned -- what LVGL shows today. */
+static lv_image_dsc_t * g_vid;
+static lv_area_t g_vid_at;
+static void scene_video_ref(lv_obj_t * scr)
+{
+    scene_ui(scr);
+    lv_obj_t * img = lv_image_create(scr);
+    lv_image_set_src(img, g_vid);
+    lv_obj_set_pos(img, g_vid_at.x1, g_vid_at.y1);
+}
+
+static lv_image_dsc_t * mirrored(const lv_image_dsc_t * in, bool mx, bool my)
+{
+    lv_image_dsc_t * d = calloc(1, sizeof(*d));
+    *d = *in;
+    uint8_t * data = malloc(in->data_size);
+    const int32_t w = in->header.w, h = in->header.h, px = lv_color_format_get_size(in->header.cf);
+    for(int32_t y = 0; y < h; y++)
+        for(int32_t x = 0; x < w; x++)
+            memcpy(data + (y * w + x) * px, in->data + ((my ? h - 1 - y : y) * w + (mx ? w - 1 - x : x)) * px, px);
+    d->data = data;
+    return d;
+}
+
+static void check_video(int32_t nw, int32_t nh, lv_display_rotation_t rot, bool mx, bool my)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    lv_image_dsc_t * frame = image_of(160, 112, cf, 41);
+    g_vid = mx || my ? mirrored(frame, mx, my) : frame;
+    lv_area_set(&g_vid_at, 48, 24, 48 + 160 - 1, 24 + 112 - 1);
+    uint8_t * want = reference(nw, nh, cf, rot, scene_video_ref);
+
+    screen_t * s = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(s->disp);
+    scene_ui(lv_display_get_screen_active(s->disp));
+    lv_draw_ortho_video_t v;
+    lv_draw_ortho_video_init(&v, s->disp);
+    lv_draw_ortho_video_place(&v, &g_vid_at);
+    lv_refr_now(s->disp);
+
+    memset(&g_p4, 0, sizeof(g_p4));
+    esp_err_t err = lv_draw_ortho_video_show(&v, frame->data, 160, 112, cf, mx, my);
+    /* And LVGL redrawing everything afterwards must leave the frame alone. */
+    lv_obj_invalidate(lv_display_get_screen_active(s->disp));
+    lv_refr_now(s->disp);
+
+    char what[200];
+    snprintf(what, sizeof(what), "camera through the PPA into a %dx%d frame buffer at %s%s%s", (int)nw, (int)nh,
+             rot_name(rot), mx ? ", mirror x" : "", my ? ", mirror y" : "");
+    diffs_t d;
+    long nd = count_diffs(s, want, cf, &d);
+    int32_t excused = nd > 0 && nd <= MAX_EXCUSED ? excuse(s, &d, nw, nh, cf, rot, scene_video_ref) : -1;
+
+    /* The cache: every line of the window's rows written back and dropped,
+     * before the PPA wrote, on whole L2 lines. */
+    const uintptr_t row0 = (uintptr_t)s->buf + (uintptr_t)v.native.y1 * s->stride;
+    const uintptr_t row1 = (uintptr_t)s->buf + (uintptr_t)(v.native.y2 + 1) * s->stride;
+    const bool cache_ok = g_p4.msync_count == 1 && g_p4.msync_addr <= row0 &&
+                          g_p4.msync_addr + g_p4.msync_size >= row1 && g_p4.msync_addr % 128 == 0 &&
+                          g_p4.msync_size % 128 == 0 &&
+                          g_p4.msync_flags == (ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);
+    g_cases++;
+    if(err == ESP_OK && g_p4.srm_count == 1 && cache_ok && (nd == 0 || excused > 0)) {
+        if(nd) printf("  ok    %s -- %d pixel(s) exactly as LVGL itself draws them when cut there\n", what, (int)excused);
+        else printf("  ok    %s\n", what);
+    }
+    else {
+        g_failures++;
+        printf("  FAIL  %s: err %d, %d PPA pass(es), cache %s, %ld pixels differ from LVGL\n", what, err,
+               g_p4.srm_count, cache_ok ? "ok" : "WRONG", nd);
+    }
+    lv_draw_ortho_video_deinit(&v);
+    drop_screen(s);
+    free(want);
+}
+
 int main(int argc, char ** argv)
 {
     bool run_bench = argc > 1 && strcmp(argv[1], "--bench") == 0;
@@ -813,6 +978,24 @@ int main(int argc, char ** argv)
             check_scene("ui", 333, 517, cfs[c], rots[r], scene_ui);
             if(rots[r] != LV_DISPLAY_ROTATION_0) check_native(320, 480, cfs[c], rots[r]);
         }
+    }
+
+    for(unsigned c = 0; c < 2; c++) {
+        g_photo = image_of(97, 61, cfs[c], 1);
+        g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
+        for(unsigned r = 0; r < 4; r++) {
+            check_window(320, 480, cfs[c], rots[r], true, true);
+            check_window(320, 480, cfs[c], rots[r], false, true);
+            check_window(320, 480, cfs[c], rots[r], true, false);
+        }
+    }
+
+    g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
+    g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
+    for(unsigned r = 0; r < 4; r++) {
+        check_video(320, 480, rots[r], false, false);
+        check_video(320, 480, rots[r], true, false);
+        check_video(320, 480, rots[r], true, true);
     }
 
     /* The household's own camera boards (esp-video's yaml/): a Guition 10"

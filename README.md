@@ -47,7 +47,7 @@ not yet on a board.**
 
 - `test/` builds LVGL and renders the same UI two ways: upright and then
   turned (what a flush callback does today), and straight to native with
-  `lv_draw_ortho`. **82 of 82 cases match on 9.5.0, 9.6.0 and `master`**: 90, 180
+  `lv_draw_ortho`. **118 of 118 cases match on 9.5.0, 9.6.0 and `master`**: 90, 180
   and 270°, RGB565 and XRGB8888, two panel sizes (one odd), direct and partial
   render modes, fast paths on and off, batched and task by task, plus
   pre-turned pictures. The scene has gradients both ways, a shadow, borders,
@@ -134,6 +134,73 @@ What is **not** done yet:
   turned display: the matrix is then not a quarter turn, so this unit counts
   the task in `tasks_refused` rather than drawing it wrongly.
 
+## Video at the sensor's frame rate
+
+**How Espressif and M5Stack do it**, read in their sources rather than
+assumed:
+
+- **Espressif** (`examples/peripherals/camera/mipi_isp_dsi` in ESP-IDF): the
+  camera controller's DMA is pointed **at the DSI panel's frame buffer**
+  (`example_dsi_resource_alloc(..., &frame_buffer, ...)`, then
+  `new_trans.buffer = frame_buffer`). No copy, no CPU, no LVGL, no turn: the
+  sensor's frames land on the glass at the sensor's rate.
+- **M5Stack** (Tab5 user demo, `hal_camera.cpp`): one PPA pass (a mirror)
+  from the camera's buffer into an LVGL canvas; LVGL renders in 50-row bands
+  in **internal** RAM (`buff_spiram = false`), and `esp_lvgl_port` turns each
+  band into the frame buffer with the PPA, LVGL's 90 being the PPA's 270.
+
+The best of both is what `src/esp32p4/lv_draw_ortho_video.c` does:
+
+```
+camera DMA -> camera buffer --(ONE PPA pass: turn, mirror, scale)--> frame buffer window
+LVGL      -> lv_draw_ortho: the rest of the screen, straight into the same frame buffer, never the window
+```
+
+Espressif's zero copy, with a UI around it and any panel orientation. LVGL
+never handles a video pixel; the CPU handles none at all. `lv_draw_ortho_set_window()`
+is the half that makes it safe: every write this unit makes into the frame
+buffer -- tiles, fills, images -- is cut around the window.
+
+```c
+lv_draw_ortho_video_t v;
+lv_draw_ortho_video_init(&v, disp);              /* a PPA SRM client */
+lv_draw_ortho_video_place(&v, &obj_coords);      /* where, in UI coordinates */
+/* from LVGL's own thread, for every camera frame: */
+lv_draw_ortho_video_show(&v, cam_buf, 1280, 720, LV_COLOR_FORMAT_RGB565, true, false);
+```
+
+**The cache, which is where this goes wrong if it does.** LVGL writes right up
+to the window's edge, so a cache line can hold LVGL pixels and stale video
+pixels at once; written back after the PPA has run, it puts the stale video
+back. So before every PPA pass the window's rows are written back and
+invalidated together (`C2M | INVALIDATE`, on whole L2 lines), and the PPA
+writes into lines nobody holds. That only works if LVGL is not rendering at
+the same moment, which is why `show()` belongs on LVGL's own thread.
+
+**Verified on a PC**, with `test/p4stub/` standing in for ESP-IDF's PPA and
+cache: the declarations are copied from v5.5.5 field for field, and the fake
+PPA turns the way boards have been seen to (LVGL's 90 is its 270, the pairing
+esp_lvgl_port ships on M5Stack's Tab5). 12 cases: the screen with the camera
+written by the PPA is the screen LVGL draws with that frame as an ordinary
+image, at 0, 90, 180 and 270°, mirrored and not; a full LVGL redraw afterwards
+leaves it alone; one PPA pass; the cache synced on whole lines before it.
+Broken on purpose, each of a wrong angle, a missing cache sync and an unswapped
+mirror axis fails it.
+
+**Not known until a board says**:
+
+- Whether the PPA mirrors before or after it turns. The code assumes after
+  (the order of its name, scale-rotate-mirror) and swaps the mirror's axis at
+  90° and 270°. A mirrored camera flipped the wrong way on a turned panel
+  means this is the line.
+- How fast the PPA writes into a PSRAM frame buffer the DSI is reading at the
+  same time; the Waveshare 7B measured 14.9 ms for a whole 1024x600 turned.
+- Tearing: with one frame buffer, the scan-out can catch a frame half written,
+  as in Espressif's example.
+- Scaling: frames the size of the window are exact; the PPA rounds a scaled
+  block down, which can leave a 1-pixel edge (lvgl/lvgl#10265 patches that
+  case for its own images).
+
 ## Use
 
 ```c
@@ -179,7 +246,7 @@ store the rows as they will be on the glass, give the native row length in
 ```
 git clone --depth 1 -b v9.6.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 82 cases
+make LVGL=/tmp/lvgl run            # 118 cases
 make LVGL=/tmp/lvgl bench          # timings
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 ```
