@@ -39,6 +39,34 @@ MUTANTS = {
     ),
 }
 
+# The panel's-own-buffers mode, run with youkorr/lvgl_9.5's mipi_dsi header.
+MUTANTS_FB = {
+    "third buffer not given to LVGL": (
+        "    lv_display_set_3rd_draw_buffer(this->disp_, &this->third_);\n",
+        "",
+    ),
+    "a frame shown before it is whole": (
+        "    if (lv_display_flush_is_last(disp)) {\n      const auto &fp",
+        "    if (true) {\n      const auto &fp",
+    ),
+    "a video frame never made to show": ("    lv_obj_invalidate(obj);\n  } else {", "  } else {"),
+}
+
+
+def run_one(text, name, old, new, objs, build, tmp, extra):
+    assert text.count(old) == 1, f"mutant '{name}' no longer applies"
+    copy = pathlib.Path(tmp) / "c"
+    shutil.rmtree(copy, ignore_errors=True)
+    shutil.copytree(ORTHO, copy)
+    (copy / "lvgl_ortho.cpp").write_text(text.replace(old, new))
+    exe = pathlib.Path(tmp) / "t"
+    cmd = ["g++", "-O1", "-std=c++17", "-DLV_CONF_INCLUDE_SIMPLE", f"-I{HERE}", f"-I{copy}",
+           f"-I{build}/lvgl-src", f"-I{HERE}/esphome_stub", *extra, f"-I{HERE}/p4stub",
+           str(HERE / "esphome_test.cpp"), str(copy / "lvgl_ortho.cpp"), *objs,
+           str(build / "lvgl.a"), "-lm", "-o", str(exe)]
+    subprocess.run(cmd, check=True, cwd=HERE)
+    return any(subprocess.run([str(exe), r], capture_output=True).returncode for r in ("90", "180", "270"))
+
 
 def main():
     build = HERE / (sys.argv[1] if len(sys.argv) > 1 else "build")
@@ -47,22 +75,16 @@ def main():
         sys.exit(f"no objects in {build}/esphome: run `make run` first")
     text = (ORTHO / "lvgl_ortho.cpp").read_text()
     missed = 0
+    fb = [f"-I{HERE}/esphome_stub_fb"]
     with tempfile.TemporaryDirectory() as tmp:
-        for name, (old, new) in MUTANTS.items():
-            assert text.count(old) == 1, f"mutant '{name}' no longer applies"
-            copy = pathlib.Path(tmp) / "c"
-            shutil.rmtree(copy, ignore_errors=True)
-            shutil.copytree(ORTHO, copy)
-            (copy / "lvgl_ortho.cpp").write_text(text.replace(old, new))
-            exe = pathlib.Path(tmp) / "t"
-            cmd = ["g++", "-O1", "-std=c++17", "-DLV_CONF_INCLUDE_SIMPLE", f"-I{HERE}", f"-I{copy}",
-                   f"-I{build}/lvgl-src", f"-I{HERE}/esphome_stub", f"-I{HERE}/p4stub",
-                   str(HERE / "esphome_test.cpp"), str(copy / "lvgl_ortho.cpp"), *objs,
-                   str(build / "lvgl.a"), "-lm", "-o", str(exe)]
-            subprocess.run(cmd, check=True, cwd=HERE)
-            caught = any(subprocess.run([str(exe), r], capture_output=True).returncode for r in ("90", "180", "270"))
-            print(("  ok    caught: " if caught else "  FAIL  missed: ") + name)
-            missed += not caught
+        # The flush's own copying is not used with the panel's buffers, so
+        # its two mutants are only run in copy mode.
+        both = {k: v for k, v in MUTANTS.items() if k not in ("flush area not turned", "narrow area packed from x 0")}
+        for muts, extra, mode in ((MUTANTS, [], "copy"), (both, fb, "panel buffers"), (MUTANTS_FB, fb, "panel buffers")):
+            for name, (old, new) in muts.items():
+                caught = run_one(text, name, old, new, objs, build, tmp, extra)
+                print(("  ok    caught: " if caught else "  FAIL  missed: ") + f"{name} ({mode})")
+                missed += not caught
     sys.exit(1 if missed else 0)
 
 
