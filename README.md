@@ -439,39 +439,39 @@ button:
       - lvgl_bench.run: 10s           # redraws the whole screen, then reports
 ```
 
-Flash the board's old YAML with these lines, press the button, note the two
-figures; flash the lvgl_ortho YAML with the same lines, press it again.
+`yaml/test-lvgl.yaml` (next section) carries these lines on all three
+boards: flash it with `mode: lvgl`, press the button, note the figures;
+flash it with `mode: ortho`, press it again.
 LVGL refreshes at most every 33 ms by default, so the rate of refreshes says
 little: **ms per frame** is the figure that compares.
 
-## The three boards
+## The test on the three boards
 
-`yaml/` holds the full configurations of the three boards this was written
-for, on `lvgl_ortho`, each with its camera turned once by the PPA into the
-window:
+`yaml/test-lvgl.yaml` is one small firmware for all three boards: an
+ordinary interface (text, cards with borders and shadows, a gradient, an
+arc, a bar, a slider, a switch), `lvgl_bench`, Wi-Fi and the API. Two words
+at its top choose everything:
 
-| file | board | screen | turn | camera |
-|---|---|---|---|---|
-| `tab5-lvgl-ortho.yaml` | M5Stack Tab5 | 720x1280 | 270 | SC2356 |
-| `guition-jc8012p4a1-lvgl-ortho.yaml` | Guition JC8012P4A1 | 800x1280 | 90 | OV02C10 |
-| `waveshare-lvgl-ortho.yaml` | Waveshare 7B | 1024x600 | 180 | OV5647 |
+```yaml
+substitutions:
+  board: tab5     # tab5, guition or waveshare
+  mode: ortho     # ortho (lv_draw_ortho) or lvgl (ESPHome's own rotation)
+```
 
-All three take only `lvgl` from `youkorr/lvgl_9.5`, keep `buffer_size:
-100%`, and build for ESP32-P4 silicon before v3.0 (`board:
-esp32-p4-evboard`). Passwords and addresses come from `secrets.yaml`
-(`api_encryption_key`, `rtsp_url`, `webdav_username`, `webdav_password`).
-They load with ESPHome 2026.10.0; their fonts and images are the
-household's own and are not in this repository. Not flashed.
+| `board:` | board | screen | turn |
+|---|---|---|---|
+| `tab5` | M5Stack Tab5 | 720x1280 | 270 |
+| `guition` | Guition JC8012P4A1 | 800x1280 | 90 |
+| `waveshare` | Waveshare 7B | 1024x600 | 180 |
 
-Each has an `-avant` twin -- `tab5-lvgl-avant.yaml`,
-`guition-jc8012p4a1-lvgl-avant.yaml`, `waveshare-lvgl-avant.yaml` -- which is
-the same firmware as it was before lvgl_ortho: the rotation stays in `lvgl:`,
-the camera is drawn by LVGL, and only `lvgl_bench` is added. The two of a
-pair differ in nothing else, so flashing one, pressing "LVGL bench", then
-flashing the other and pressing it again compares the rotation and nothing
-more. Both load with ESPHome 2026.10.0, and the generated code reads
-`set_lvgl_rotation(...)` in the `-avant` one and `ortho->set_rotation(...)`
-in the other.
+Each board's hardware is in `yaml/boards/`, each mode in `yaml/modes/`; the
+two modes differ only in where the rotation is, so flashing one, pressing
+"LVGL bench", then the other and pressing again compares the rotation and
+nothing else. It takes only `lvgl` from `youkorr/lvgl_9.5`, keeps
+`buffer_size: 100%`, and needs `wifi_ssid`, `wifi_password` and
+`api_encryption_key` in `secrets.yaml`. All six combinations load with
+ESPHome 2026.10.0 and generate `set_lvgl_rotation(...)` in `lvgl` mode,
+`ortho->set_rotation(...)` in `ortho` mode. Not flashed.
 
 ## Use
 

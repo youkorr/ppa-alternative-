@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# ESPHome's own rotation: LVGL draws upright and every refresh is turned
+# afterwards, as before lvgl_ortho.
+
+lvgl:
+  rotation: ${rotation}

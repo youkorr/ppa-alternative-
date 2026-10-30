@@ -69,3 +69,28 @@ jobs:
       - run: pip install esphome==2026.10.0
       - name: esphome compile ${{ matrix.example }}
         run: esphome compile example/${{ matrix.example }}
+
+  test-yaml:
+    # yaml/test-lvgl.yaml, built with ESP-IDF for every board in both modes,
+    # with youkorr/lvgl_9.5's lvgl as the boards use it. The components come
+    # from this commit rather than from main, and the secrets are dummies.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [tab5, guition, waveshare]
+        mode: [ortho, lvgl]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install esphome==2026.10.0
+      - name: Use this commit's components
+        run: |
+          sed -i 's#  - source: github://youkorr/ppa-alternative-@main#  - source:\n      type: local\n      path: ../components#' yaml/test-lvgl.yaml
+          grep -q "path: ../components" yaml/test-lvgl.yaml
+          printf 'wifi_ssid: "test"\nwifi_password: "testtest"\napi_encryption_key: "kIuGSIsyjV6h5x0uC4ToRJKNJa6tRtjSFdbTB8PA36A="\n' > yaml/secrets.yaml
+      - name: esphome compile, ${{ matrix.board }} in ${{ matrix.mode }} mode
+        run: esphome -s board ${{ matrix.board }} -s mode ${{ matrix.mode }} compile yaml/test-lvgl.yaml

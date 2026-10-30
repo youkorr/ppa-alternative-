@@ -1,0 +1,204 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# A simple test of LVGL's speed on a turned screen, the same for the three
+# boards. Change the two words below, flash, press "LVGL bench" in Home
+# Assistant and read "LVGL ms per frame". Then
+# change mode, flash again, press again: the lower figure wins.
+#
+#   board: tab5       M5Stack Tab5, landscape (270)
+#          guition    Guition JC8012P4A1, landscape (90)
+#          waveshare  Waveshare 7B, turned over (180)
+#   mode:  ortho      lv_draw_ortho: LVGL draws in the panel's orientation
+#          lvgl       ESPHome's own rotation, as before lvgl_ortho
+#
+# Nothing else changes between the two modes, so the figure measures the
+# rotation alone. Needs secrets.yaml with wifi_ssid, wifi_password and
+# api_encryption_key. The rest of each board is in boards/, the two modes
+# in modes/.
+
+substitutions:
+  board: tab5
+  mode: ortho
+
+packages:
+  board: !include boards/${board}.yaml
+  mode: !include modes/${mode}.yaml
+
+esphome:
+  name: lvgl-test
+  friendly_name: LVGL test
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/youkorr/lvgl_9.5
+      ref: claude/jolly-lamport-ERZOC
+    components: [lvgl]
+  - source: github://youkorr/ppa-alternative-@main
+    components: [lvgl_ortho, lvgl_bench]
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: "Backlight"
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+
+# The figures, in Home Assistant and in the log:
+#   [I][lvgl_bench]: ... ms each, worst ... ms -> at most ... fps
+lvgl_bench:
+  ms_per_frame:
+    name: "LVGL ms per frame"
+  max_fps:
+    name: "LVGL max fps"
+
+button:
+  - platform: template
+    name: "LVGL bench"
+    on_press:
+      - lvgl_bench.run: 10s
+
+# An ordinary interface: text, rounded cards with borders and shadows, a
+# gradient, an arc, a bar, a slider and a switch -- what a dashboard is made
+# of. lvgl_bench.run redraws all of it on every refresh.
+lvgl:
+  displays:
+    - panel
+  buffer_size: 100%
+  color_depth: 16
+  byte_order: little_endian
+  use_ppa: true
+  use_ppa_img: true
+  style_definitions:
+    - id: card
+      bg_color: 0x1E2633
+      border_color: 0x3A4A63
+      border_width: 2
+      radius: 16
+      shadow_color: 0x000000
+      shadow_width: 24
+      shadow_opa: 60%
+      shadow_offset_y: 6
+      pad_all: 12
+  pages:
+    - id: test_page
+      bg_color: 0x0B1220
+      bg_grad_color: 0x23345A
+      bg_grad_dir: VER
+      pad_all: 16
+      layout:
+        type: FLEX
+        flex_flow: ROW_WRAP
+        flex_align_main: SPACE_EVENLY
+        flex_align_track: CENTER
+        pad_row: 16
+        pad_column: 16
+      widgets:
+        - label:
+            width: 100%
+            text: "LVGL test -- ${board}, ${mode}"
+            text_color: 0xFFFFFF
+            text_font: montserrat_28
+        - obj:
+            styles: card
+            width: 30%
+            height: 34%
+            widgets:
+              - label:
+                  align: TOP_LEFT
+                  text: "Salon"
+                  text_color: 0xDDE6F5
+                  text_font: montserrat_20
+              - arc:
+                  align: CENTER
+                  width: 60%
+                  height: 75%
+                  value: 65
+                  arc_color: 0x334155
+                  indicator:
+                    arc_color: 0xF59E0B
+              - label:
+                  align: CENTER
+                  text: "21.5 °C"
+                  text_color: 0xFFFFFF
+        - obj:
+            styles: card
+            width: 30%
+            height: 34%
+            widgets:
+              - label:
+                  align: TOP_LEFT
+                  text: "Lumiere"
+                  text_color: 0xDDE6F5
+                  text_font: montserrat_20
+              - switch:
+                  align: CENTER
+                  state:
+                    checked: true
+              - slider:
+                  align: BOTTOM_MID
+                  width: 85%
+                  value: 40
+        - obj:
+            styles: card
+            width: 30%
+            height: 34%
+            widgets:
+              - label:
+                  align: TOP_LEFT
+                  text: "Batterie"
+                  text_color: 0xDDE6F5
+                  text_font: montserrat_20
+              - bar:
+                  align: CENTER
+                  width: 85%
+                  height: 18%
+                  value: 72
+              - label:
+                  align: BOTTOM_MID
+                  text: "72 %, 1.4 kW"
+                  text_color: 0xFFFFFF
+        - button:
+            styles: card
+            width: 22%
+            height: 16%
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Scene soir"
+        - button:
+            styles: card
+            width: 22%
+            height: 16%
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Volets"
+        - button:
+            styles: card
+            width: 22%
+            height: 16%
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Musique"
+        - label:
+            width: 100%
+            text: "Le texte compte aussi : beaucoup de petites lettres, sur un fond en degrade, comme un vrai tableau de bord."
+            text_color: 0xB8C4D9
+            long_mode: WRAP
