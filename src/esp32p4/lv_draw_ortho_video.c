@@ -39,19 +39,22 @@ void lv_draw_ortho_video_set_crop(lv_draw_ortho_video_t * v, uint32_t x, uint32_
     if(v->cropped) lv_area_set(&v->crop, (int32_t)x, (int32_t)y, (int32_t)(x + w - 1), (int32_t)(y + h - 1));
 }
 
-/* LVGL turns content one way and the PPA counts the other: the PPA's
- * "counter-clockwise" is measured with y pointing up, so on a screen its 90 is
- * a clockwise quarter turn. LVGL's 90 is the PPA's 270, which is the pairing
- * Espressif's esp_lvgl_port ships and M5Stack's Tab5 runs. */
+/* The PPA turns counter-clockwise ON THE SCREEN, as its documentation says,
+ * and LVGL's LV_DISPLAY_ROTATION_90 turns the picture counter-clockwise too
+ * (lv_draw_rotate puts the top-left pixel at the bottom-left), so they are the
+ * same number. The board evidence is youkorr/lvgl_9.5's rotated flush, which
+ * shows a correct UI on an M5Stack Tab5: ESPHome's `rotation: 270` puts the
+ * UI's top-left at the panel's bottom-left and uses PPA_SRM_ROTATION_ANGLE_90.
+ * (ESPHome counts its rotation the other way from LVGL: its 270 is LVGL's 90.) */
 static ppa_srm_rotation_angle_t ppa_angle(lv_display_rotation_t r)
 {
     switch(r) {
         case LV_DISPLAY_ROTATION_90:
-            return PPA_SRM_ROTATION_ANGLE_270;
+            return PPA_SRM_ROTATION_ANGLE_90;
         case LV_DISPLAY_ROTATION_180:
             return PPA_SRM_ROTATION_ANGLE_180;
         case LV_DISPLAY_ROTATION_270:
-            return PPA_SRM_ROTATION_ANGLE_90;
+            return PPA_SRM_ROTATION_ANGLE_270;
         default:
             return PPA_SRM_ROTATION_ANGLE_0;
     }
