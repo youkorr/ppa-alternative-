@@ -33,6 +33,12 @@ void lv_draw_ortho_video_place(lv_draw_ortho_video_t * v, const lv_area_t * ui_a
     v->placed = true;
 }
 
+void lv_draw_ortho_video_set_crop(lv_draw_ortho_video_t * v, uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+    v->cropped = w > 0 && h > 0;
+    if(v->cropped) lv_area_set(&v->crop, (int32_t)x, (int32_t)y, (int32_t)(x + w - 1), (int32_t)(y + h - 1));
+}
+
 /* LVGL turns content one way and the PPA counts the other: the PPA's
  * "counter-clockwise" is measured with y pointing up, so on a screen its 90 is
  * a clockwise quarter turn. LVGL's 90 is the PPA's 270, which is the pairing
@@ -83,11 +89,21 @@ esp_err_t lv_draw_ortho_video_show(lv_draw_ortho_video_t * v, const void * frame
 
     ppa_srm_oper_config_t op;
     lv_memzero(&op, sizeof(op));
+    uint32_t bx = 0, by = 0, bw = w, bh = h;
+    if(v->cropped) {
+        if((uint32_t)v->crop.x2 >= w || (uint32_t)v->crop.y2 >= h) return ESP_ERR_INVALID_ARG;
+        bx = v->crop.x1;
+        by = v->crop.y1;
+        bw = lv_area_get_width(&v->crop);
+        bh = lv_area_get_height(&v->crop);
+    }
     op.in.buffer = frame;
     op.in.pic_w = w;
     op.in.pic_h = h;
-    op.in.block_w = w;
-    op.in.block_h = h;
+    op.in.block_w = bw;
+    op.in.block_h = bh;
+    op.in.block_offset_x = bx;
+    op.in.block_offset_y = by;
     op.in.srm_cm = cm;
     op.out.buffer = fb->data;
     op.out.buffer_size = (stride * fb_h) & ~(uint32_t)(LINE - 1);
@@ -99,8 +115,8 @@ esp_err_t lv_draw_ortho_video_show(lv_draw_ortho_video_t * v, const void * frame
     op.rotation_angle = ppa_angle(rot);
     /* The scale applies to the frame before it turns, so it is the UI's size
      * over the frame's, whatever the angle. */
-    op.scale_x = (float)lv_area_get_width(&v->ui_area) / (float)w;
-    op.scale_y = (float)lv_area_get_height(&v->ui_area) / (float)h;
+    op.scale_x = (float)lv_area_get_width(&v->ui_area) / (float)bw;
+    op.scale_y = (float)lv_area_get_height(&v->ui_area) / (float)bh;
     /* NOT VERIFIED ON A BOARD: whether the PPA mirrors before or after it
      * turns. This assumes after (the order of its name, scale-rotate-mirror),
      * so a mirror asked for in the upright frame changes axis at 90 and 270.

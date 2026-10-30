@@ -40,6 +40,8 @@ typedef struct {
     ppa_client_handle_t client;
     lv_area_t ui_area;      /* where the video is, as the UI sees it */
     lv_area_t native;       /* the same, on the panel */
+    lv_area_t crop;         /* the part of each frame shown, in frame pixels */
+    bool cropped;
     bool placed;
 } lv_draw_ortho_video_t;
 
@@ -49,6 +51,15 @@ esp_err_t lv_draw_ortho_video_init(lv_draw_ortho_video_t * v, lv_display_t * dis
 /** Put the video at `ui_area` (UI coordinates, e.g. an object's coords). LVGL
  *  stops drawing there from the next refresh. */
 void lv_draw_ortho_video_place(lv_draw_ortho_video_t * v, const lv_area_t * ui_area);
+
+/**
+ * Show only part of each frame: `x`, `y`, `w`, `h` in the frame's own pixels.
+ * The PPA reads just that block, in the same pass. For a sensor whose format
+ * is a little bigger than the screen (an OV02C10's 1288x728 on a 1280x800
+ * Guition) a centred crop keeps the picture at 1:1, where scaling it by 0.99
+ * would soften every pixel. Pass w or h 0 to show the whole frame again.
+ */
+void lv_draw_ortho_video_set_crop(lv_draw_ortho_video_t * v, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 
 /**
  * Write one frame into the window: `frame` is `w` x `h`, upright as the UI
