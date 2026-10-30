@@ -40,6 +40,24 @@ Anything that is not a fast path is drawn by LVGL's renderer itself, so there
 is nothing to re-implement and nothing to drift: the result is LVGL's, pixel
 for pixel.
 
+## Why this repository
+
+From the person who started it, after the frame rate had been chased in the
+PPA, the decoder and the network:
+
+> We had all been looking in the wrong place. The problem lies in the
+> screen's native resolution -- more precisely, in whether that native
+> resolution matches the layout you want to use. The trouble is ONLY the
+> rotation in LVGL: with or without the PPA, it is simply too slow for video
+> of decent quality.
+
+So the rule this repository follows: **when the layout matches the panel's
+native orientation, nothing is turned and nothing here is needed. When it
+does not, the turn is paid once, where the pixels are made** -- LVGL draws
+in the panel's orientation (`lv_draw_ortho`), and a camera frame is turned
+once by the PPA into a window LVGL keeps out of -- never by turning a
+finished picture afterwards.
+
 ## Status
 
 **Verified on a PC against LVGL 9.5.0, 9.6.0 and `master` (10.0.0-dev),
