@@ -463,6 +463,16 @@ esp32-p4-evboard`). Passwords and addresses come from `secrets.yaml`
 They load with ESPHome 2026.10.0; their fonts and images are the
 household's own and are not in this repository. Not flashed.
 
+Each has an `-avant` twin -- `tab5-lvgl-avant.yaml`,
+`guition-jc8012p4a1-lvgl-avant.yaml`, `waveshare-lvgl-avant.yaml` -- which is
+the same firmware as it was before lvgl_ortho: the rotation stays in `lvgl:`,
+the camera is drawn by LVGL, and only `lvgl_bench` is added. The two of a
+pair differ in nothing else, so flashing one, pressing "LVGL bench", then
+flashing the other and pressing it again compares the rotation and nothing
+more. Both load with ESPHome 2026.10.0, and the generated code reads
+`set_lvgl_rotation(...)` in the `-avant` one and `ortho->set_rotation(...)`
+in the other.
+
 ## Use
 
 ```c
