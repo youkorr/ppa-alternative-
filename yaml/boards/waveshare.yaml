@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# Waveshare ESP32-P4-WIFI6-Touch-LCD-7B: 1024x600 panel, turned over (180).
+# Read by test-lvgl.yaml.
+
+substitutions:
+  rotation: "180"
+
+esp32:
+  variant: esp32p4
+  board: esp32-p4-evboard
+  flash_size: 32MB
+  cpu_frequency: 360MHz
+  framework:
+    type: esp-idf
+    advanced:
+      enable_idf_experimental_features: true
+
+psram:
+  mode: hex
+  speed: 200MHz
+
+esp32_hosted:
+  variant: esp32c6
+  active_high: true
+  clk_pin: GPIO18
+  cmd_pin: GPIO19
+  d0_pin: GPIO14
+  d1_pin: GPIO15
+  d2_pin: GPIO16
+  d3_pin: GPIO17
+  reset_pin: GPIO54
+  use_psram: true
+  slot: 1
+
+esp_ldo:
+  - voltage: 2.5V
+    channel: 3
+  - voltage: 2.5V
+    channel: 4
+
+display:
+  - platform: mipi_dsi
+    id: panel
+    model: CUSTOM
+    dimensions:
+      width: 1024
+      height: 600
+    reset_pin:
+      number: 33
+    color_order: rgb
+    lanes: 2
+    lane_bit_rate: 1000Mbps
+    pclk_frequency: 51MHz
+    hsync_pulse_width: 70
+    hsync_back_porch: 160
+    hsync_front_porch: 160
+    vsync_pulse_width: 1
+    vsync_back_porch: 23
+    vsync_front_porch: 12
+    init_sequence:
+      - [0xB2, 0x10]
+      - [0x80, 0x8B]
+      - [0x81, 0x78]
+      - [0x82, 0x84]
+      - [0x83, 0x88]
+      - [0x84, 0xA8]
+      - [0x85, 0xE3]
+      - [0x86, 0x88]
+      - [0x11, 0x00]
+      - delay 120ms
+      - [0x29]
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: GPIO32
+    frequency: 1000Hz
+    inverted: true
