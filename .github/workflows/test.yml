@@ -6,12 +6,18 @@ on: [push, pull_request, workflow_dispatch]
 jobs:
   test:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        lvgl: [v9.5.0, v9.6.0]
     steps:
       - uses: actions/checkout@v4
-      - name: LVGL 9.5.0
-        run: git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
-      - name: 54 cases
+      - name: LVGL ${{ matrix.lvgl }}
+        run: git clone --depth 1 -b ${{ matrix.lvgl }} https://github.com/lvgl/lvgl /tmp/lvgl
+      - name: Every case
         run: make -C test -j4 LVGL=/tmp/lvgl run
+      - name: LVGL alone, drawn whole and in bands
+        run: test/build/ortho_test --lvgl-quirk
       - name: Under AddressSanitizer
         run: >-
           ASAN_OPTIONS=detect_leaks=0 make -C test -j4 LVGL=/tmp/lvgl BUILD=build-asan

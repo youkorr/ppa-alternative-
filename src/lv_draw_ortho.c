@@ -14,11 +14,7 @@
 
 #if LV_USE_DRAW_ORTHO
 
-#include "src/draw/lv_draw_private.h"
-#include "src/draw/lv_draw_buf_private.h"
-#include "src/draw/lv_draw_image_private.h"
-#include "src/draw/sw/lv_draw_sw.h"
-#include "src/misc/lv_area_private.h"
+#include "lvgl_private.h"
 #include <math.h>
 #include <string.h>
 
@@ -39,9 +35,12 @@ typedef struct {
     int32_t tx, ty;
 } ortho_t;
 
+typedef struct _job_t job_t;
+
 typedef struct {
     lv_draw_unit_t base;
     lv_draw_task_t * task_act;
+    job_t * jobs;            /* LV_DRAW_ORTHO_MAX_BATCH */
     uint8_t * tile;          /* LV_DRAW_ORTHO_TILE_BYTES, aligned */
     void * tile_alloc;
 } ortho_unit_t;
@@ -50,6 +49,7 @@ static ortho_unit_t * g_unit;
 static lv_draw_ortho_stats_t g_stats;
 static lv_draw_ortho_copy_cb_t g_copy_cb;
 static bool g_fast = true;
+static bool g_batch = true;
 
 /* ------------------------------------------------------------------------ */
 /* The matrix                                                               */
@@ -277,10 +277,99 @@ static void tile_layer(lv_layer_t * tl, lv_draw_buf_t * tb, const lv_area_t * ar
 /* The general path: draw upright into a tile, put it back turned           */
 /* ------------------------------------------------------------------------ */
 
-static void draw_one_tile(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * tile,
-                          uint8_t * mem, size_t mem_size)
+/* Up to this many consecutive tasks are drawn through one set of tiles, so a
+ * screen's worth of widgets costs one turn rather than one per widget. */
+#ifndef LV_DRAW_ORTHO_MAX_BATCH
+#define LV_DRAW_ORTHO_MAX_BATCH 64
+#endif
+
+struct _job_t {
+    lv_draw_task_t * t;
+    lv_area_t todo;   /* upright: what the task may change */
+    lv_area_t hole;   /* upright: inside `todo` but certainly not changed, or x2 < x1 */
+};
+
+/* Whether a fill paints every pixel of `tile` opaquely, so what was under the
+ * tile never shows and need not be read back. */
+static bool covers(const job_t * j, const lv_area_t * tile)
 {
-    lv_layer_t * target = t->target_layer;
+    const lv_draw_task_t * t = j->t;
+    if(t->type != LV_DRAW_TASK_TYPE_FILL || t->opa < LV_OPA_MAX) return false;
+    const lv_draw_fill_dsc_t * d = t->draw_dsc;
+    if(d->opa < LV_OPA_MAX) return false;
+    if(d->grad.dir != LV_GRAD_DIR_NONE) {
+        if(d->grad.dir != LV_GRAD_DIR_HOR && d->grad.dir != LV_GRAD_DIR_VER) return false;
+        for(uint32_t i = 0; i < d->grad.stops_count; i++) if(d->grad.stops[i].opa < LV_OPA_MAX) return false;
+    }
+    if(!lv_area_is_in(tile, &t->clip_area, 0)) return false;
+    if(!lv_area_is_in(tile, &t->area, 0)) return false;
+    if(d->radius == 0) return true;
+    /* Clear of the four corner squares is enough. */
+    const int32_t r = LV_MIN(d->radius, LV_MIN(lv_area_get_width(&t->area), lv_area_get_height(&t->area)) / 2);
+    lv_area_t a = t->area;
+    a.x1 += r;
+    a.x2 -= r;
+    if(lv_area_is_in(tile, &a, 0)) return true;
+    a = t->area;
+    a.y1 += r;
+    a.y2 -= r;
+    return lv_area_is_in(tile, &a, 0);
+}
+
+/* The part of a task's area it is certain not to change. A border never
+ * touches the middle of its rectangle; a shadow under an opaque background
+ * is painted over by that background, which is the next task. Leaving these
+ * out keeps a large panel from turning all its pixels for its outline. */
+static void find_hole(job_t * j)
+{
+    const lv_draw_task_t * t = j->t;
+    lv_area_t h = {0, 0, -1, -1};
+    if(t->type == LV_DRAW_TASK_TYPE_BORDER) {
+        const lv_draw_border_dsc_t * d = t->draw_dsc;
+        int32_t in = LV_MAX(d->width, d->radius);
+        h = t->area;
+        lv_area_increase(&h, -in, -in);
+    }
+    else if(t->type == LV_DRAW_TASK_TYPE_BOX_SHADOW) {
+        const lv_draw_box_shadow_dsc_t * d = t->draw_dsc;
+        if(d->bg_cover && t->next && t->next->type == LV_DRAW_TASK_TYPE_FILL) {
+            const lv_draw_fill_dsc_t * f = t->next->draw_dsc;
+            if(f->opa >= LV_OPA_MAX && t->next->opa >= LV_OPA_MAX &&
+               lv_area_is_in(&t->area, &t->next->area, 0) && lv_area_is_in(&t->next->area, &t->area, 0)) {
+                h = t->area;
+                lv_area_increase(&h, -d->radius, -d->radius);
+            }
+        }
+    }
+    if(lv_area_get_width(&h) <= 0 || lv_area_get_height(&h) <= 0) {
+        lv_area_set(&j->hole, 0, 0, -1, -1);
+        return;
+    }
+    j->hole = h;
+}
+
+static bool job_touches(const job_t * j, const lv_area_t * tile)
+{
+    lv_area_t a;
+    if(!lv_area_intersect(&a, &j->todo, tile)) return false;
+    /* Wholly inside the hole: nothing to do here. */
+    if(j->hole.x2 >= j->hole.x1 && lv_area_is_in(&a, &j->hole, 0)) return false;
+    return true;
+}
+
+static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t * tile,
+                      uint8_t * mem, size_t mem_size)
+{
+    int32_t first = -1;
+    for(int32_t i = 0; i < n; i++) {
+        if(job_touches(&jobs[i], tile)) {
+            first = i;
+            break;
+        }
+    }
+    if(first < 0) return;
+
+    lv_layer_t * target = jobs[first].t->target_layer;
     lv_draw_buf_t * nb = target->draw_buf;
     const lv_color_format_t cf = nb->header.cf;
     const int32_t px = lv_color_format_get_size(cf);
@@ -297,53 +386,60 @@ static void draw_one_tile(lv_draw_task_t * t, const ortho_t * o, const lv_area_t
     lv_area_t nat;
     ortho_area(o, tile, &nat);
 
-    /* The tile starts as what is already under it, so blending is right. */
-    move_turned(o, px, nb->data, nb->header.stride, &target->buf_area,
-                tb.data, stride, tile, &nat, false);
+    /* The tile starts as what is already under it, so blending is right --
+     * unless the first thing drawn paints all of it anyway. */
+    if(!covers(&jobs[first], tile)) {
+        move_turned(o, px, nb->data, nb->header.stride, &target->buf_area,
+                    tb.data, stride, tile, &nat, false);
+    }
+    else g_stats.tiles_unread++;
 
     lv_layer_t tl;
     tile_layer(&tl, &tb, tile, target);
-    lv_area_t clip;
-    if(lv_area_intersect(&clip, &t->clip_area, tile)) sw_execute_on(t, &tl, &t->area, &clip);
+    for(int32_t i = first; i < n; i++) {
+        lv_area_t clip;
+        if(!job_touches(&jobs[i], tile)) continue;
+        if(lv_area_intersect(&clip, &jobs[i].t->clip_area, tile)) sw_execute_on(jobs[i].t, &tl, &jobs[i].t->area, &clip);
+    }
 
     move_turned(o, px, nb->data, nb->header.stride, &target->buf_area,
                 tb.data, stride, tile, &nat, true);
     g_stats.tiles++;
 }
 
-static void draw_general(ortho_unit_t * u, lv_draw_task_t * t, const ortho_t * o, const lv_area_t * todo)
+static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ortho_t * o)
 {
-    lv_draw_buf_t * nb = t->target_layer->draw_buf;
-    const lv_color_format_t cf = nb->header.cf;
-    const int32_t w = lv_area_get_width(todo);
-    const int32_t h = lv_area_get_height(todo);
-    g_stats.tasks_general++;
+    const lv_color_format_t cf = jobs[0].t->target_layer->draw_buf->header.cf;
+    lv_area_t box = jobs[0].todo;
+    for(int32_t i = 1; i < n; i++) lv_area_join(&box, &box, &jobs[i].todo);
+    g_stats.tasks_general += n;
 
     /* A blur reads its neighbours, so it is never cut into tiles. */
-    if(t->type == LV_DRAW_TASK_TYPE_BLUR) {
-        const uint32_t stride = lv_draw_buf_width_to_stride(w, cf);
-        size_t size = (size_t)stride * h + LV_DRAW_BUF_ALIGN;
+    if(n == 1 && jobs[0].t->type == LV_DRAW_TASK_TYPE_BLUR) {
+        const uint32_t stride = lv_draw_buf_width_to_stride(lv_area_get_width(&box), cf);
+        size_t size = (size_t)stride * lv_area_get_height(&box) + LV_DRAW_BUF_ALIGN;
         void * raw = lv_malloc(size);
         if(raw == NULL) {
-            LV_LOG_WARN("ortho: no memory for a %dx%d blur", (int)w, (int)h);
+            LV_LOG_WARN("ortho: no memory for a blur");
             return;
         }
-        draw_one_tile(t, o, todo, lv_draw_buf_align(raw, cf), size - LV_DRAW_BUF_ALIGN);
+        draw_tile(jobs, 1, o, &box, lv_draw_buf_align(raw, cf), size - LV_DRAW_BUF_ALIGN);
         lv_free(raw);
         return;
     }
 
     /* As wide as the area allows, then as many rows as fit. */
+    const int32_t w = lv_area_get_width(&box);
     int32_t tw = w;
     while(tw > 1 && lv_draw_buf_width_to_stride(tw, cf) > LV_DRAW_ORTHO_TILE_BYTES) tw = (tw + 1) / 2;
     const uint32_t tstride = lv_draw_buf_width_to_stride(tw, cf);
     int32_t th = (int32_t)(LV_DRAW_ORTHO_TILE_BYTES / tstride);
     if(th < 1) th = 1;
 
-    for(int32_t y = todo->y1; y <= todo->y2; y += th) {
-        for(int32_t x = todo->x1; x <= todo->x2; x += tw) {
-            lv_area_t tile = {x, y, LV_MIN(x + tw - 1, todo->x2), LV_MIN(y + th - 1, todo->y2)};
-            draw_one_tile(t, o, &tile, u->tile, LV_DRAW_ORTHO_TILE_BYTES);
+    for(int32_t y = box.y1; y <= box.y2; y += th) {
+        for(int32_t x = box.x1; x <= box.x2; x += tw) {
+            lv_area_t tile = {x, y, LV_MIN(x + tw - 1, box.x2), LV_MIN(y + th - 1, box.y2)};
+            draw_tile(jobs, n, o, &tile, u->tile, LV_DRAW_ORTHO_TILE_BYTES);
         }
     }
 }
@@ -445,26 +541,46 @@ static void widen_for_glyphs(const lv_draw_task_t * t, lv_area_t * area)
     lv_area_increase(area, m, m);
 }
 
-static void execute(ortho_unit_t * u, lv_draw_task_t * t)
+/* What a task may change, upright, inside the buffer; false if nothing. */
+static bool task_todo(const lv_draw_task_t * t, const ortho_t * o, lv_area_t * todo)
+{
+    lv_area_t buf_up, real = t->_real_area;
+    widen_for_glyphs(t, &real);
+    if(!lv_area_intersect(todo, &real, &t->clip_area)) return false;
+    ortho_unarea(o, &t->target_layer->buf_area, &buf_up);
+    return lv_area_intersect(todo, todo, &buf_up);
+}
+
+/* A task that goes faster on its own than in a batch. */
+static bool fast_alone(const lv_draw_task_t * t)
+{
+    const lv_image_dsc_t * img;
+    if(!g_fast) return false;
+    if(t->type == LV_DRAW_TASK_TYPE_BLUR) return true;
+    return plain_image(t, &img);
+}
+
+static void execute_alone(ortho_unit_t * u, lv_draw_task_t * t)
 {
     ortho_t o;
     if(!ortho_from_matrix(&t->matrix, &o)) {
         g_stats.tasks_refused++;
         return;
     }
-
-    /* Only what is both drawn and allowed, and inside the buffer. */
-    lv_area_t todo, buf_up, real = t->_real_area;
-    widen_for_glyphs(t, &real);
-    if(!lv_area_intersect(&todo, &real, &t->clip_area)) return;
-    ortho_unarea(&o, &t->target_layer->buf_area, &buf_up);
-    if(!lv_area_intersect(&todo, &todo, &buf_up)) return;
-
+    job_t j;
+    j.t = t;
+    if(!task_todo(t, &o, &j.todo)) return;
     if(g_fast) {
-        if(try_fill(t, &o, &todo)) return;
-        if(try_image(t, &o, &todo)) return;
+        if(try_fill(t, &o, &j.todo)) return;
+        if(try_image(t, &o, &j.todo)) return;
     }
-    draw_general(u, t, &o, &todo);
+    find_hole(&j);
+    draw_jobs(u, &j, 1, &o);
+}
+
+static bool same_matrix(const lv_draw_task_t * a, const lv_draw_task_t * b)
+{
+    return lv_memcmp(&a->matrix, &b->matrix, sizeof(lv_matrix_t)) == 0;
 }
 
 static int32_t evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * task)
@@ -507,23 +623,78 @@ static int32_t dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
 
     lv_draw_task_t * t = lv_draw_get_available_task(layer, NULL, DRAW_UNIT_ID_ORTHO);
     if(t == NULL) return LV_DRAW_UNIT_IDLE;
+
+    /* LVGL offers each task the moment it is created. Taking them one by one
+     * would turn every widget's pixels separately; waiting until the layer is
+     * complete (or a batch is full) turns them once. */
+    if(!layer->all_tasks_added && g_batch) {
+        int32_t waiting = 0;
+        for(lv_draw_task_t * c = t; c; c = c->next) {
+            if(c->state == LV_DRAW_TASK_STATE_WAITING && c->preferred_draw_unit_id == DRAW_UNIT_ID_ORTHO) waiting++;
+        }
+        if(waiting < LV_DRAW_ORTHO_MAX_BATCH) return LV_DRAW_UNIT_IDLE;
+    }
     if(lv_draw_layer_alloc_buf(layer) == NULL) return LV_DRAW_UNIT_IDLE;
 
-    t->state = LV_DRAW_TASK_STATE_IN_PROGRESS;
-    t->draw_unit = draw_unit;
-    u->task_act = t;
-    execute(u, t);
-    t->state = LV_DRAW_TASK_STATE_FINISHED;
-    u->task_act = NULL;
+    /* A batch is a run of tasks with nothing unfinished before it, so drawing
+     * them in list order is the order LVGL itself would have drawn them. */
+    lv_draw_task_t * head = layer->draw_task_head;
+    while(head && head->state == LV_DRAW_TASK_STATE_FINISHED) head = head->next;
 
+    ortho_t o;
+    int32_t n = 0;
+    if(g_batch && head == t && !fast_alone(t) && ortho_from_matrix(&t->matrix, &o)) {
+        for(lv_draw_task_t * c = t; c && n < LV_DRAW_ORTHO_MAX_BATCH; c = c->next) {
+            if(c->state != LV_DRAW_TASK_STATE_WAITING || c->preferred_draw_unit_id != DRAW_UNIT_ID_ORTHO) break;
+            if(fast_alone(c) || !same_matrix(c, t)) break;
+            u->jobs[n].t = c;
+            if(!task_todo(c, &o, &u->jobs[n].todo)) {
+                /* Nothing to draw: still part of the run, and finished with it. */
+                lv_area_set(&u->jobs[n].todo, 0, 0, -1, -1);
+            }
+            n++;
+        }
+    }
+
+    if(n <= 1) {
+        t->state = LV_DRAW_TASK_STATE_IN_PROGRESS;
+        t->draw_unit = draw_unit;
+        u->task_act = t;
+        execute_alone(u, t);
+        t->state = LV_DRAW_TASK_STATE_FINISHED;
+        u->task_act = NULL;
+        lv_draw_dispatch_request();
+        return 1;
+    }
+
+    /* Drop the tasks with nothing to draw from the jobs, keep them finished. */
+    int32_t m = 0;
+    for(int32_t i = 0; i < n; i++) {
+        lv_draw_task_t * c = u->jobs[i].t;
+        c->state = LV_DRAW_TASK_STATE_IN_PROGRESS;
+        c->draw_unit = draw_unit;
+        if(u->jobs[i].todo.x2 < u->jobs[i].todo.x1) continue;
+        u->jobs[m] = u->jobs[i];
+        find_hole(&u->jobs[m]);
+        m++;
+    }
+    u->task_act = t;
+    if(m > 0) draw_jobs(u, u->jobs, m, &o);
+    g_stats.batches++;
+    /* jobs[] was compacted, so walk the list again for the states. */
+    lv_draw_task_t * c = t;
+    for(int32_t i = 0; i < n; i++, c = c->next) c->state = LV_DRAW_TASK_STATE_FINISHED;
+    u->task_act = NULL;
     lv_draw_dispatch_request();
-    return 1;
+    return n;
 }
 
 static int32_t delete_cb(lv_draw_unit_t * draw_unit)
 {
     ortho_unit_t * u = (ortho_unit_t *)draw_unit;
     lv_free(u->tile_alloc);
+    lv_free(u->jobs);
+    u->jobs = NULL;
     u->tile_alloc = NULL;
     u->tile = NULL;
     g_unit = NULL;
@@ -541,6 +712,8 @@ void lv_draw_ortho_init(void)
     u->tile_alloc = lv_malloc(LV_DRAW_ORTHO_TILE_BYTES + LV_DRAW_BUF_ALIGN);
     LV_ASSERT_MALLOC(u->tile_alloc);
     u->tile = lv_draw_buf_align(u->tile_alloc, LV_COLOR_FORMAT_RGB565);
+    u->jobs = lv_malloc(sizeof(job_t) * LV_DRAW_ORTHO_MAX_BATCH);
+    LV_ASSERT_MALLOC(u->jobs);
     g_unit = u;
 }
 
@@ -552,6 +725,11 @@ void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb)
 void lv_draw_ortho_set_fast_paths(bool enable)
 {
     g_fast = enable;
+}
+
+void lv_draw_ortho_set_batching(bool enable)
+{
+    g_batch = enable;
 }
 
 const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void)
