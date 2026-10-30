@@ -47,7 +47,7 @@ not yet on a board.**
 
 - `test/` builds LVGL and renders the same UI two ways: upright and then
   turned (what a flush callback does today), and straight to native with
-  `lv_draw_ortho`. **132 of 132 cases match on 9.5.0, 9.6.0 and `master`**: 90, 180
+  `lv_draw_ortho`. **136 of 136 cases match on 9.5.0, 9.6.0 and `master`**: 90, 180
   and 270°, RGB565 and XRGB8888, two panel sizes (one odd), direct and partial
   render modes, fast paths on and off, batched and task by task, plus
   pre-turned pictures. The scene has gradients both ways, a shadow, borders,
@@ -149,7 +149,7 @@ assumed:
   in **internal** RAM (`buff_spiram = false`), and `esp_lvgl_port` turns each
   band into the frame buffer with the PPA.
 
-The best of both is what `src/esp32p4/lv_draw_ortho_video.c` does:
+The best of both is what `components/lvgl_ortho/lv_draw_ortho_video.c` does:
 
 ```
 camera DMA -> camera buffer --(ONE PPA pass: turn, mirror, scale)--> frame buffer window
@@ -234,6 +234,62 @@ mirror axis fails it.
   block down, which can leave a 1-pixel edge (lvgl/lvgl#10265 patches that
   case for its own images).
 
+## On an ESPHome board
+
+`components/lvgl_ortho` is an ESPHome external component. Two lines change in
+a board's YAML: `rotation:` leaves the `lvgl:` block and goes on `lvgl_ortho:`,
+with the same number.
+
+```yaml
+external_components:
+  - source: github://youkorr/ppa-alternative-@main
+    components: [lvgl_ortho]
+
+lvgl:
+  # no rotation: here any more
+  buffer_size: 10%        # LVGL's own buffer is replaced; keep it small
+
+lvgl_ortho:
+  id: ortho
+  rotation: 270           # what lvgl: had (ESPHome's degrees, clockwise)
+```
+
+What it does once ESPHome's lvgl has built the display:
+
+- LVGL renders into **one panel-sized buffer in the panel's orientation**
+  (`LV_DISPLAY_RENDER_MODE_DIRECT`, PSRAM), through `lv_draw_ortho`, so
+  nothing is turned after it is drawn;
+- the flush copies the rows that changed to the display as they are (a
+  narrow area is packed first, so a clock along one edge is not a whole
+  panel of copying);
+- touches are turned back to the UI's coordinates (`lv_display_rotate_point`),
+  since LVGL 9 does not turn an input device's points itself;
+- the three LVGL defines it needs are written into ESPHome's `lv_conf.h` --
+  after the lvgl component's own code, because youkorr/lvgl_9.5 sets
+  `LV_USE_MATRIX` to 0 when no Lottie or SVG is used.
+
+**The camera.** `show_video(obj, frame, w, h)` turns a frame with one PPA pass
+straight into a window of that buffer, where LVGL does not draw, and puts it
+on the glass. youkorr/esphome_esp-video's `lvgl_camera_display` does it with
+one line, `ortho_id: ortho`. `example/guition-lvgl-ortho.yaml` is a whole
+board, validated with `esphome config` on ESPHome 2026.10.0.
+
+**Tested on a PC, end to end.** `test/esphome_test.cpp` runs the shipped
+`lvgl_ortho.cpp` on an LVGL display built the way ESPHome's lvgl builds it,
+with a stand-in display that keeps every `draw_pixels_at()`: the glass equals
+LVGL's upright UI turned, pixel for pixel, at 0, 90, 180 and 270, at 320x480
+and at the Tab5's and the Guition's real sizes -- whole, after a small change
+(484 pixels sent, not a panel), and with a camera frame through the fake PPA.
+A touch on the glass reads back as the UI point drawn there.
+`test/esphome_mutants.py` breaks the component five ways (touch not turned,
+flush area not turned, narrow area packed from the wrong column, ESPHome's 90
+taken as LVGL's 90, frame not centred) and the test catches every one.
+
+**Not compiled by ESP-IDF and not flashed.** What a board will say: the
+`lvgl_ortho` lines in its log, and the frame rate. Unknown until then: PSRAM
+bandwidth with the scanout, and tearing (the panel's frame buffer is still
+ESPHome's, copied into by DMA).
+
 ## Use
 
 ```c
@@ -279,7 +335,7 @@ store the rows as they will be on the glass, give the native row length in
 ```
 git clone --depth 1 -b v9.6.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 132 cases
+make LVGL=/tmp/lvgl run            # 136 cases, and the ESPHome component at four angles
 make LVGL=/tmp/lvgl bench          # timings
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 ```

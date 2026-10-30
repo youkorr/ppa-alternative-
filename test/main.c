@@ -26,7 +26,7 @@
 #define turn_buffer lv_draw_sw_rotate
 #endif
 #include "lv_draw_ortho.h"
-#include "esp32p4/lv_draw_ortho_video.h"
+#include "lv_draw_ortho_video.h"
 #include "p4fake.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -1027,6 +1027,59 @@ static void fork_turn(int esphome_deg, const uint16_t * ptr, uint16_t * dst, int
     }
 }
 
+/* A finger on the glass reports a NATIVE point. LVGL 9 does not turn an
+ * input device's points by the display's rotation, so whoever feeds it turns
+ * them -- the ESPHome component does with lv_display_rotate_point(). That
+ * must be the exact inverse of where lv_draw_ortho draws: a one-pixel object
+ * placed at a UI point is found on the panel, and that panel pixel must come
+ * back as the UI point. */
+static void check_touch(int32_t nw, int32_t nh, lv_display_rotation_t rot)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    screen_t * nat = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(nat->disp);
+    lv_obj_t * scr = lv_display_get_screen_active(nat->disp);
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_t * dot = lv_obj_create(scr);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 1, 1);
+    lv_obj_set_style_bg_color(dot, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    const int32_t uw = lv_display_get_horizontal_resolution(nat->disp);
+    const int32_t uh = lv_display_get_vertical_resolution(nat->disp);
+    const int32_t pts[][2] = {{0, 0}, {uw - 1, 0}, {0, uh - 1}, {uw - 1, uh - 1}, {7, 3}, {uw / 2, uh / 3}};
+    int bad = 0;
+    for(size_t i = 0; i < sizeof(pts) / sizeof(pts[0]); i++) {
+        lv_obj_set_pos(dot, pts[i][0], pts[i][1]);
+        lv_obj_invalidate(scr);
+        lv_refr_now(nat->disp);
+        int found = 0;
+        lv_point_t at = {0, 0};
+        for(int32_t y = 0; y < nh; y++)
+            for(int32_t x = 0; x < nw; x++) {
+                const uint16_t v = *(const uint16_t *)(nat->buf + y * nat->stride + x * 2);
+                if(v != 0) {
+                    found++;
+                    at.x = x;
+                    at.y = y;
+                }
+            }
+        lv_point_t back = at;
+        lv_display_rotate_point(nat->disp, &back);
+        if(found != 1 || back.x != pts[i][0] || back.y != pts[i][1]) {
+            bad++;
+            printf("  FAIL  touch at %s: UI %d,%d drawn at %d panel pixel(s), the last at %d,%d, read back as %d,%d\n",
+                   rot_name(rot), (int)pts[i][0], (int)pts[i][1], found, (int)at.x, (int)at.y, (int)back.x,
+                   (int)back.y);
+        }
+    }
+    g_cases++;
+    if(bad) g_failures++;
+    else printf("  ok    touch at %s: every panel pixel reads back as the UI point drawn there\n", rot_name(rot));
+    drop_screen(nat);
+}
+
 static void check_fake_ppa_against_the_board(void)
 {
     const int32_t w = 37, h = 23;  /* odd and unequal, so nothing lines up by luck */
@@ -1116,6 +1169,7 @@ int main(int argc, char ** argv)
     }
 
     check_fake_ppa_against_the_board();
+    for(int r = 0; r < 4; r++) check_touch(320, 480, rots[r]);
     g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
     g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
     for(unsigned r = 0; r < 4; r++) {
