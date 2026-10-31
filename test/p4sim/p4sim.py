@@ -96,7 +96,9 @@ def build(lvgl, work):
     objs.append(one(os.path.join(ORTHO, "lv_draw_ortho.c"),
                     ["-DESP_PLATFORM", "-DLV_KCONFIG_IGNORE", f"-I{HERE}/stub"], "ortho.o"))
     objs.append(one(os.path.join(ORTHO, "lv_draw_ortho_video.c"), [f"-I{stub}"], "video.o"))
-    objs.append(one(os.path.join(stub, "p4fake.c"), [f"-I{stub}"], "p4fake.o"))
+    # P4SIM: the fake PPA marks its copying as DMA, kept out of the counts.
+    objs.append(one(os.path.join(stub, "p4fake.c"), [f"-I{stub}", "-DP4SIM"], "p4fake.o"))
+    objs.append(one(os.path.join(ORTHO, "lv_draw_ortho_ppa.c"), [f"-I{stub}"], "ppa.o"))
     objs.append(one(os.path.join(HERE, "p4bench.c"), [f"-I{stub}"], "p4bench.o"))
     # GCC would turn their loops back into calls to themselves.
     objs.append(one(os.path.join(HERE, "string.c"), ["-fno-tree-loop-distribute-patterns", "-fno-builtin"],
@@ -144,7 +146,12 @@ def ms(k, cpi, c_int, c_l2, c_line):
     return cycles(k, cpi, c_int, c_l2, c_line) / (MHZ * 1e3)
 
 
-def report(p):
+def ppa_pixels(log):
+    """What the PPA turned in each measured redraw, as p4bench reports it."""
+    return {int(m.group(1)): int(m.group(2)) for m in re.finditer(r"^ppa (\d+): (\d+) pixels", log, re.M)}
+
+
+def report(p, ppa_px):
     cases = [(1.0, 10, 20, sum(COPY_MS) / 2, "middle"),
              (1.0, 10, 20, COPY_MS[0], "PSRAM faster"), (1.0, 10, 20, COPY_MS[1], "PSRAM slower"),
              (1.5, 20, 40, sum(COPY_MS) / 2, "slower core")]
@@ -174,6 +181,29 @@ def report(p):
                 print(f"  {n:40s}" + "".join(f"{r[i]:14.1f}" for r in rows))
             print(f"  {'lv_draw_ortho against the adapter':40s}" +
                   "".join(f"{r[1] / r[2]:13.2f}x" for r in rows))
+            if ph + 2 in p and ph + 2 in ppa_px:
+                # lv_draw_ortho with the PPA turning: the CPU's part counted,
+                # the PPA's timed at the measured rate. The two overlap when a
+                # tile is drawn while the last one is turned; between fully
+                # overlapped and one after the other is where a board lands.
+                k2, dma = p[ph + 2], ppa_px[ph + 2] * PPA_NS_PX / 1e6
+                both, best, worst = [], [], []
+                for c, r in zip(cases, rows):
+                    cpu = ms(k2, *c[:3], model(p, *c[:3], c[3]))
+                    lo, hi = max(cpu, dma), cpu + dma
+                    both.append((lo, hi))
+                    best.append(r[1] / lo)
+                    worst.append(r[1] / hi)
+                disp = px * DISPLAY_NS_PX / 1e6
+                print(f"  {'lv_draw_ortho + PPA (ESPHome mipi_dsi)':40s}" +
+                      "".join(f"{lo + disp:7.1f}-{hi + disp:<6.1f}" for lo, hi in both))
+                print(f"  {'lv_draw_ortho + PPA (panel buffers)':40s}" +
+                      "".join(f"{lo:7.1f}-{hi:<6.1f}" for lo, hi in both))
+                print(f"  {'  against the adapter':40s}" +
+                      "".join(f"{w:6.2f}-{b:.2f}x " for w, b in zip(worst, best)))
+                print(f"    of which the PPA {dma:.1f} ms ({ppa_px[ph + 2]} pixels), the CPU "
+                      f"{k2['insns'] / 1e6:.1f} M instructions and "
+                      f"{(k2['psram_fill'] + k2['psram_writeback']) * 64 / 1024:.0f} KiB through the PSRAM")
             if ph == pic:
                 # A camera through lvgl_camera_display's ortho_id: the PPA turns
                 # each frame once into a window LVGL keeps out of, and LVGL
@@ -196,20 +226,23 @@ def main():
     ap.add_argument("--counts", help="report from a counts file of an earlier run")
     a = ap.parse_args()
     if a.counts:
-        report(read(a.counts))
+        logf = os.path.join(os.path.dirname(a.counts), "log.txt")
+        report(read(a.counts), ppa_pixels(open(logf).read()) if os.path.exists(logf) else {})
         return
     if not a.lvgl:
         ap.error("--lvgl is needed to build")
     elf, so = build(a.lvgl, a.work)
     out = os.path.join(a.work, "counts.txt")
     log = simulate(elf, so, out)
+    with open(os.path.join(a.work, "log.txt"), "w") as f:
+        f.write(log)
     print(log, end="")
     # What the board does, or the figures say nothing about it: the tile in
     # internal RAM, and the run to its end.
     if "done" not in log or log.count("tile_internal 1") != 3:
         sys.exit("the simulated bench did not run as on a board (see above)")
     p = read(out)
-    report(p)
+    report(p, ppa_pixels(log))
     line = model(p, 1.0, 10, 20, sum(COPY_MS) / 2)
     if not 30 <= line <= 600:
         sys.exit(f"a PSRAM line comes out at {line:.0f} cycles: the calibration is off")

@@ -80,7 +80,10 @@ typedef struct {
     uint64_t bytes_turned;     /**< bytes moved through a turn */
     uint64_t bytes_straight;   /**< bytes moved without one */
     uint64_t bytes_drawn;      /**< bytes LVGL's renderer wrote into tiles, overdraw included */
+    uint64_t bytes_handed;     /**< of bytes_turned, those a turner (the PPA) moved rather than the CPU */
+    uint32_t waits;            /**< times the CPU waited for a turner */
     uint8_t tile_internal;     /**< 1 when the tile is in internal RAM rather than PSRAM */
+    uint8_t tiles_in_turn;     /**< 2 when one tile is drawn while the other is turned */
 } lv_draw_ortho_stats_t;
 
 /** Called with a straight (unturned) copy so a platform can hand it to DMA.
@@ -89,6 +92,36 @@ typedef struct {
 typedef bool (*lv_draw_ortho_copy_cb_t)(void * dest, int32_t dest_stride,
                                         const void * src, int32_t src_stride,
                                         int32_t row_bytes, int32_t h);
+
+/** A picture in memory, for a turner: `w` x `h` pixels, `stride` bytes a row. */
+typedef struct {
+    void * buf;
+    uint32_t stride;
+    uint32_t w, h;
+} lv_draw_ortho_pic_t;
+
+/**
+ * Hand a turn to something other than the CPU -- the ESP32-P4's PPA, see
+ * lv_draw_ortho_ppa.h. Turn `block` of `src` by `rot` (the display's rotation
+ * when going onto the panel, its opposite when coming back) and put it in
+ * `dst` with its top-left corner at (dx, dy). Return a ticket, counting up
+ * from 1, once it is QUEUED -- or 0 to decline, and the CPU does it.
+ */
+typedef uint32_t (*lv_draw_ortho_turn_cb_t)(const lv_draw_ortho_pic_t * src, const lv_area_t * block,
+                                            const lv_draw_ortho_pic_t * dst, int32_t dx, int32_t dy,
+                                            lv_display_rotation_t rot, lv_color_format_t cf);
+
+/** Return once the turn with this ticket, and every one queued before it,
+ *  has finished and its pixels are in memory. */
+typedef void (*lv_draw_ortho_wait_cb_t)(uint32_t ticket);
+
+/**
+ * Turn tiles with `turn` instead of the CPU, NULL for the CPU again. With a
+ * turner, lv_draw_ortho draws one tile while the last one is being turned, so
+ * it takes a second tile (internal RAM only; without room for one it waits
+ * instead). Nothing it queued is left running when it hands a layer back.
+ */
+void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait);
 
 /** Create the draw unit. Call after `lv_init()`. */
 void lv_draw_ortho_init(void);

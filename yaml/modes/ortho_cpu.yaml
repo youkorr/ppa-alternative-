@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# lv_draw_ortho with its turns done by the CPU rather than the PPA: what the
+# PPA is compared against.
+
+lvgl_ortho:
+  id: ortho
+  rotation: ${rotation}
+  ppa: false

@@ -19,7 +19,7 @@
 static inline void * heap_caps_malloc(size_t size, uint32_t caps)
 {
     if(caps & MALLOC_CAP_INTERNAL) {
-        static uint8_t arena[256 * 1024] __attribute__((aligned(64)));
+        static uint8_t arena[512 * 1024] __attribute__((aligned(64)));
         static size_t used;
         size = (size + 63) & ~(size_t)63;
         if(used + size > sizeof(arena)) return NULL;

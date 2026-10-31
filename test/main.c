@@ -27,6 +27,7 @@
 #endif
 #include "lv_draw_ortho.h"
 #include "lv_draw_ortho_video.h"
+#include "lv_draw_ortho_ppa.h"
 #include "p4fake.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -470,6 +471,71 @@ static void check_scene(const char * scene, int32_t nw, int32_t nh, lv_color_for
     }
     lv_draw_ortho_set_fast_paths(true);
     lv_draw_ortho_set_batching(true);
+    free(want);
+}
+
+/* The same scenes with the PPA turning the tiles (lv_draw_ortho_ppa.c, on
+ * the fake PPA). The fake runs a non-blocking transaction only when time is
+ * let pass or a blocking one follows, so a wait lv_draw_ortho forgets leaves
+ * the frame buffer as it was, and the picture is wrong: this is what catches
+ * one (test/ppa_mutants.py takes the waits out one at a time to prove it). */
+static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_display_rotation_t rot,
+                            void (*build)(lv_obj_t *))
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    uint8_t * want = reference(nw, nh, cf, rot, build);
+    if(lv_draw_ortho_ppa_init() != ESP_OK) {
+        g_failures++;
+        printf("  FAIL  lv_draw_ortho_ppa_init\n");
+        return;
+    }
+    for(int run = 0; run < 4; run++) {
+        /* One by one, every task after the first reads back what is already
+         * on the glass: the PPA's other direction. */
+        const bool fast = run != 1, partial = run == 2, batch = run != 3;
+        lv_draw_ortho_set_fast_paths(fast);
+        lv_draw_ortho_set_batching(batch);
+        screen_t * nat = make_screen(nw, nh, cf, rot, true, partial);
+        lv_display_set_default(nat->disp);
+        build(lv_display_get_screen_active(nat->disp));
+        lv_draw_ortho_reset_stats();
+        const int runs = g_p4_runs;
+        lv_refr_now(nat->disp);
+        const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+        char what[200];
+        snprintf(what, sizeof(what), "PPA: %s %dx%d at %s, %s, fast %s, %s (%u tiles, %u PPA turns, %.0f%% of the bytes)",
+                 scene, (int)nw, (int)nh, rot_name(rot), partial ? "partial" : "direct ", fast ? "on " : "off",
+                 batch ? "batched" : "one by one", st->tiles, g_p4_runs - runs,
+                 st->bytes_turned ? 100.0 * st->bytes_handed / st->bytes_turned : 0.0);
+        const int pending = p4fake_pending();
+        diffs_t d;
+        long nd = count_diffs(nat, want, cf, &d);
+        int32_t excused = nd > 0 && nd <= MAX_EXCUSED ? excuse(nat, &d, nw, nh, cf, rot, build) : -1;
+        if(excused > 0) {
+            g_cases++;
+            printf("  ok    %s -- %d pixel(s) exactly as LVGL itself draws them when cut there\n", what, (int)excused);
+        }
+        else expect_same(what, nat, want, cf);
+        /* In direct mode the frame buffer is the PPA's to write -- unless its
+         * size is not a whole number of cache lines: the driver invalidates
+         * the output rows rounded to the line, which would reach past the
+         * buffer, so the bottom rows stay the CPU's. On these test sizes that
+         * is every tile at 90 and 270, the declining path proved too. */
+        const bool lines = (lv_draw_buf_width_to_stride(nw, cf) * (uint32_t)nh) % 128 == 0;
+        if(!partial && (st->tiles_in_turn != 2 || (lines && st->bytes_handed == 0))) {
+            g_failures++;
+            printf("  FAIL  ...and the PPA turned nothing (%u tiles in turn)\n", st->tiles_in_turn);
+        }
+        if(pending) {
+            g_failures++;
+            printf("  FAIL  ...and %d PPA transaction(s) were still queued when LVGL took its layer back\n", pending);
+        }
+        p4fake_run_all();
+        drop_screen(nat);
+    }
+    lv_draw_ortho_set_fast_paths(true);
+    lv_draw_ortho_set_batching(true);
+    lv_draw_ortho_ppa_deinit();
     free(want);
 }
 
@@ -1289,6 +1355,35 @@ int main(int argc, char ** argv)
     }
 
     check_fake_ppa_against_the_board();
+    {
+        g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
+        g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
+        for(unsigned r = 0; r < 3; r++) {
+            check_scene_ppa("ui", 320, 480, rots[r], scene_ui);
+            check_scene_ppa("ui", 333, 517, rots[r], scene_ui);
+        }
+    }
+    {
+        /* Camera frames: whole pictures, drawn by the fast path straight into
+         * the frame buffer -- by the PPA now, in one pass. */
+        const int runs = g_p4_runs;
+        lv_draw_ortho_ppa_init();
+        check_camera(400, 640, LV_DISPLAY_ROTATION_90, 322, 182);
+        check_camera(512, 300, LV_DISPLAY_ROTATION_180, 640, 480);
+        check_camera(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
+        lv_draw_ortho_ppa_deinit();
+        g_cases++;
+        if(g_p4_runs > runs && p4fake_pending() == 0)
+            printf("  ok    PPA: the camera frames above were turned by the PPA (%d transactions)\n", g_p4_runs - runs);
+        else {
+            g_failures++;
+            printf("  FAIL  PPA: the camera frames were not turned by the PPA, or left queued\n");
+        }
+    }
+    if(argc > 1 && strcmp(argv[1], "--ppa") == 0) {
+        printf("%d of %d cases passed\n", g_cases - g_failures, g_cases);
+        return g_failures ? 1 : 0;
+    }
     for(int r = 0; r < 4; r++) check_touch(320, 480, rots[r]);
     g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
     g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);

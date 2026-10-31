@@ -42,9 +42,9 @@ $(BUILD)/lvgl.a: $(LV_OBJ)
 
 # p4stub/ stands in for ESP-IDF's PPA and cache, so the ESP32-P4 video
 # producer is built and run here against a PPA that behaves like the board's.
-VIDEO := ../components/lvgl_ortho/lv_draw_ortho_video.c p4stub/p4fake.c
+VIDEO := ../components/lvgl_ortho/lv_draw_ortho_video.c ../components/lvgl_ortho/lv_draw_ortho_ppa.c p4stub/p4fake.c
 
-$(BUILD)/ortho_test: $(SRC)/.patched main.c ../components/lvgl_ortho/lv_draw_ortho.c ../components/lvgl_ortho/lv_draw_ortho.h ../components/lvgl_ortho/lv_draw_ortho_video.h $(VIDEO) lv_conf.h $(BUILD)/lvgl.a
+$(BUILD)/ortho_test: $(SRC)/.patched main.c ../components/lvgl_ortho/lv_draw_ortho.c ../components/lvgl_ortho/lv_draw_ortho.h ../components/lvgl_ortho/lv_draw_ortho_video.h ../components/lvgl_ortho/lv_draw_ortho_ppa.h $(VIDEO) lv_conf.h $(BUILD)/lvgl.a
 	$(CC) $(FLAGS) -Ip4stub -Werror main.c ../components/lvgl_ortho/lv_draw_ortho.c $(VIDEO) $(BUILD)/lvgl.a -lm -o $@
 
 run: $(BUILD)/ortho_test $(BUILD)/esphome_test $(BUILD)/esphome_test_fb $(BUILD)/bench_test
@@ -63,6 +63,7 @@ $(BUILD)/esphome_test: $(SRC)/.patched esphome_test.cpp $(ORTHO)/lvgl_ortho.cpp 
 	@mkdir -p $(BUILD)/esphome
 	$(CC) $(FLAGS) -Ip4stub -Werror -c $(ORTHO)/lv_draw_ortho.c -o $(BUILD)/esphome/lv_draw_ortho.o
 	$(CC) $(FLAGS) -Ip4stub -Werror -c $(ORTHO)/lv_draw_ortho_video.c -o $(BUILD)/esphome/lv_draw_ortho_video.o
+	$(CC) $(FLAGS) -Ip4stub -Werror -c $(ORTHO)/lv_draw_ortho_ppa.c -o $(BUILD)/esphome/lv_draw_ortho_ppa.o
 	$(CC) $(FLAGS) -Ip4stub -Werror -c p4stub/p4fake.c -o $(BUILD)/esphome/p4fake.o
 	$(CXX) $(CFLAGS) -std=c++17 -DLV_CONF_INCLUDE_SIMPLE -I. -I$(ORTHO) -I$(SRC) -Iesphome_stub -Ip4stub -Wall -Wextra -Werror \
 		esphome_test.cpp $(ORTHO)/lvgl_ortho.cpp $(BUILD)/esphome/*.o $(BUILD)/lvgl.a -lm -o $@

@@ -10,12 +10,13 @@
 #   board: tab5       M5Stack Tab5, landscape (270)
 #          guition    Guition JC8012P4A1, landscape (90)
 #          waveshare  Waveshare 7B, turned over (180)
-#   mode:  ortho      lv_draw_ortho: LVGL draws in the panel's orientation
+#   mode:  ortho      lv_draw_ortho, the PPA turning while the CPU draws
+#          ortho_cpu  lv_draw_ortho, the CPU turning (to compare with the PPA)
 #          lvgl       ESPHome's own rotation, as before lvgl_ortho
 #
-# Nothing else changes between the two modes, so the figure measures the
+# Nothing else changes between the modes, so the figure measures the
 # rotation alone. Needs secrets.yaml with wifi_ssid, wifi_password and
-# api_encryption_key. The rest of each board is in boards/, the two modes
+# api_encryption_key. The rest of each board is in boards/, the modes
 # in modes/.
 
 substitutions:

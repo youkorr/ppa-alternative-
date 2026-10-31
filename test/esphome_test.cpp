@@ -272,14 +272,17 @@ int main(int argc, char **argv) {
 
   // The camera, through the PPA, in the canvas's place. LVGL holds the blank
   // frame as the image's source and must never draw it over the video.
-  const int srm = g_p4.srm_count;
+  // The frame must go through the PPA once; LVGL's own tiles go through it
+  // too now, so only the transactions reading the frame are counted.
+  p4fake_watch(frame->data);
   bool shown = ortho.show_video(s.canvas, frame->data, fw, fh);
   lv_obj_invalidate(lv_display_get_screen_active(disp));  // and LVGL redraws everything around it
   lv_refr_now(disp);
   d = diffs(glass(), want_video);
   std::snprintf(what, sizeof what, "a camera frame through show_video(): glass right (%zu differ), %d PPA pass",
-                d, g_p4.srm_count - srm);
-  expect(shown && d == 0 && g_p4.srm_count - srm == 1, what);
+                d, p4fake_watched());
+  expect(shown && d == 0 && p4fake_watched() == 1 && p4fake_pending() == 0, what);
+  p4fake_watch(nullptr);
 
   // A finger: the glass point under a UI point must come back as that point.
   const lv_point_t ui = {uw - 14, uh - 14};  // the small square's middle

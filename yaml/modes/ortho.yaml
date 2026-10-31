@@ -2,8 +2,10 @@
 # Copyright (c) 2026 youkorr
 # Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
 #
-# lv_draw_ortho: LVGL draws in the panel's orientation, lvgl: has no rotation.
+# lv_draw_ortho: LVGL draws in the panel's orientation, lvgl: has no rotation,
+# and the PPA turns each tile while the CPU draws the next.
 
 lvgl_ortho:
   id: ortho
   rotation: ${rotation}
+  ppa: true

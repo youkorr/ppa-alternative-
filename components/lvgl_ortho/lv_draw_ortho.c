@@ -58,8 +58,12 @@ typedef struct {
     lv_draw_unit_t base;
     lv_draw_task_t * task_act;
     job_t * jobs;            /* LV_DRAW_ORTHO_MAX_BATCH */
-    uint8_t * tile;          /* LV_DRAW_ORTHO_TILE_BYTES, aligned */
-    void * tile_alloc;
+    /* LV_DRAW_ORTHO_TILE_BYTES each, aligned to a cache line. The second only
+     * with a turner: one is drawn while the other is being turned. */
+    uint8_t * tile[2];
+    void * tile_alloc[2];
+    uint32_t ticket[2];      /* the last turn reading each tile, 0 if none */
+    int32_t next;
 } ortho_unit_t;
 
 static ortho_unit_t * g_unit;
@@ -68,6 +72,16 @@ static lv_draw_ortho_copy_cb_t g_copy_cb;
 static bool g_fast = true;
 static bool g_batch = true;
 static bool g_tile_internal;
+
+/* A turner (the PPA) and the last ticket it was handed that may still be
+ * running, 0 when none is. */
+static lv_draw_ortho_turn_cb_t g_turn;
+static lv_draw_ortho_wait_cb_t g_wait;
+static uint32_t g_last;
+
+/* A turner writes by DMA, and its output has to start on a cache line: the
+ * ESP32-P4's PPA wants its L2's, which is at most 128 bytes. */
+#define TILE_ALIGN 128
 
 /* The video window: a native rectangle of one display's frame buffer that
  * LVGL leaves to a source writing there itself. */
@@ -322,6 +336,91 @@ static void move_turned(const ortho_t * o, int32_t px,
 }
 
 /* ------------------------------------------------------------------------ */
+/* Turning with a turner                                                    */
+/* ------------------------------------------------------------------------ */
+
+/* Wait for everything handed to the turner. Whatever the CPU is about to read
+ * or write in a buffer a queued turn may still be reading or writing, it does
+ * after this -- and it is done at the end of every run of tasks, so nothing is
+ * left running when LVGL takes its layer back. */
+static void fence(void)
+{
+    if(g_last && g_wait) {
+        g_wait(g_last);
+        g_stats.waits++;
+    }
+    g_last = 0;
+}
+
+/* The display rotation a quarter-turn matrix is; false for a mirror. */
+static bool ortho_rotation(const ortho_t * o, lv_display_rotation_t * rot)
+{
+    if(o->a == 1 && o->d == 1 && o->b == 0 && o->c == 0) *rot = LV_DISPLAY_ROTATION_0;
+    else if(o->a == -1 && o->d == -1 && o->b == 0 && o->c == 0) *rot = LV_DISPLAY_ROTATION_180;
+    else if(o->a == 0 && o->d == 0 && o->b == 1 && o->c == -1) *rot = LV_DISPLAY_ROTATION_90;
+    else if(o->a == 0 && o->d == 0 && o->b == -1 && o->c == 1) *rot = LV_DISPLAY_ROTATION_270;
+    else return false;
+    return true;
+}
+
+static lv_display_rotation_t opposite(lv_display_rotation_t r)
+{
+    return r == LV_DISPLAY_ROTATION_90 ? LV_DISPLAY_ROTATION_270
+           : r == LV_DISPLAY_ROTATION_270 ? LV_DISPLAY_ROTATION_90 : r;
+}
+
+/* move_turned's job, handed to the turner if there is one and it takes it;
+ * else done by the CPU, after everything queued has finished. Returns the
+ * turner's ticket, 0 when the CPU did it. */
+static uint32_t turn_or_cpu(const ortho_t * o, lv_color_format_t cf, int32_t px,
+                            uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
+                            uint8_t * up, int32_t up_stride, const lv_area_t * up_area,
+                            const lv_area_t * nat_rect, bool to_native)
+{
+    lv_display_rotation_t rot;
+    if(g_turn && ortho_rotation(o, &rot)) {
+        lv_area_t up_rect, blk;
+        ortho_unarea(o, nat_rect, &up_rect);
+        const lv_draw_ortho_pic_t np = {nat, (uint32_t)nat_stride, (uint32_t)(nat_stride / px),
+                                        (uint32_t)lv_area_get_height(nat_buf_area)
+                                       };
+        const lv_draw_ortho_pic_t upic = {up, (uint32_t)up_stride, (uint32_t)(up_stride / px),
+                                          (uint32_t)lv_area_get_height(up_area)
+                                         };
+        uint32_t t;
+        if(to_native) {
+            blk = up_rect;
+            lv_area_move(&blk, -up_area->x1, -up_area->y1);
+            t = g_turn(&upic, &blk, &np, nat_rect->x1 - nat_buf_area->x1, nat_rect->y1 - nat_buf_area->y1, rot, cf);
+        }
+        else {
+            blk = *nat_rect;
+            lv_area_move(&blk, -nat_buf_area->x1, -nat_buf_area->y1);
+            t = g_turn(&np, &blk, &upic, up_rect.x1 - up_area->x1, up_rect.y1 - up_area->y1, opposite(rot), cf);
+        }
+        if(t) {
+            const uint64_t bytes = (uint64_t)lv_area_get_size(nat_rect) * (uint64_t)px;
+            g_stats.bytes_turned += bytes;
+            g_stats.bytes_handed += bytes;
+            g_last = t;
+            return t;
+        }
+    }
+    fence();
+    move_turned(o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, nat_rect, to_native);
+    return 0;
+}
+
+static void wait_ticket(uint32_t * t)
+{
+    if(*t && g_wait) {
+        g_wait(*t);
+        g_stats.waits++;
+    }
+    *t = 0;
+}
+
+/* ------------------------------------------------------------------------ */
 /* The software renderer, run on a copy of the task                         */
 /* ------------------------------------------------------------------------ */
 
@@ -540,7 +639,7 @@ static bool job_touches(const job_t * j, const lv_area_t * tile)
 }
 
 static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t * whole_tile,
-                      uint8_t * mem, size_t mem_size)
+                      uint8_t * mem, size_t mem_size, uint32_t * ticket)
 {
     /* Only the part of the tile the jobs reach: a run of a scroll bar down
      * the right edge and another along the bottom spans the whole screen, and
@@ -580,8 +679,9 @@ static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
     /* The tile starts as what is already under it, so blending is right --
      * unless the first thing drawn paints all of it anyway. */
     if(!covers(&jobs[first], tile)) {
-        move_turned(o, px, nb->data, nb->header.stride, &target->buf_area,
-                    tb.data, stride, tile, &nat, false);
+        uint32_t t = turn_or_cpu(o, cf, px, nb->data, nb->header.stride, &target->buf_area,
+                                 tb.data, stride, tile, &nat, false);
+        wait_ticket(&t);   /* it is drawn on next */
     }
     else g_stats.tiles_unread++;
 
@@ -600,8 +700,9 @@ static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
     lv_area_t parts[4];
     const int32_t np = outside_window(target, &nat, parts);
     for(int32_t i = 0; i < np; i++) {
-        move_turned(o, px, nb->data, nb->header.stride, &target->buf_area,
-                    tb.data, stride, tile, &parts[i], true);
+        const uint32_t t = turn_or_cpu(o, cf, px, nb->data, nb->header.stride, &target->buf_area,
+                                       tb.data, stride, tile, &parts[i], true);
+        if(t) *ticket = t;
     }
     g_stats.tiles++;
 }
@@ -622,7 +723,9 @@ static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
             LV_LOG_WARN("ortho: no memory for a blur");
             return;
         }
-        draw_tile(jobs, 1, o, &box, lv_draw_buf_align(raw, cf), size - LV_DRAW_BUF_ALIGN);
+        uint32_t t = 0;
+        draw_tile(jobs, 1, o, &box, lv_draw_buf_align(raw, cf), size - LV_DRAW_BUF_ALIGN, &t);
+        fence();   /* a turner may still be reading it */
         lv_free(raw);
         return;
     }
@@ -638,9 +741,16 @@ static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
     for(int32_t y = box.y1; y <= box.y2; y += th) {
         for(int32_t x = box.x1; x <= box.x2; x += tw) {
             lv_area_t tile = {x, y, LV_MIN(x + tw - 1, box.x2), LV_MIN(y + th - 1, box.y2)};
-            draw_tile(jobs, n, o, &tile, u->tile, LV_DRAW_ORTHO_TILE_BYTES);
+            /* With two tiles, this one is drawn while the turner still has
+             * the other: it waits only for the turns reading THIS one. */
+            const int32_t k = u->next;
+            if(u->tile[1]) u->next ^= 1;
+            wait_ticket(&u->ticket[k]);
+            draw_tile(jobs, n, o, &tile, u->tile[k], LV_DRAW_ORTHO_TILE_BYTES, &u->ticket[k]);
         }
     }
+    fence();
+    u->ticket[0] = u->ticket[1] = 0;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -720,9 +830,10 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
     const int32_t sstride = img->header.stride ? (int32_t)img->header.stride
                             : (int32_t)img->header.w * px;
     for(int32_t i = 0; i < np; i++) {
-        move_turned(o, px, nb->data, nb->header.stride, &target->buf_area,
+        turn_or_cpu(o, nb->header.cf, px, nb->data, nb->header.stride, &target->buf_area,
                     (uint8_t *)img->data, sstride, &t->area, &parts[i], true);
     }
+    fence();   /* the picture is the application's again when the task is finished */
     g_stats.images_turned++;
     return true;
 }
@@ -942,14 +1053,45 @@ static void tile_free(void * p)
 }
 #endif
 
+static uint8_t * tile_aligned(void * p)
+{
+    return (uint8_t *)(((uintptr_t)p + TILE_ALIGN - 1) & ~(uintptr_t)(TILE_ALIGN - 1));
+}
+
+/* The second tile, when a turner can use it: internal RAM or nothing, since a
+ * tile in PSRAM would put all the drawing on the bus the turn is meant to
+ * keep it off. */
+static void second_tile(ortho_unit_t * u)
+{
+    if(u->tile[1] || g_turn == NULL) return;
+    bool internal = false;
+    void * p = tile_alloc(LV_DRAW_ORTHO_TILE_BYTES + TILE_ALIGN, &internal);
+#if !defined(ESP_PLATFORM)
+    internal = true;   /* a PC has one kind of memory */
+#endif
+    if(p && !internal) {
+        tile_free(p);
+        p = NULL;
+    }
+    if(p == NULL) {
+        LV_LOG_WARN("ortho: no internal RAM for a second tile; the CPU waits for each turn");
+        return;
+    }
+    u->tile_alloc[1] = p;
+    u->tile[1] = tile_aligned(p);
+}
+
 static int32_t delete_cb(lv_draw_unit_t * draw_unit)
 {
     ortho_unit_t * u = (ortho_unit_t *)draw_unit;
-    tile_free(u->tile_alloc);
+    fence();
+    for(int i = 0; i < 2; i++) {
+        if(u->tile_alloc[i]) tile_free(u->tile_alloc[i]);
+        u->tile_alloc[i] = NULL;
+        u->tile[i] = NULL;
+    }
     lv_free(u->jobs);
     u->jobs = NULL;
-    u->tile_alloc = NULL;
-    u->tile = NULL;
     g_unit = NULL;
     return 0;
 }
@@ -963,13 +1105,26 @@ void lv_draw_ortho_init(void)
     u->base.dispatch_cb = dispatch;
     u->base.delete_cb = delete_cb;
     bool internal = false;
-    u->tile_alloc = tile_alloc(LV_DRAW_ORTHO_TILE_BYTES + LV_DRAW_BUF_ALIGN, &internal);
-    LV_ASSERT_MALLOC(u->tile_alloc);
+    u->tile_alloc[0] = tile_alloc(LV_DRAW_ORTHO_TILE_BYTES + TILE_ALIGN, &internal);
+    LV_ASSERT_MALLOC(u->tile_alloc[0]);
     g_tile_internal = internal;
-    u->tile = lv_draw_buf_align(u->tile_alloc, LV_COLOR_FORMAT_RGB565);
+    u->tile[0] = tile_aligned(u->tile_alloc[0]);
     u->jobs = lv_malloc(sizeof(job_t) * LV_DRAW_ORTHO_MAX_BATCH);
     LV_ASSERT_MALLOC(u->jobs);
     g_unit = u;
+    second_tile(u);
+}
+
+void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait)
+{
+    fence();
+    g_turn = wait ? turn : NULL;
+    g_wait = g_turn ? wait : NULL;
+    if(g_unit) {
+        g_unit->ticket[0] = g_unit->ticket[1] = 0;
+        g_unit->next = 0;
+        second_tile(g_unit);
+    }
 }
 
 void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb)
@@ -990,6 +1145,7 @@ void lv_draw_ortho_set_batching(bool enable)
 const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void)
 {
     g_stats.tile_internal = g_tile_internal;
+    g_stats.tiles_in_turn = g_unit && g_unit->tile[1] && g_turn ? 2 : 1;
     return &g_stats;
 }
 
