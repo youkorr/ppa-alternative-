@@ -57,6 +57,9 @@ MHZ = 360                      # CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360, the boards
 COPY_MS = (32.0, 35.0)         # Tab5, 1280x620 RGB565 memcpy PSRAM to PSRAM
 PPA_NS_PX = 14865e3 / (1024 * 600)        # Waveshare 7B, rotate whole panel
 DISPLAY_NS_PX = (18964 - 14865) * 1e3 / (1024 * 600)   # its copy to the panel
+# A fill only writes, where a turn reads and writes the same bus: half the
+# time a pixel. An estimate, not a measurement -- no fill was timed on a board.
+FILL_NS_PX = PPA_NS_PX / 2
 
 BOARDS = [  # name, panel, phase of the UI, phase of the picture
     ("Tab5, 720x1280 at 270", 720 * 1280, 20, 50),
@@ -148,7 +151,8 @@ def ms(k, cpi, c_int, c_l2, c_line):
 
 def ppa_pixels(log):
     """What the PPA turned in each measured redraw, as p4bench reports it."""
-    return {int(m.group(1)): int(m.group(2)) for m in re.finditer(r"^ppa (\d+): (\d+) pixels", log, re.M)}
+    return {int(m.group(1)): (int(m.group(2)), int(m.group(3)))
+            for m in re.finditer(r"^ppa (\d+): (\d+) pixels, (\d+) filled", log, re.M)}
 
 
 def report(p, ppa_px):
@@ -186,7 +190,8 @@ def report(p, ppa_px):
                 # the PPA's timed at the measured rate. The two overlap when a
                 # tile is drawn while the last one is turned; between fully
                 # overlapped and one after the other is where a board lands.
-                k2, dma = p[ph + 2], ppa_px[ph + 2] * PPA_NS_PX / 1e6
+                moved, filled = ppa_px[ph + 2]
+                k2, dma = p[ph + 2], ((moved - filled) * PPA_NS_PX + filled * FILL_NS_PX) / 1e6
                 both, best, worst = [], [], []
                 for c, r in zip(cases, rows):
                     cpu = ms(k2, *c[:3], model(p, *c[:3], c[3]))
@@ -201,7 +206,7 @@ def report(p, ppa_px):
                       "".join(f"{lo:7.1f}-{hi:<6.1f}" for lo, hi in both))
                 print(f"  {'  against the adapter':40s}" +
                       "".join(f"{w:6.2f}-{b:.2f}x " for w, b in zip(worst, best)))
-                print(f"    of which the PPA {dma:.1f} ms ({ppa_px[ph + 2]} pixels), the CPU "
+                print(f"    of which the PPA {dma:.1f} ms ({moved - filled} pixels turned, {filled} filled), the CPU "
                       f"{k2['insns'] / 1e6:.1f} M instructions and "
                       f"{(k2['psram_fill'] + k2['psram_writeback']) * 64 / 1024:.0f} KiB through the PSRAM")
             if ph == pic:

@@ -60,9 +60,9 @@ int clock_gettime(clockid_t id, struct timespec * ts)
 
 /* What the PPA turned in the measured redraw: p4sim.py times it at the rate
  * measured on a board. */
-static void report_ppa(int phase_id, unsigned long long before)
+static void report_ppa(int phase_id, unsigned long long before, unsigned long long filled)
 {
-    printf("ppa %d: %llu pixels\n", phase_id, g_p4_pixels - before);
+    printf("ppa %d: %llu pixels, %llu filled\n", phase_id, g_p4_pixels - before, g_p4_fill_pixels - filled);
 }
 
 static void redraw(lv_display_t * disp, lv_obj_t * obj, int phase_id)
@@ -70,7 +70,7 @@ static void redraw(lv_display_t * disp, lv_obj_t * obj, int phase_id)
     lv_obj_invalidate(obj);
     lv_refr_now(disp);            /* warm */
     lv_obj_invalidate(obj);
-    const unsigned long long px = g_p4_pixels;
+    const unsigned long long px = g_p4_pixels, filled = g_p4_fill_pixels;
     switch(phase_id) {
         /* The immediate has to be a constant: one marker per phase. */
 #define CASE(n) case n: PHASE(n); lv_refr_now(disp); PHASE(1999); break;
@@ -78,7 +78,7 @@ static void redraw(lv_display_t * disp, lv_obj_t * obj, int phase_id)
         CASE(50) CASE(51) CASE(52) CASE(60) CASE(61) CASE(62) CASE(70) CASE(71) CASE(72)
 #undef CASE
     }
-    report_ppa(phase_id, px);
+    report_ppa(phase_id, px, filled);
 }
 
 /* lv_draw_ortho with the PPA turning (lv_draw_ortho_ppa.c, on the fake

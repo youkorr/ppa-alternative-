@@ -77,6 +77,7 @@ static bool g_tile_internal;
  * running, 0 when none is. */
 static lv_draw_ortho_turn_cb_t g_turn;
 static lv_draw_ortho_wait_cb_t g_wait;
+static lv_draw_ortho_fill_cb_t g_fill;
 static uint32_t g_last;
 static bool g_turner_failed;
 
@@ -775,6 +776,26 @@ static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
 /* Fast paths                                                               */
 /* ------------------------------------------------------------------------ */
 
+static bool plain_image(const lv_draw_task_t * t, const lv_image_dsc_t ** src_out);
+
+/* Whether a task later in the same layer is an opaque picture that will cover
+ * all of `todo`: then nothing drawn there before it can show, and a screen's
+ * background under a full-screen picture -- a wallpaper, a camera frame drawn
+ * by LVGL -- is a whole frame buffer written for nothing. Only tasks already
+ * in the list are looked at; one not added yet, and the fill is drawn. */
+static bool hidden_later(const lv_draw_task_t * t, const lv_area_t * todo)
+{
+    for(const lv_draw_task_t * c = t->next; c; c = c->next) {
+        const lv_image_dsc_t * img;
+        if(c->target_layer != t->target_layer || !plain_image(c, &img)) continue;
+        if(lv_color_format_has_alpha(img->header.cf)) continue;
+        lv_area_t covered;
+        if(!lv_area_intersect(&covered, &c->area, &c->clip_area)) continue;
+        if(lv_area_is_in(todo, &covered, 0)) return true;
+    }
+    return false;
+}
+
 /* A solid fill turned is the fill of the turned rectangle: a corner radius is
  * the same on every side, so nothing about it changes. */
 static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * todo)
@@ -782,12 +803,41 @@ static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * to
     if(t->type != LV_DRAW_DSC_TYPE_FILL) return false;
     lv_draw_fill_dsc_t * dsc = t->draw_dsc;
     if(dsc->grad.dir != LV_GRAD_DIR_NONE) return false;
+    if(hidden_later(t, todo)) {
+        g_stats.fills_direct++;
+        g_stats.fills_hidden++;
+        return true;
+    }
 
     lv_area_t area, clip, parts[4];
     ortho_area(o, &t->area, &area);
     ortho_area(o, todo, &clip);
     const int32_t np = outside_window(t->target_layer, &clip, parts);
-    for(int32_t i = 0; i < np; i++) sw_execute_on(t, t->target_layer, &area, &parts[i]);
+    /* A plain rectangle, opaque, straight into the frame buffer: the filler's
+     * (the PPA's) when there is one -- a screen's background is 1.8 MB the CPU
+     * would otherwise write through its cache into PSRAM. */
+    lv_layer_t * target = t->target_layer;
+    lv_draw_buf_t * nb = target->draw_buf;
+    const lv_color_format_t cf = nb->header.cf;
+    const bool plain = g_fill && dsc->radius == 0 && dsc->opa >= LV_OPA_MAX && t->opa >= LV_OPA_MAX &&
+                       target->recolor.alpha == 0 &&
+                       (cf == LV_COLOR_FORMAT_RGB565 || cf == LV_COLOR_FORMAT_RGB888);
+    const int32_t px = lv_color_format_get_size(cf);
+    const lv_draw_ortho_pic_t dst = {nb->data, nb->header.stride, nb->header.stride / (uint32_t)px,
+                                     (uint32_t)lv_area_get_height(&target->buf_area)
+                                    };
+    for(int32_t i = 0; i < np; i++) {
+        lv_area_t clipped;
+        if(plain && lv_area_intersect(&clipped, &parts[i], &area)) {
+            lv_area_t rect = clipped;
+            lv_area_move(&rect, -target->buf_area.x1, -target->buf_area.y1);
+            if(g_fill(&dst, &rect, dsc->color, cf)) {
+                g_stats.fills_handed++;
+                continue;
+            }
+        }
+        sw_execute_on(t, target, &area, &parts[i]);
+    }
     g_stats.fills_direct++;
     return true;
 }
@@ -1131,6 +1181,11 @@ void lv_draw_ortho_init(void)
     LV_ASSERT_MALLOC(u->jobs);
     g_unit = u;
     second_tile(u);
+}
+
+void lv_draw_ortho_set_filler(lv_draw_ortho_fill_cb_t fill)
+{
+    g_fill = fill;
 }
 
 void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait)

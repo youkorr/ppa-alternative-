@@ -26,6 +26,11 @@
 static ppa_client_handle_t g_client;
 static uint32_t g_queued;            /* tickets handed out */
 static volatile uint32_t g_done;     /* counted by the PPA's interrupt */
+/* Fills run on the PPA's other engine (blend), with a client and a count of
+ * their own: the two engines finish in no order relative to each other. */
+static ppa_client_handle_t g_fill_client;
+static uint32_t g_fill_queued;
+static volatile uint32_t g_fill_done;
 static bool g_stuck;
 
 bool lv_draw_ortho_ppa_stuck(void)
@@ -120,11 +125,30 @@ static bool cut(uint32_t x, uint32_t y, uint32_t w, uint32_t h, lv_display_rotat
 
 static bool on_done(ppa_client_handle_t client, ppa_event_data_t * event, void * user)
 {
-    (void)client;
     (void)event;
     (void)user;
-    g_done++;
+    if(client == g_fill_client) g_fill_done++;
+    else g_done++;
     return false;
+}
+
+/* Until `*done` reaches `ticket`, bounded the same way for both engines. */
+static bool wait_on(volatile uint32_t * done, uint32_t ticket)
+{
+    uint32_t seen = *done, idle_us = 0;
+    while((int32_t)(*done - ticket) < 0) {
+        if(g_stuck) return false;
+        esp_rom_delay_us(10);
+        if(*done != seen) {
+            seen = *done;
+            idle_us = 0;
+        }
+        else if((idle_us += 10) >= LV_DRAW_ORTHO_PPA_TIMEOUT_MS * 1000u) {
+            g_stuck = true;
+            return false;
+        }
+    }
+    return true;
 }
 
 /* As in lv_draw_ortho_video.c: LVGL's 90 and the PPA's 90 are the same turn. */
@@ -238,20 +262,44 @@ static uint32_t turn(const lv_draw_ortho_pic_t * src, const lv_area_t * block, c
  * makes no progress for LV_DRAW_ORTHO_PPA_TIMEOUT_MS is a stuck PPA. */
 static bool wait(uint32_t ticket)
 {
-    uint32_t seen = g_done, idle_us = 0;
-    while((int32_t)(g_done - ticket) < 0) {
-        if(g_stuck) return false;
-        esp_rom_delay_us(10);
-        if(g_done != seen) {
-            seen = g_done;
-            idle_us = 0;
-        }
-        else if((idle_us += 10) >= LV_DRAW_ORTHO_PPA_TIMEOUT_MS * 1000u) {
-            g_stuck = true;
-            return false;
-        }
-    }
-    return true;
+    return wait_on(&g_done, ticket);
+}
+
+/* A plain opaque rectangle into the frame buffer, by the PPA's fill. The
+ * driver writes back and invalidates the rows itself (ppa_fill.c). The colour
+ * is given with its low bits already cleared to RGB565's (or RGB888's)
+ * precision, so whether the PPA truncates or rounds when it narrows it, the
+ * pixel is the one LVGL's lv_color_to_u16() would have written. Waited for
+ * before returning: what follows in the frame buffer is drawn over it. */
+static bool fill(const lv_draw_ortho_pic_t * dst, const lv_area_t * rect, lv_color_t color, lv_color_format_t cf)
+{
+    if(g_fill_client == NULL || g_stuck) return false;
+    const uint32_t px = lv_color_format_get_size(cf);
+    const ppa_fill_color_mode_t cm = cf == LV_COLOR_FORMAT_RGB565 ? PPA_FILL_COLOR_MODE_RGB565
+                                     : cf == LV_COLOR_FORMAT_RGB888 ? PPA_FILL_COLOR_MODE_RGB888
+                                     : (ppa_fill_color_mode_t) - 1;
+    if((int)cm == -1 || dst->stride != dst->w * px || ((uintptr_t)dst->buf % LINE) != 0) return false;
+    const uint32_t size = (dst->stride * dst->h) & ~(uint32_t)(LINE - 1);
+    if(dst->stride * dst->h > size) return false;   /* the driver wants the whole picture in buffer_size */
+
+    ppa_fill_oper_config_t op;
+    lv_memzero(&op, sizeof(op));
+    op.out.buffer = dst->buf;
+    op.out.buffer_size = size;
+    op.out.pic_w = dst->w;
+    op.out.pic_h = dst->h;
+    op.out.block_offset_x = (uint32_t)rect->x1;
+    op.out.block_offset_y = (uint32_t)rect->y1;
+    op.out.fill_cm = cm;
+    op.fill_block_w = (uint32_t)lv_area_get_width(rect);
+    op.fill_block_h = (uint32_t)lv_area_get_height(rect);
+    const uint32_t r = cf == LV_COLOR_FORMAT_RGB565 ? (color.red & 0xF8u) : color.red;
+    const uint32_t g = cf == LV_COLOR_FORMAT_RGB565 ? (color.green & 0xFCu) : color.green;
+    const uint32_t b = cf == LV_COLOR_FORMAT_RGB565 ? (color.blue & 0xF8u) : color.blue;
+    op.fill_argb_color.val = 0xFF000000u | (r << 16) | (g << 8) | b;
+    op.mode = PPA_TRANS_MODE_NON_BLOCKING;
+    if(ppa_do_fill(g_fill_client, &op) != ESP_OK) return false;
+    return wait_on(&g_fill_done, ++g_fill_queued);
 }
 
 static esp_err_t ensure_client(void)
@@ -271,6 +319,18 @@ static esp_err_t ensure_client(void)
         return err;
     }
     g_queued = g_done = 0;
+    /* The fill client: optional, the turns work without it. */
+    lv_memzero(&cfg, sizeof(cfg));
+    cfg.oper_type = PPA_OPERATION_FILL;
+    cfg.max_pending_trans_num = 1;
+    if(ppa_register_client(&cfg, &g_fill_client) == ESP_OK) {
+        ppa_event_callbacks_t fcbs = {.on_trans_done = on_done};
+        if(ppa_client_register_event_callbacks(g_fill_client, &fcbs) != ESP_OK) {
+            ppa_unregister_client(g_fill_client);
+            g_fill_client = NULL;
+        }
+    }
+    g_fill_queued = g_fill_done = 0;
     return ESP_OK;
 }
 
@@ -278,7 +338,10 @@ esp_err_t lv_draw_ortho_ppa_init(void)
 {
     const esp_err_t err = ensure_client();
     if(err != ESP_OK) return err;
-    if(!g_stuck) lv_draw_ortho_set_turner(turn, wait);
+    if(!g_stuck) {
+        lv_draw_ortho_set_turner(turn, wait);
+        lv_draw_ortho_set_filler(fill);
+    }
     return ESP_OK;
 }
 
@@ -359,6 +422,11 @@ esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * in)
 void lv_draw_ortho_ppa_deinit(void)
 {
     lv_draw_ortho_set_turner(NULL, NULL);
+    lv_draw_ortho_set_filler(NULL);
+    if(g_fill_client && wait_on(&g_fill_done, g_fill_queued)) {
+        ppa_unregister_client(g_fill_client);
+        g_fill_client = NULL;
+    }
     if(g_client && wait(g_queued)) {
         ppa_unregister_client(g_client);
         g_client = NULL;

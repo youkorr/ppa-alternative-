@@ -38,8 +38,11 @@ struct ppa_client_t {
 static struct {
     ppa_client_handle_t c;
     ppa_srm_oper_config_t op;
+    ppa_fill_oper_config_t fill;
+    int is_fill;
     int stuck;
 } g_queue[QUEUE];
+
 static int g_head, g_count;
 
 esp_err_t ppa_register_client(const ppa_client_config_t * config, ppa_client_handle_t * ret_client)
@@ -82,6 +85,36 @@ esp_err_t esp_cache_msync(void * addr, size_t size, int flags)
 #define DMA_BEGIN() do {} while(0)
 #define DMA_END() do {} while(0)
 #endif
+
+int g_p4_fills;
+unsigned long long g_p4_fill_pixels;
+
+/* A fill, as the blend engine does it: the colour narrowed by TRUNCATING to
+ * RGB565 -- an assumption, made harmless by lv_draw_ortho_ppa.c handing it a
+ * colour already at RGB565's precision. */
+static void run_fill(const ppa_fill_oper_config_t * f)
+{
+    const int px = f->out.fill_cm == PPA_FILL_COLOR_MODE_RGB565 ? 2 : 3;
+    const uint32_t c = f->fill_argb_color.val;
+    const uint8_t r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+    const uint16_t c16 = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+    g_p4_pixels += (unsigned long long)f->fill_block_w * f->fill_block_h;
+    g_p4_fill_pixels += (unsigned long long)f->fill_block_w * f->fill_block_h;
+    g_p4_fills++;
+    DMA_BEGIN();
+    for(uint32_t y = 0; y < f->fill_block_h; y++) {
+        uint8_t * d = (uint8_t *)f->out.buffer + ((f->out.block_offset_y + y) * f->out.pic_w + f->out.block_offset_x) * px;
+        for(uint32_t x = 0; x < f->fill_block_w; x++, d += px) {
+            if(px == 2) memcpy(d, &c16, 2);
+            else {
+                d[0] = b;
+                d[1] = g;
+                d[2] = r;
+            }
+        }
+    }
+    DMA_END();
+}
 
 static void run(const ppa_srm_oper_config_t * op)
 {
@@ -129,7 +162,8 @@ static void finish_one(void)
 {
     if(g_count == 0 || g_queue[g_head].stuck) return;
     ppa_client_handle_t c = g_queue[g_head].c;
-    run(&g_queue[g_head].op);
+    if(g_queue[g_head].is_fill) run_fill(&g_queue[g_head].fill);
+    else run(&g_queue[g_head].op);
     void * user = g_queue[g_head].op.user_data;
     g_head = (g_head + 1) % QUEUE;
     g_count--;
@@ -234,6 +268,7 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t c, const ppa_srm_oper_c
         g_stall_next = 0;
         g_queue[(g_head + g_count) % QUEUE].c = c;
         g_queue[(g_head + g_count) % QUEUE].op = *op;
+        g_queue[(g_head + g_count) % QUEUE].is_fill = 0;
         g_queue[(g_head + g_count) % QUEUE].stuck = stuck;
         g_count++;
         return ESP_OK;
@@ -248,5 +283,31 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t c, const ppa_srm_oper_c
         return ESP_FAIL;
     }
     run(op);
+    return ESP_OK;
+}
+
+esp_err_t ppa_do_fill(ppa_client_handle_t c, const ppa_fill_oper_config_t * f)
+{
+    /* ppa_fill.c's checks that matter here. */
+    if(((uintptr_t)f->out.buffer % 128) || (f->out.buffer_size % 128)) return ESP_ERR_INVALID_ARG;
+    const int px = f->out.fill_cm == PPA_FILL_COLOR_MODE_RGB565 ? 2 : 3;
+    if((size_t)f->out.pic_w * f->out.pic_h * px > f->out.buffer_size) return ESP_ERR_INVALID_ARG;
+    if(f->fill_block_w == 0 || f->fill_block_h == 0 || f->fill_block_w > f->out.pic_w - f->out.block_offset_x ||
+       f->fill_block_h > f->out.pic_h - f->out.block_offset_y)
+        return ESP_ERR_INVALID_ARG;
+    if(f->mode == PPA_TRANS_MODE_NON_BLOCKING) {
+        if(g_count == QUEUE) return ESP_ERR_INVALID_STATE;
+        const int i = (g_head + g_count) % QUEUE;
+        g_queue[i].c = c;
+        g_queue[i].fill = *f;
+        g_queue[i].is_fill = 1;
+        g_queue[i].stuck = g_stall_next;
+        g_stall_next = 0;
+        g_count++;
+        return ESP_OK;
+    }
+    p4fake_run_all();
+    if(g_count) return ESP_FAIL;
+    run_fill(f);
     return ESP_OK;
 }

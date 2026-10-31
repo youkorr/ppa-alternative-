@@ -45,6 +45,14 @@ MUTANTS = {
     # waits out the timeout every frame.
     "a stuck PPA used again": ("    if(g_stuck) return ESP_ERR_INVALID_STATE;\n    esp_err_t err = ensure_client();",
                                "    esp_err_t err = ensure_client();"),
+    # A fill given the colour at 8 bits a channel: a PPA that rounds when it
+    # narrows to RGB565 would put a colour one step off LVGL's. The fake
+    # truncates, so the mutant is the fill colour narrowed the other way.
+    "a fill colour off by a step": ("    const uint32_t r = cf == LV_COLOR_FORMAT_RGB565 ? (color.red & 0xF8u) : color.red;",
+                                    "    const uint32_t r = cf == LV_COLOR_FORMAT_RGB565 ? ((color.red + 4u > 255u ? 255u : color.red + 4u) & 0xF8u) : color.red;"),
+    # A fill left undrawn because some later picture exists, covering it or not.
+    "a fill skipped that a picture does not cover": ("        if(lv_area_is_in(todo, &covered, 0)) return true;",
+                                                     "        return true;"),
     # The PPA's angle the wrong way round.
     "the PPA turning the other way": (
         "        case LV_DISPLAY_ROTATION_90:\n            return PPA_SRM_ROTATION_ANGLE_90;",

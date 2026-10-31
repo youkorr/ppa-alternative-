@@ -18,7 +18,7 @@ typedef enum {
 } ppa_srm_rotation_angle_t;
 typedef enum { PPA_SRM_COLOR_MODE_ARGB8888, PPA_SRM_COLOR_MODE_RGB888, PPA_SRM_COLOR_MODE_RGB565 } ppa_srm_color_mode_t;
 typedef enum { PPA_BLEND_COLOR_MODE_ARGB8888 } ppa_blend_color_mode_t;
-typedef enum { PPA_FILL_COLOR_MODE_ARGB8888 } ppa_fill_color_mode_t;
+typedef enum { PPA_FILL_COLOR_MODE_ARGB8888, PPA_FILL_COLOR_MODE_RGB888, PPA_FILL_COLOR_MODE_RGB565 } ppa_fill_color_mode_t;
 typedef enum { PPA_COLOR_RANGE_LIMIT, PPA_COLOR_RANGE_FULL } ppa_color_range_t;
 typedef enum { PPA_COLOR_CONV_STD_RGB_YUV_BT601 } ppa_color_conv_std_rgb_yuv_t;
 typedef enum { PPA_ALPHA_NO_CHANGE } ppa_alpha_update_mode_t;
@@ -89,6 +89,31 @@ typedef struct {
 } ppa_srm_oper_config_t;
 
 esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t ppa_client, const ppa_srm_oper_config_t *config);
+
+/* hal/color_types.h */
+typedef union {
+    struct {
+        uint32_t b: 8;
+        uint32_t g: 8;
+        uint32_t r: 8;
+        uint32_t a: 8;
+    };
+    uint32_t val;
+} color_pixel_argb8888_data_t;
+
+typedef struct {
+    ppa_out_pic_blk_config_t out;
+    uint32_t fill_block_w;
+    uint32_t fill_block_h;
+    union {
+        color_pixel_argb8888_data_t fill_argb_color;
+        uint32_t fill_color_val;
+    };
+    ppa_trans_mode_t mode;
+    void *user_data;
+} ppa_fill_oper_config_t;
+
+esp_err_t ppa_do_fill(ppa_client_handle_t ppa_client, const ppa_fill_oper_config_t *config);
 
 typedef struct {
 } ppa_event_data_t;

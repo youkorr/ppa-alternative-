@@ -69,6 +69,8 @@ extern "C" {
 /** Counters, so a board can say where its time goes. */
 typedef struct {
     uint32_t fills_direct;     /**< solid fills drawn as native rectangles */
+    uint32_t fills_handed;     /**< of those, filled by a filler (the PPA) rather than the CPU */
+    uint32_t fills_hidden;     /**< of those, not drawn at all: an opaque picture drawn later covers them */
     uint32_t images_turned;    /**< images copied with their turn in one pass */
     uint32_t images_native;    /**< pre-turned images copied row by row */
     uint32_t tiles;            /**< upright tiles drawn by the software renderer */
@@ -127,6 +129,16 @@ typedef bool (*lv_draw_ortho_wait_cb_t)(uint32_t ticket);
  * instead). Nothing it queued is left running when it hands a layer back.
  */
 void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait);
+
+/**
+ * Fill a rectangle of `dst` with one opaque colour, by DMA -- the ESP32-P4's
+ * PPA. Asked only for what LVGL would fill solid straight into the frame
+ * buffer (no gradient, no rounded corner, fully opaque); returns once it is
+ * in memory, or false to let the CPU do it.
+ */
+typedef bool (*lv_draw_ortho_fill_cb_t)(const lv_draw_ortho_pic_t * dst, const lv_area_t * rect, lv_color_t color,
+                                        lv_color_format_t cf);
+void lv_draw_ortho_set_filler(lv_draw_ortho_fill_cb_t fill);
 
 /** Create the draw unit. Call after `lv_init()`. */
 void lv_draw_ortho_init(void);
