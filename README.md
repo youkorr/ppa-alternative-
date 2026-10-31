@@ -410,8 +410,57 @@ Three changes made that so, all measured here:
 - **The 16-bit turn moves two rows at a time**, two 32-bit reads into two
   32-bit writes, about 15% faster than pixel by pixel.
 
-Whether 4.3x less PSRAM traffic is faster on the glass is what the board
-says -- the next section.
+**CORRECTED by the simulated P4 below: those 1800 KiB are a count, not
+what crosses the bus.** It assumed every frame-buffer line written once. A P4's
+cache allocates on a write and fetches the line first, and lv_draw_ortho's
+tiles leave lines half-written that come back later, so the simulation reads
+and writes 6095 KiB for that frame -- against 5690 for drawing it upright,
+before the PPA and the copy add theirs. The internal-RAM tile does keep the
+drawing itself off the PSRAM entirely; it is the turn that is not.
+
+### On a simulated ESP32-P4
+
+A PC is the wrong machine to time this on: x86 with SIMD, and memory fast
+enough that where a byte lives makes no difference. `test/p4sim/p4sim.py`
+builds the same bench for the P4's own core (RISC-V RV32IMAFC, `-O2`), runs it
+in QEMU under `p4cache.c`, a plugin that counts every instruction and runs
+every load and store through the P4's caches as ESP-IDF configures them (64 KiB
+L1 over everything, 128 KiB L2 with 64-byte lines in front of the PSRAM), and
+lays memory out as ESPHome does (LVGL's heap and every frame in PSRAM,
+lv_draw_ortho's tile in internal RAM). The counts become milliseconds with
+figures measured on the household's boards: a 1280x620 PSRAM-to-PSRAM copy at
+32-35 ms on the Tab5 calibrates the cost of a PSRAM line, and a Waveshare 7B's
+log gives the PPA's turn (14.9 ms for 1024x600) and the display copy (4.1 ms).
+CI runs it (`p4sim`); 25 seconds, no board.
+
+```
+python3 test/p4sim/p4sim.py --lvgl /path/to/lvgl-9.5.0
+```
+
+What it says, at 360 MHz, ms per frame (middle assumptions):
+
+| | ESPHome / esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho | lv_draw_ortho, panel buffers |
+|---|---|---|---|---|
+| Tab5 UI (270) | 94.5 | **88.4** | 102.2 | 96.1 |
+| Guition UI (90) | 103.4 | **96.5** | 112.6 | 105.8 |
+| Waveshare UI (180) | 68.2 | 64.1 | 61.6 | **57.5** |
+| Tab5 camera | 92.9 | 86.7 | **28.4** through `ortho_id` | **22.3** |
+
+**It does not agree with the PC, and the P4 is the one to believe.** The
+camera through `ortho_id` is three times faster, because the PPA turns each
+frame once and LVGL draws nothing there. But a UI turned 90 or 270 is about
+14% SLOWER than the adapter: the adapter's turn is a PPA pass, which costs the
+CPU nothing, while lv_draw_ortho turns each tile on the CPU (about 5
+instructions a pixel on a core with no bit-manipulation instructions) and
+writes the frame buffer in PSRAM through the cache, line by line. The same
+simulation with the turn left out reads **no PSRAM line at all** for the
+drawing and 13.9 M instructions, about 40 ms on the Tab5: the drawing in
+internal RAM is cheap, the CPU turn into PSRAM is what costs.
+
+Two figures are assumed rather than measured, and the table is printed across
+a range of them: cycles per instruction outside a miss, and the cost of a line
+from internal RAM or from the L2. The PPA and the display copy are modelled
+from their measured rates, not run.
 
 ### Measuring it on the board
 
