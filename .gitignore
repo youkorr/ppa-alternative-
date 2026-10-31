@@ -1,3 +1,4 @@
 test/build*/
 __pycache__/
 .esphome/
+test/fail-*.ppm

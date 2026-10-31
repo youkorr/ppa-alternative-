@@ -359,8 +359,9 @@ Read in their sources (esp-bsp `esp_lvgl_port` 2.9.0; esp-iot-solution
 
 | | esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho |
 |---|---|---|---|
-| how a turned screen is made | LVGL draws upright; the flush turns each area with the PPA into a buffer of its own (blocking), then copies it into the frame buffer | LVGL draws upright; the turn is fused into the copy into the frame buffer (PPA, or the CPU in 32x64 blocks) | LVGL draws in the panel's orientation; an image is turned once as it is copied in, the rest through one small tile per run |
-| passes over a pixel after the draw | 2 | 1 | 0 for a native image, 1 for anything else, without a full-screen intermediate |
+| how a turned screen is made | LVGL draws upright; the flush turns each area with the PPA into a buffer of its own (blocking), then copies it into the frame buffer | LVGL draws upright; the turn is fused into the copy into the frame buffer (PPA, or the CPU in 32x64 blocks) | LVGL draws each run of widgets upright into a tile in internal RAM; the PPA turns the tile into the frame buffer while the CPU draws the next one. A picture is turned by the PPA in one pass |
+| passes over a pixel after the draw | 2 | 1 | 0 for a native image, 1 for anything else (the PPA's), without a full-screen intermediate |
+| the drawing itself, in PSRAM | all of it, overdraw included | all of it, overdraw included | **none**: the tile is in internal RAM |
 | redraw only what changed, turned | yes (partial) | **refused**: `DOUBLE_DIRECT` rejects any rotation | **yes** (direct mode) |
 | video with LVGL running around it | no | no: Dummy Draw stops LVGL and blits the frame unturned | **yes**: turned (and scaled) once by the PPA into a window LVGL keeps out of |
 | tear-free frame-buffer swap | no | yes (2 or 3 frame buffers) | with youkorr/lvgl_9.5's `mipi_dsi` only |
@@ -437,16 +438,23 @@ CI runs it (`p4sim`); 25 seconds, no board.
 python3 test/p4sim/p4sim.py --lvgl /path/to/lvgl-9.5.0
 ```
 
-What it says, at 360 MHz, ms per frame (middle assumptions):
+What it says, at 360 MHz, ms per frame (middle assumptions). A range is the
+CPU and the PPA overlapping fully, then one after the other:
 
-| | ESPHome / esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho | lv_draw_ortho, panel buffers |
+| | ESPHome / esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho, CPU turning | lv_draw_ortho + PPA, panel buffers |
 |---|---|---|---|---|
-| Tab5 UI (270) | 94.5 | **88.4** | 102.2 | 96.1 |
-| Guition UI (90) | 103.4 | **96.5** | 112.6 | 105.8 |
-| Waveshare UI (180) | 68.2 | 64.1 | 61.6 | **57.5** |
-| Tab5 camera | 92.9 | 86.7 | **28.4** through `ortho_id` | **22.3** |
+| Tab5 UI (270) | 94.5 | 88.4 | 96.1 | **40.0 - 62.3** |
+| Guition UI (90) | 103.4 | 96.6 | 105.8 | **43.7 - 68.5** |
+| Waveshare UI (180) | 68.2 | 64.1 | 57.5 | **29.7 - 44.6** |
+| Tab5 full-screen picture | 92.9 | 86.7 | 87.8 | **25.5 - 47.8** |
+| Tab5 camera through `ortho_id` | 92.9 | 86.7 | 22.3 | 22.3 |
 
-**It does not agree with the PC, and the P4 is the one to believe.** The
+With ESPHome's own `mipi_dsi` add the display copy, 6.2 ms on the Tab5.
+**The PPA is what beats the adapter**: 1.4 to 2.2 times faster on a UI, on
+all three boards, whichever way the overlap falls. The rest of this section
+is how that was found.
+
+**The first run did not agree with the PC, and the P4 is the one to believe.** The
 camera through `ortho_id` is three times faster, because the PPA turns each
 frame once and LVGL draws nothing there. But a UI turned 90 or 270 is about
 14% SLOWER than the adapter: the adapter's turn is a PPA pass, which costs the
@@ -456,6 +464,30 @@ writes the frame buffer in PSRAM through the cache, line by line. The same
 simulation with the turn left out reads **no PSRAM line at all** for the
 drawing and 13.9 M instructions, about 40 ms on the Tab5: the drawing in
 internal RAM is cheap, the CPU turn into PSRAM is what costs.
+
+**So the PPA turns the tiles now** (`lv_draw_ortho_ppa.c`, on by default in
+`lvgl_ortho`, `ppa: false` for the CPU). Two tiles in internal RAM: the CPU
+draws one while the PPA turns the other into the frame buffer, and reads a
+tile back the same way when a widget has to be blended over what is already
+there. The CPU no longer touches the frame buffer for a UI at all -- the
+simulation counts **0 KiB** of PSRAM for it -- and waits only for a tile it
+wants to draw on again. Before each transfer the output rows are written back
+from the cache, as the video window does: ESP-IDF's driver invalidates them,
+and a line the CPU shares with the block would otherwise lose its pixels.
+Where the PPA cannot (a format other than RGB565/RGB888, a buffer it cannot
+write, a frame buffer whose size is not a whole number of cache lines, a full
+queue) the CPU turns that block, after everything queued has finished.
+
+One thing tried and thrown out, because the simulation said so: tiles cut
+tall and narrow at 90 and 270, so each comes out as whole rows of the panel.
+It did cut the PSRAM traffic of the CPU turn by a third, and cost LVGL itself
+more than that (a narrower tile is more rows, more shadows and gradients
+recomputed): 26.0 M instructions against 19.5.
+
+What is not known, and only a board says: how fast the PPA is on a tile, at
+90 and 270 a band 51 pixels wide on the panel, rather than on a whole screen,
+which is the only rate measured. `lvgl_ortho` logs, every ten seconds, how
+much it turned, how much of it the PPA did and how often the CPU waited.
 
 Two figures are assumed rather than measured, and the table is printed across
 a range of them: cycles per instruction outside a miss, and the cost of a line
@@ -504,7 +536,8 @@ at its top choose everything:
 ```yaml
 substitutions:
   board: tab5     # tab5, guition or waveshare
-  mode: ortho     # ortho (lv_draw_ortho) or lvgl (ESPHome's own rotation)
+  mode: ortho     # ortho (the PPA turning), ortho_cpu (the CPU turning), or
+                  # lvgl (ESPHome's own rotation)
 ```
 
 | `board:` | board | screen | turn |
@@ -514,13 +547,13 @@ substitutions:
 | `waveshare` | Waveshare 7B | 1024x600 | 180 |
 
 Each board's hardware is in `yaml/boards/`, each mode in `yaml/modes/`; the
-two modes differ only in where the rotation is, so flashing one, pressing
-"LVGL bench", then the other and pressing again compares the rotation and
-nothing else. It takes only `lvgl` from `youkorr/lvgl_9.5`, keeps
+modes differ only in where the rotation is and who turns, so flashing one,
+pressing "LVGL bench", then another and pressing again compares the rotation
+and nothing else. It takes only `lvgl` from `youkorr/lvgl_9.5`, keeps
 `buffer_size: 100%`, and needs `wifi_ssid`, `wifi_password` and
-`api_encryption_key` in `secrets.yaml`. All six combinations load with
-ESPHome 2026.10.0 and generate `set_lvgl_rotation(...)` in `lvgl` mode,
-`ortho->set_rotation(...)` in `ortho` mode. Not flashed.
+`api_encryption_key` in `secrets.yaml`. All nine combinations are compiled
+with ESP-IDF by CI, and generate `set_lvgl_rotation(...)` in `lvgl` mode,
+`ortho->set_rotation(...)` and `set_ppa(...)` in the other two. Not flashed.
 
 ## Use
 
@@ -567,10 +600,17 @@ store the rows as they will be on the glass, give the native row length in
 ```
 git clone --depth 1 -b v9.6.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 136 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 173 cases, and the ESPHome component at four angles
 make LVGL=/tmp/lvgl bench          # timings
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
+build/ortho_test --ppa             # the PPA's cases alone
+python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case
 ```
+
+The PPA's cases run on a fake one (`test/p4stub/p4fake.c`) that turns as the
+boards' does and holds every non-blocking transfer until lv_draw_ortho waits
+for it: a wait forgotten leaves a tile or the frame buffer as it was, and the
+picture is wrong. `ppa_mutants.py` takes each wait out in turn to prove it.
 
 The LVGL tree is copied and the patch for its exact version applied inside
 `test/build`, so the tree given is never modified. 9.5.0 works the same way.

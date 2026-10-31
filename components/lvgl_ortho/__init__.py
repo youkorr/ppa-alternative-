@@ -5,6 +5,7 @@
 
     lvgl_ortho:
       rotation: 270        # what was on the lvgl: block, which loses it
+      ppa: true            # the default: the PPA turns what LVGL draws
 
 Takes LVGL's display over after lvgl has built it: one panel-sized buffer in
 LV_DISPLAY_RENDER_MODE_DIRECT, LVGL's matrix rotation drawn by lv_draw_ortho,
@@ -34,6 +35,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ROTATION, default=0): cv.one_of(0, 90, 180, 270, int=True),
             # Left out, the lvgl: block's first display.
             cv.Optional(CONF_DISPLAY_ID): cv.use_id(display.Display),
+            # The PPA turns each tile while the CPU draws the next; false
+            # leaves the turning to the CPU, to compare the two on a board.
+            cv.Optional("ppa", default=True): cv.boolean,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     only_on_variant(supported=[VARIANT_ESP32P4]),
@@ -113,4 +117,5 @@ async def to_code(config):
     disp = await cg.get_variable(_the_display(CORE.config, config))
     cg.add(var.set_display(disp))
     cg.add(var.set_rotation(config[CONF_ROTATION]))
+    cg.add(var.set_ppa(config["ppa"]))
     cg.add_define("USE_LVGL_ORTHO")

@@ -45,6 +45,9 @@ class LvglOrtho : public Component {
   void set_display(display::Display *display) { this->display_ = display; }
   // ESPHome's degrees, clockwise -- the number the lvgl: block would have.
   void set_rotation(int degrees) { this->degrees_ = degrees; }
+  // Turn tiles with the PPA, the CPU drawing the next one meanwhile; false
+  // turns them on the CPU, which is what to compare the PPA against.
+  void set_ppa(bool ppa) { this->ppa_ = ppa; }
 
   void setup() override;
   void loop() override;
@@ -74,6 +77,8 @@ class LvglOrtho : public Component {
 
   display::Display *display_{nullptr};
   int degrees_{0};
+  bool ppa_{true};
+  bool ppa_on_{false};
   lv_display_t *disp_{nullptr};
   uint8_t *buf_{nullptr};
   uint32_t stride_{0};

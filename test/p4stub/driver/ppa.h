@@ -89,3 +89,11 @@ typedef struct {
 } ppa_srm_oper_config_t;
 
 esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t ppa_client, const ppa_srm_oper_config_t *config);
+
+typedef struct {
+} ppa_event_data_t;
+typedef bool (*ppa_event_callback_t)(ppa_client_handle_t ppa_client, ppa_event_data_t *event_data, void *user_data);
+typedef struct {
+    ppa_event_callback_t on_trans_done;
+} ppa_event_callbacks_t;
+esp_err_t ppa_client_register_event_callbacks(ppa_client_handle_t ppa_client, const ppa_event_callbacks_t *cbs);

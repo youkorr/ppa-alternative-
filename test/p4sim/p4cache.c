@@ -28,6 +28,11 @@
  * Addresses from psram= up to psram+size are the PSRAM; everything else is
  * internal RAM.
  *
+ * The PPA is not the CPU: the fake PPA (test/p4stub/p4fake.c, built with
+ * P4SIM) brackets its copy loop with markers 2047 and 2046, and what runs
+ * between them is counted in phase 2045 and kept out of the caches -- a DMA
+ * engine reads and writes memory without them.
+ *
  * Built against QEMU 8.2's qemu-plugin.h (plugin API version 1).
  */
 
@@ -148,8 +153,12 @@ static void touch(uint32_t addr, int write)
     if(vd2) k->psram_writeback++;
 }
 
+#define DMA_PHASE 2045
+static int g_saved_phase;
+
 static void on_mem(unsigned int vcpu, qemu_plugin_meminfo_t info, uint64_t vaddr, void * udata)
 {
+    if(g_phase == DMA_PHASE) return;
     const int store = qemu_plugin_mem_is_store(info);
     const unsigned size = 1u << qemu_plugin_mem_size_shift(info);
     counts_t * k = &g_counts[g_phase];
@@ -190,7 +199,13 @@ static void on_tb(unsigned int vcpu, void * udata)
 
 static void on_marker(unsigned int vcpu, void * udata)
 {
-    g_phase = (int)(uintptr_t)udata;
+    const int n = (int)(uintptr_t)udata;
+    if(n == 2047) {
+        g_saved_phase = g_phase;
+        g_phase = DMA_PHASE;
+    }
+    else if(n == 2046) g_phase = g_saved_phase;
+    else g_phase = n;
 }
 
 static void on_translate(qemu_plugin_id_t id, struct qemu_plugin_tb * tb)

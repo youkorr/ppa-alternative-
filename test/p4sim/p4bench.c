@@ -58,18 +58,55 @@ int clock_gettime(clockid_t id, struct timespec * ts)
     return 0;
 }
 
+/* What the PPA turned in the measured redraw: p4sim.py times it at the rate
+ * measured on a board. */
+static void report_ppa(int phase_id, unsigned long long before)
+{
+    printf("ppa %d: %llu pixels\n", phase_id, g_p4_pixels - before);
+}
+
 static void redraw(lv_display_t * disp, lv_obj_t * obj, int phase_id)
 {
     lv_obj_invalidate(obj);
     lv_refr_now(disp);            /* warm */
     lv_obj_invalidate(obj);
+    const unsigned long long px = g_p4_pixels;
     switch(phase_id) {
         /* The immediate has to be a constant: one marker per phase. */
 #define CASE(n) case n: PHASE(n); lv_refr_now(disp); PHASE(1999); break;
-        CASE(20) CASE(21) CASE(30) CASE(31) CASE(40) CASE(41)
-        CASE(50) CASE(51) CASE(60) CASE(61) CASE(70) CASE(71)
+        CASE(20) CASE(21) CASE(22) CASE(30) CASE(31) CASE(32) CASE(40) CASE(41) CASE(42)
+        CASE(50) CASE(51) CASE(52) CASE(60) CASE(61) CASE(62) CASE(70) CASE(71) CASE(72)
 #undef CASE
     }
+    report_ppa(phase_id, px);
+}
+
+/* lv_draw_ortho with the PPA turning (lv_draw_ortho_ppa.c, on the fake
+ * PPA): the UI, or a picture when one is given. The fake's copying is the
+ * PPA's and not counted (P4SIM markers); its pixels are reported. */
+static void ortho_with_ppa(int32_t nw, int32_t nh, lv_display_rotation_t rot, int phase,
+                           const lv_image_dsc_t * frame)
+{
+    if(lv_draw_ortho_ppa_init() != ESP_OK) {
+        printf("no PPA\n");
+        return;
+    }
+    screen_t * nat = make_screen(nw, nh, LV_COLOR_FORMAT_RGB565, rot, true, false);
+    lv_display_set_default(nat->disp);
+    lv_obj_t * scr = lv_display_get_screen_active(nat->disp);
+    lv_obj_t * obj = scr;
+    if(frame) {
+        obj = lv_image_create(scr);
+        lv_image_set_src(obj, frame);
+    }
+    else scene_ui(scr);
+    lv_draw_ortho_reset_stats();
+    redraw(nat->disp, obj, phase);
+    const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+    printf("ortho+ppa %d: %u of 2 tiles in turn, %.0f%% of the turning by the PPA, %u waits\n", phase,
+           st->tiles_in_turn, st->bytes_turned ? 100.0 * st->bytes_handed / st->bytes_turned : 0.0, st->waits / 2);
+    drop_screen(nat);
+    lv_draw_ortho_ppa_deinit();
 }
 
 /* The UI of the PC bench (scene_ui), redrawn whole: upright as ESPHome's
@@ -99,6 +136,7 @@ static void ui(int32_t nw, int32_t nh, lv_display_rotation_t rot, int phase)
            st->tile_internal, (unsigned long long)st->bytes_turned / 2048,
            (unsigned long long)st->bytes_straight / 2048, st->tiles / 2);
     drop_screen(nat);
+    ortho_with_ppa(nw, nh, rot, phase + 2, NULL);
 }
 
 /* A full-screen picture (a video frame drawn by LVGL as an image). */
@@ -122,6 +160,7 @@ static void picture(int32_t nw, int32_t nh, lv_display_rotation_t rot, int phase
     lv_image_set_src(i2, frame);
     redraw(nat->disp, i2, phase + 1);
     drop_screen(nat);
+    ortho_with_ppa(nw, nh, rot, phase + 2, frame);
 }
 
 /* The calibration: a memcpy of 1280x620 RGB565, PSRAM to PSRAM -- what the

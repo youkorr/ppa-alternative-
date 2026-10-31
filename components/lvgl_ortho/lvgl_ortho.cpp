@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "esp_cache.h"
+#include "lv_draw_ortho_ppa.h"
 #include "esp_heap_caps.h"
 
 namespace esphome {
@@ -94,6 +95,12 @@ void LvglOrtho::setup() {
 
   g_self = this;
   lv_draw_ortho_init();
+  if (this->ppa_) {
+    const esp_err_t err = lv_draw_ortho_ppa_init();
+    this->ppa_on_ = err == ESP_OK;
+    if (!this->ppa_on_)
+      ESP_LOGW(TAG, "No PPA client (error 0x%x): the CPU turns the tiles", (unsigned) err);
+  }
   if (!this->use_panel_buffers_()) {
     const size_t size = ((size_t) this->stride_ * this->height_ + LINE - 1) & ~(LINE - 1);
     this->buf_ = (uint8_t *) heap_caps_aligned_alloc(LINE, size, MALLOC_CAP_SPIRAM);
@@ -188,6 +195,13 @@ void LvglOrtho::dump_config() {
   // drawing off the bus the frame buffer and the scan-out share.
   ESP_LOGCONFIG(TAG, "  Drawing tile: %u KiB in %s", (unsigned) (LV_DRAW_ORTHO_TILE_BYTES / 1024),
                 lv_draw_ortho_get_stats()->tile_internal ? "internal RAM" : "PSRAM (internal RAM was full)");
+  if (this->ppa_on_) {
+    ESP_LOGCONFIG(TAG, "  Turns: the PPA, %s", lv_draw_ortho_get_stats()->tiles_in_turn == 2
+                  ? "the CPU drawing one tile while it turns the other"
+                  : "the CPU waiting for each (no internal RAM for a second tile)");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Turns: the CPU%s", this->ppa_ ? " (no PPA client)" : " (ppa: false)");
+  }
 }
 
 void LvglOrtho::read_cb_(lv_indev_t *indev, lv_indev_data_t *data) {
@@ -383,6 +397,14 @@ void LvglOrtho::loop() {
       ESP_LOGI(TAG, "Last %.0fs: %.1f video frames/s (%.1f ms each), %.1f screens/s shown, %.0f panel rows/s copied (%.1f ms/s)",
                s, this->video_frames_ / s, this->video_frames_ ? this->video_us_ / 1000.0f / this->video_frames_ : 0.0f,
                this->presents_ / s, this->flush_rows_ / s, this->flush_us_ / 1000.0f / s);
+      // How much of the turning the PPA did, and how often the CPU had to
+      // wait for it: near 100% and few waits is the PPA working for nothing.
+      const lv_draw_ortho_stats_t *st = lv_draw_ortho_get_stats();
+      if (st->bytes_turned > 0) {
+        ESP_LOGI(TAG, "  turned %.0f KiB/s, %.0f%% of it by the PPA, the CPU waited %.1f times/s for it",
+                 st->bytes_turned / 1024.0f / s, 100.0f * st->bytes_handed / st->bytes_turned, st->waits / s);
+      }
+      lv_draw_ortho_reset_stats();
     }
     this->last_report_ = now;
     this->video_us_ = this->video_frames_ = this->flush_us_ = this->flush_rows_ = this->presents_ = 0;

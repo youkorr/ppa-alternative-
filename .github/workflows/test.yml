@@ -20,6 +20,8 @@ jobs:
         run: make -C test -j4 LVGL=/tmp/lvgl run
       - name: The ESPHome component's test catches a broken component
         run: python3 test/esphome_mutants.py
+      - name: The PPA's test catches every wait taken out
+        run: python3 test/ppa_mutants.py
       - name: LVGL alone, drawn whole and in bands
         run: test/build/ortho_test --lvgl-quirk
       - name: Under AddressSanitizer
@@ -80,7 +82,7 @@ jobs:
       fail-fast: false
       matrix:
         board: [tab5, guition, waveshare]
-        mode: [ortho, lvgl]
+        mode: [ortho, ortho_cpu, lvgl]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
