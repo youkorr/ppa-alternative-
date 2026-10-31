@@ -25,13 +25,26 @@ MUTANTS = {
     # A tile drawn on while the PPA is still turning it out.
     "a tile reused before its turn finished": ("            wait_ticket(&u->ticket[k]);\n", ""),
     # A tile drawn on before the PPA has read the frame buffer back into it.
-    "a tile drawn before it was read back": ("        wait_ticket(&t);   /* it is drawn on next */\n", ""),
+    "a tile drawn before it was read back": ("        if(!wait_ticket(&t))   /* it is drawn on next */\n",
+                                             "        if(0)\n"),
     # The layer handed back to LVGL with turns still running.
     "a run of tasks left running": ("    fence();\n    u->ticket[0] = u->ticket[1] = 0;\n",
                                      "    u->ticket[0] = u->ticket[1] = 0;\n"),
     # A camera frame handed back to the application mid-turn.
     "a picture given back mid-turn": (
         "    fence();   /* the picture is the application's again when the task is finished */\n", ""),
+    # DIG-734: a block the P4 never finishes sent whole (esp-idf #19023).
+    "DIG-734 blocks sent whole": (
+        "    if(!cut(0, 0, bw, bh, rot, px * 8, pieces, &n, 0)) return 0;\n",
+        "    pieces[n++] = (piece_t) {0, 0, bw, bh};\n"),
+    # A wait with no bound: a stuck PPA freezes the screen (the driver's own
+    # blocking mode). The test would hang, so the run has a timeout.
+    "a wait with no bound": ("        else if((idle_us += 10) >= LV_DRAW_ORTHO_PPA_TIMEOUT_MS * 1000u) {",
+                             "        else if(0) {"),
+    # A stalled PPA not given up on for good: the video tries it again, and
+    # waits out the timeout every frame.
+    "a stuck PPA used again": ("    if(g_stuck) return ESP_ERR_INVALID_STATE;\n    esp_err_t err = ensure_client();",
+                               "    esp_err_t err = ensure_client();"),
     # The PPA's angle the wrong way round.
     "the PPA turning the other way": (
         "        case LV_DISPLAY_ROTATION_90:\n            return PPA_SRM_ROTATION_ANGLE_90;",
@@ -67,12 +80,17 @@ def main():
                    "-w", str(HERE / "main.c"), str(copy / "lv_draw_ortho.c"), str(copy / "lv_draw_ortho_video.c"),
                    str(copy / "lv_draw_ortho_ppa.c"), str(HERE / "p4stub" / "p4fake.c"), str(lvgl), "-lm", "-o", str(exe)]
             subprocess.run(cmd, check=True)
-            r = subprocess.run([str(exe), "--ppa"], capture_output=True, text=True, timeout=600)
+            try:
+                r = subprocess.run([str(exe), "--ppa"], capture_output=True, text=True, timeout=120)
+            except subprocess.TimeoutExpired:
+                print(f"  ok    caught: {name} (hung, as a board would)")
+                continue
             caught = r.returncode != 0
             fails = sum(1 for l in r.stdout.splitlines() if "FAIL" in l)
             # A queued turn reading a picture already freed is a crash here,
             # as it would be memory read by DMA after its owner let it go.
-            how = f"{fails} failing case(s)" if r.returncode > 0 else f"crashed, signal {-r.returncode}"
+            how = (f"{fails} failing case(s)" if r.returncode > 0 else
+                   f"crashed, signal {-r.returncode}" if r.returncode < 0 else "every case passed")
             print(f"  {'ok   ' if caught else 'MISSED'} caught: {name} ({how})")
             failed += not caught
     print(f"{len(MUTANTS) - failed} of {len(MUTANTS)} mutants caught")

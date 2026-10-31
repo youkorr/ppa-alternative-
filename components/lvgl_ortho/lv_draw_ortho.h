@@ -84,6 +84,8 @@ typedef struct {
     uint32_t waits;            /**< times the CPU waited for a turner */
     uint8_t tile_internal;     /**< 1 when the tile is in internal RAM rather than PSRAM */
     uint8_t tiles_in_turn;     /**< 2 when one tile is drawn while the other is turned */
+    uint8_t turner_failed;     /**< 1, for good, once a turner stopped answering: the CPU turns
+                                    from then on, and the screen must be drawn again once */
 } lv_draw_ortho_stats_t;
 
 /** Called with a straight (unturned) copy so a platform can hand it to DMA.
@@ -111,9 +113,12 @@ typedef uint32_t (*lv_draw_ortho_turn_cb_t)(const lv_draw_ortho_pic_t * src, con
                                             const lv_draw_ortho_pic_t * dst, int32_t dx, int32_t dy,
                                             lv_display_rotation_t rot, lv_color_format_t cf);
 
-/** Return once the turn with this ticket, and every one queued before it,
- *  has finished and its pixels are in memory. */
-typedef void (*lv_draw_ortho_wait_cb_t)(uint32_t ticket);
+/** Return true once the turn with this ticket, and every one queued before
+ *  it, has finished and its pixels are in memory -- or false if they never
+ *  will (a turner that has stopped answering). On false, lv_draw_ortho turns
+ *  on the CPU from then on and reports it in `turner_failed`: what was
+ *  queued is lost, and the screen has to be drawn again. */
+typedef bool (*lv_draw_ortho_wait_cb_t)(uint32_t ticket);
 
 /**
  * Turn tiles with `turn` instead of the CPU, NULL for the CPU again. With a

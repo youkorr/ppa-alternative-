@@ -78,6 +78,7 @@ static bool g_tile_internal;
 static lv_draw_ortho_turn_cb_t g_turn;
 static lv_draw_ortho_wait_cb_t g_wait;
 static uint32_t g_last;
+static bool g_turner_failed;
 
 /* A turner writes by DMA, and its output has to start on a cache line: the
  * ESP32-P4's PPA wants its L2's, which is at most 128 bytes. */
@@ -343,12 +344,30 @@ static void move_turned(const ortho_t * o, int32_t px,
  * or write in a buffer a queued turn may still be reading or writing, it does
  * after this -- and it is done at the end of every run of tasks, so nothing is
  * left running when LVGL takes its layer back. */
+/* A turner that stopped answering: the CPU from now on. What it had queued
+ * is lost, so the screen has to be drawn again -- lvgl_ortho does, seeing
+ * turner_failed; nothing can be invalidated from inside a refresh. */
+static void turner_failed(void)
+{
+    LV_LOG_ERROR("ortho: the turner stopped answering; the CPU turns from now on");
+    g_turn = NULL;
+    g_wait = NULL;
+    g_last = 0;
+    g_turner_failed = true;
+}
+
+static bool wait_for(uint32_t t)
+{
+    if(t == 0 || g_wait == NULL) return true;
+    g_stats.waits++;
+    if(g_wait(t)) return true;
+    turner_failed();
+    return false;
+}
+
 static void fence(void)
 {
-    if(g_last && g_wait) {
-        g_wait(g_last);
-        g_stats.waits++;
-    }
+    wait_for(g_last);
     g_last = 0;
 }
 
@@ -411,13 +430,11 @@ static uint32_t turn_or_cpu(const ortho_t * o, lv_color_format_t cf, int32_t px,
     return 0;
 }
 
-static void wait_ticket(uint32_t * t)
+static bool wait_ticket(uint32_t * t)
 {
-    if(*t && g_wait) {
-        g_wait(*t);
-        g_stats.waits++;
-    }
+    const bool ok = wait_for(*t);
     *t = 0;
+    return ok;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -681,7 +698,8 @@ static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
     if(!covers(&jobs[first], tile)) {
         uint32_t t = turn_or_cpu(o, cf, px, nb->data, nb->header.stride, &target->buf_area,
                                  tb.data, stride, tile, &nat, false);
-        wait_ticket(&t);   /* it is drawn on next */
+        if(!wait_ticket(&t))   /* it is drawn on next */
+            move_turned(o, px, nb->data, nb->header.stride, &target->buf_area, tb.data, stride, tile, &nat, false);
     }
     else g_stats.tiles_unread++;
 
@@ -1118,6 +1136,7 @@ void lv_draw_ortho_init(void)
 void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait)
 {
     fence();
+    g_turner_failed = false;
     g_turn = wait ? turn : NULL;
     g_wait = g_turn ? wait : NULL;
     if(g_unit) {
@@ -1146,6 +1165,7 @@ const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void)
 {
     g_stats.tile_internal = g_tile_internal;
     g_stats.tiles_in_turn = g_unit && g_unit->tile[1] && g_turn ? 2 : 1;
+    g_stats.turner_failed = g_turner_failed;
     return &g_stats;
 }
 
