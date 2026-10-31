@@ -494,6 +494,24 @@ a range of them: cycles per instruction outside a miss, and the cost of a line
 from internal RAM or from the L2. The PPA and the display copy are modelled
 from their measured rates, not run.
 
+### The PPA's faults, and what the others do about them
+
+Read in ESP-IDF's, LVGL's and ESPHome's own issues and pull requests (October
+2026), because a PPA that turns tiles is only better than the others if it
+does not freeze where theirs do.
+
+| | what it is | Espressif / LVGL / ESPHome | here |
+|---|---|---|---|
+| **DIG-734** ([esp-idf #19023](https://github.com/espressif/esp-idf/issues/19023), [#19096](https://github.com/espressif/esp-idf/issues/19096), [#18768](https://github.com/espressif/esp-idf/pull/18768)) | at 90 and 270, a block whose last macro block leaves the DMA under its FIFO depth never finishes, and `ppa_do_scale_rotate_mirror()` never returns | fixed on master (469aa16) by sizing that block after the turn; **not in v5.5.6**, which ESPHome 2026.10 builds with. esp_lvgl_adapter's "PPA freeze with rotation in TRIPLE_PARTIAL" is this | the driver's test, both ways, in `lv_draw_ortho_ppa_dig734()`; a block that would hang is cut into pieces safe on either driver (every size to 1300x1300 checked: 17% need it, all cut, 24 pieces at most) |
+| **an unbounded wait** | the driver's blocking mode waits with `portMAX_DELAY`: a stuck transfer is a frozen screen | LVGL's PPA unit is blocking with no timeout -- raised in review of [lvgl #10265](https://github.com/lvgl/lvgl/pull/10265) and left for later | every wait is bounded (`LV_DRAW_ORTHO_PPA_TIMEOUT_MS`, 250); past it the PPA is given up on, the CPU turns, the video window is refused at once, and lvgl_ortho redraws the screen and says so |
+| **DMA2D reset hang** ([esp-idf #18999](https://github.com/espressif/esp-idf/issues/18999), [#19108](https://github.com/espressif/esp-idf/issues/19108)) | after a software reset, a DMA2D channel can wait for ever for `reset_avail`, inside a spinlock | open, not reproduced by Espressif; worst with the JPEG decoder and the PPA running at once | **not handled**: it spins with interrupts off, below anything a component can bound. A power cycle clears it; a panel that froze after an OTA is the sign |
+| PPA fills | solid rectangles filled by DMA | LVGL's PPA unit does fills and 1:1 image blends | **not yet**: lv_draw_ortho's fills are the CPU's, in the tile or straight into the frame buffer |
+
+The fake PPA the tests run on reproduces DIG-734 as the v5.5.6 driver meets
+it -- written from `ppa_srm.c`, not shared with the code it tests -- and a
+stall on demand: `test/ppa_mutants.py` sends the blocks whole, unbounds the
+wait and lets the video use a stuck PPA, and each one fails a case.
+
 ### Measuring it on the board
 
 `components/lvgl_bench` times every LVGL refresh on the board itself, from
@@ -600,7 +618,7 @@ store the rows as they will be on the glass, give the native row length in
 ```
 git clone --depth 1 -b v9.6.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 173 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 175 cases, and the ESPHome component at four angles
 make LVGL=/tmp/lvgl bench          # timings
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 build/ortho_test --ppa             # the PPA's cases alone

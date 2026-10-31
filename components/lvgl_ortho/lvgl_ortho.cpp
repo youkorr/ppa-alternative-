@@ -389,6 +389,16 @@ void LvglOrtho::loop() {
   // that rectangle of the next page.
   if (this->video_obj_ != nullptr && !this->on_screen_(this->video_obj_))
     this->clear_video();
+  // The PPA stopped answering: lv_draw_ortho turns on the CPU from now on, and
+  // what it had queued is lost, so the screen is drawn again. Nothing public
+  // unsticks the PPA; a reset does.
+  if (this->ppa_on_ && !this->ppa_lost_ && lv_draw_ortho_get_stats()->turner_failed) {
+    this->ppa_lost_ = true;
+    ESP_LOGE(TAG, "The PPA stopped answering for %d ms: the CPU turns from now on, until a reset. "
+                  "Please report the panel and the screen that was shown",
+             LV_DRAW_ORTHO_PPA_TIMEOUT_MS);
+    lv_obj_invalidate(lv_display_get_screen_active(this->disp_));
+  }
   const uint32_t now = millis();
   if (now - this->last_report_ >= REPORT_MS) {
     const float s = (now - this->last_report_) / 1000.0f;

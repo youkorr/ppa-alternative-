@@ -24,6 +24,8 @@
 p4fake_t g_p4;
 unsigned long long g_p4_pixels;
 int g_p4_runs;
+int g_p4_dig734;
+static int g_stall_next;
 
 /* A client: its own callback, as on the board. */
 struct ppa_client_t {
@@ -36,6 +38,7 @@ struct ppa_client_t {
 static struct {
     ppa_client_handle_t c;
     ppa_srm_oper_config_t op;
+    int stuck;
 } g_queue[QUEUE];
 static int g_head, g_count;
 
@@ -124,7 +127,7 @@ static void run(const ppa_srm_oper_config_t * op)
 
 static void finish_one(void)
 {
-    if(g_count == 0) return;
+    if(g_count == 0 || g_queue[g_head].stuck) return;
     ppa_client_handle_t c = g_queue[g_head].c;
     run(&g_queue[g_head].op);
     void * user = g_queue[g_head].op.user_data;
@@ -136,7 +139,45 @@ static void finish_one(void)
 
 void p4fake_run_all(void)
 {
-    while(g_count) finish_one();
+    while(g_count && !g_queue[g_head].stuck) finish_one();
+}
+
+void p4fake_stall_next(void)
+{
+    g_stall_next = 1;
+}
+
+void p4fake_reset(void)
+{
+    g_head = g_count = 0;
+    g_stall_next = 0;
+}
+
+
+/* The hardware fault behind esp-idf #19023 and #19096, as the driver of
+ * ESP-IDF v5.5.6 meets it, written from ppa_srm.c rather than shared with
+ * lv_draw_ortho_ppa.c, so the two cannot agree by copying each other. The
+ * driver decides whether to bypass the macro-block order from the INPUT
+ * block's width and height; the hardware, at 90 and 270, needs it decided
+ * from the turned ones (the fix on master, 469aa16). Where it needed the
+ * bypass and was not given it, the DMA never raises its end: the transaction
+ * never finishes. Unscaled RGB565/RGB888, 16x16 macro blocks (silicon v1.x). */
+static int mb_bypass(uint32_t w_out, uint32_t h_in, uint32_t bits)
+{
+    const uint32_t wdiv = bits == 16 ? 64 : 32;
+    uint32_t wl = w_out % wdiv, hl = h_in % 16;
+    if(wl == 0) wl = wdiv;
+    if(hl == 0) hl = 16;
+    return (w_out > wdiv || h_in > 16) && wl * hl * bits < 12 * 128;
+}
+
+static int never_finishes(const ppa_srm_oper_config_t * op)
+{
+    if(op->rotation_angle != PPA_SRM_ROTATION_ANGLE_90 && op->rotation_angle != PPA_SRM_ROTATION_ANGLE_270) return 0;
+    const uint32_t bits = op->out.srm_cm == PPA_SRM_COLOR_MODE_RGB565 ? 16 : 24;
+    const int given = mb_bypass(op->in.block_w, op->in.block_h, bits);
+    const int needed = mb_bypass(op->in.block_h, op->in.block_w, bits);
+    return needed && !given;
 }
 
 static const void * g_watch;
@@ -188,13 +229,24 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t c, const ppa_srm_oper_c
         int pending = 0;
         for(int i = 0; i < g_count; i++) if(g_queue[(g_head + i) % QUEUE].c == c) pending++;
         if(pending >= c->pending_max || g_count == QUEUE) return ESP_ERR_INVALID_STATE;
+        const int stuck = never_finishes(op) || g_stall_next;
+        g_p4_dig734 += never_finishes(op);
+        g_stall_next = 0;
         g_queue[(g_head + g_count) % QUEUE].c = c;
         g_queue[(g_head + g_count) % QUEUE].op = *op;
+        g_queue[(g_head + g_count) % QUEUE].stuck = stuck;
         g_count++;
         return ESP_OK;
     }
-    /* A blocking one waits for the queue ahead of it: the engine is FIFO. */
+    /* A blocking one waits for the queue ahead of it: the engine is FIFO. A
+     * stuck one ahead of it, or itself, and it never returns: the driver
+     * waits with portMAX_DELAY. Here that is a failed test instead. */
     p4fake_run_all();
+    if(g_count || never_finishes(op)) {
+        g_p4_dig734 += never_finishes(op);
+        fprintf(stderr, "p4fake: a blocking PPA transaction that would never return\n");
+        return ESP_FAIL;
+    }
     run(op);
     return ESP_OK;
 }

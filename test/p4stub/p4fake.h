@@ -23,4 +23,10 @@ int p4fake_pending(void);
  * among the tiles lv_draw_ortho hands the PPA at the same time. */
 void p4fake_watch(const void * buf);
 int p4fake_watched(void);
+/* Transactions the P4 would never finish: DIG-734 geometries under the
+ * ESP-IDF v5.5.6 driver (what ESPHome builds with), and any made to stall. */
+extern int g_p4_dig734;
+void p4fake_stall_next(void);
+/* Drop everything queued, stuck or not, as a reset would. */
+void p4fake_reset(void);
 extern p4fake_t g_p4;

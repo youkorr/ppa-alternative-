@@ -5,6 +5,7 @@
  */
 
 #include "lv_draw_ortho_video.h"
+#include "lv_draw_ortho_ppa.h"
 #include "esp_cache.h"
 
 /* The PPA writes by DMA and its output buffer and size must be aligned to the
@@ -19,10 +20,9 @@ esp_err_t lv_draw_ortho_video_init(lv_draw_ortho_video_t * v, lv_display_t * dis
 {
     lv_memzero(v, sizeof(*v));
     v->disp = disp;
-    ppa_client_config_t cfg = {0};
-    cfg.oper_type = PPA_OPERATION_SRM;
-    cfg.max_pending_trans_num = 1;
-    return ppa_register_client(&cfg, &v->client);
+    /* The PPA client is lv_draw_ortho_ppa.c's, shared with the tiles: one
+     * queue, the same DIG-734 guard and the same bounded wait. */
+    return ESP_OK;
 }
 
 void lv_draw_ortho_video_place(lv_draw_ortho_video_t * v, const lv_area_t * ui_area)
@@ -127,14 +127,12 @@ esp_err_t lv_draw_ortho_video_show(lv_draw_ortho_video_t * v, const void * frame
      * this is the line. */
     op.mirror_x = across ? mirror_y : mirror_x;
     op.mirror_y = across ? mirror_x : mirror_y;
-    op.mode = PPA_TRANS_MODE_BLOCKING;
-    return ppa_do_scale_rotate_mirror(v->client, &op);
+    return lv_draw_ortho_ppa_srm(&op);
 }
 
 void lv_draw_ortho_video_deinit(lv_draw_ortho_video_t * v)
 {
     lv_draw_ortho_set_window(NULL, NULL);
-    if(v->client) ppa_unregister_client(v->client);
     v->client = NULL;
     v->placed = false;
 }

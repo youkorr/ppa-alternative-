@@ -530,12 +530,81 @@ static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_displ
             g_failures++;
             printf("  FAIL  ...and %d PPA transaction(s) were still queued when LVGL took its layer back\n", pending);
         }
+        /* DIG-734: a block the chip would never finish must never be sent;
+         * one that was is a stuck PPA and a turner given up on. */
+        if(g_p4_dig734 || st->turner_failed) {
+            g_failures++;
+            printf("  FAIL  ...and %d transaction(s) the P4 would never finish were sent (DIG-734)%s\n",
+                   g_p4_dig734, st->turner_failed ? ", and the PPA was given up on" : "");
+            g_p4_dig734 = 0;
+        }
         p4fake_run_all();
         drop_screen(nat);
     }
     lv_draw_ortho_set_fast_paths(true);
     lv_draw_ortho_set_batching(true);
     lv_draw_ortho_ppa_deinit();
+    free(want);
+}
+
+/* The PPA stops answering in the middle of a screen, as the P4's does in the
+ * faults of esp-idf #19023, #19096 and #19108. Nothing may hang: the wait
+ * gives up, the CPU turns from then on, the PPA is not used again, and the
+ * screen drawn again is right. Run last: a stuck PPA stays stuck. */
+static void check_ppa_stall(int32_t nw, int32_t nh, lv_display_rotation_t rot)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    uint8_t * want = reference(nw, nh, cf, rot, scene_ui);
+    lv_draw_ortho_ppa_init();
+    screen_t * nat = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(nat->disp);
+    scene_ui(lv_display_get_screen_active(nat->disp));
+    lv_draw_ortho_reset_stats();
+    p4fake_stall_next();
+    lv_refr_now(nat->disp);
+    const bool failed = lv_draw_ortho_get_stats()->turner_failed;
+    const bool stuck = lv_draw_ortho_ppa_stuck();
+    /* What lvgl_ortho does on seeing turner_failed. */
+    lv_obj_invalidate(lv_display_get_screen_active(nat->disp));
+    lv_draw_ortho_reset_stats();
+    lv_refr_now(nat->disp);
+    const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+    diffs_t d;
+    const long nd = count_diffs(nat, want, cf, &d);
+    g_cases++;
+    char what[200];
+    snprintf(what, sizeof(what), "PPA stalled mid-screen at %s: given up %s, marked stuck %s, redrawn by the CPU "
+             "(%.0f%% by the PPA), %ld pixel(s) differ", rot_name(rot), failed ? "yes" : "NO", stuck ? "yes" : "NO",
+             st->bytes_turned ? 100.0 * st->bytes_handed / st->bytes_turned : 0.0, nd);
+    if(failed && stuck && st->bytes_handed == 0 && nd <= MAX_EXCUSED) printf("  ok    %s\n", what);
+    else {
+        g_failures++;
+        printf("  FAIL  %s\n", what);
+    }
+    /* And the video window, which shares the PPA, does not queue behind the
+     * stuck transaction: it is told at once, not after a timeout a frame. */
+    static uint16_t px[64 * 64] __attribute__((aligned(128)));
+    ppa_srm_oper_config_t op;
+    memset(&op, 0, sizeof(op));
+    op.in.buffer = px;
+    op.in.pic_w = op.in.pic_h = op.in.block_w = op.in.block_h = 8;
+    op.in.srm_cm = op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+    op.out.buffer = px + 1024;
+    op.out.buffer_size = 1024;
+    op.out.pic_w = op.out.pic_h = 8;
+    op.scale_x = op.scale_y = 1.0f;
+    const int queued = p4fake_pending();
+    const esp_err_t err = lv_draw_ortho_ppa_srm(&op);
+    g_cases++;
+    if(err == ESP_ERR_INVALID_STATE && p4fake_pending() == queued)
+        printf("  ok    ...and the video window is refused at once by the stuck PPA\n");
+    else {
+        g_failures++;
+        printf("  FAIL  ...and the video window queued behind the stuck PPA (error 0x%x)\n", (unsigned)err);
+    }
+    drop_screen(nat);
+    lv_draw_ortho_ppa_deinit();
+    p4fake_reset();
     free(want);
 }
 
@@ -1381,6 +1450,7 @@ int main(int argc, char ** argv)
         }
     }
     if(argc > 1 && strcmp(argv[1], "--ppa") == 0) {
+        check_ppa_stall(320, 480, LV_DISPLAY_ROTATION_270);
         printf("%d of %d cases passed\n", g_cases - g_failures, g_cases);
         return g_failures ? 1 : 0;
     }
@@ -1424,6 +1494,9 @@ int main(int argc, char ** argv)
     check_camera(400, 640, LV_DISPLAY_ROTATION_90, 322, 182);
     check_camera(512, 300, LV_DISPLAY_ROTATION_180, 640, 480);
     check_camera(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
+
+    /* Last: after it the PPA is stuck, as it would stay on a board. */
+    check_ppa_stall(320, 480, LV_DISPLAY_ROTATION_270);
 
     printf("%d of %d cases passed\n", g_cases - g_failures, g_cases);
 

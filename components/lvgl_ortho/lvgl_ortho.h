@@ -79,6 +79,7 @@ class LvglOrtho : public Component {
   int degrees_{0};
   bool ppa_{true};
   bool ppa_on_{false};
+  bool ppa_lost_{false};  // said once, and the screen drawn again
   lv_display_t *disp_{nullptr};
   uint8_t *buf_{nullptr};
   uint32_t stride_{0};
