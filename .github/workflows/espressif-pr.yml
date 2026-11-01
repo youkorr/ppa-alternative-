@@ -5,8 +5,11 @@
 # The pull request prepared for Espressif (upstream/espressif/), built the way
 # their CI builds it: their esp_lvgl_adapter at the commit the patch was made
 # on, the patch applied with git am, and their lvgl9 test app compiled for the
-# ESP32-P4 in Espressif's own ESP-IDF image -- with the new option on, and
-# without it, to show the default build is unchanged.
+# ESP32-P4 in Espressif's own ESP-IDF images -- the four their CI builds this
+# test app with (.build_idf_ge_than_v5_5_5_with_pre_release in their
+# .gitlab/ci/build.yml): v5.5.5, release-v6.0, release-v6.1 and latest --
+# with the new option on, and without it, to show the default build is
+# unchanged.
 name: Espressif pull request
 on:
   push:
@@ -17,10 +20,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    container: espressif/idf:v5.5.5
+    container: espressif/idf:${{ matrix.idf }}
     strategy:
       fail-fast: false
       matrix:
+        idf: [v5.5.5, release-v6.0, release-v6.1, latest]
         config: [rotate_in_draw, p4rev3]
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +38,7 @@ jobs:
           git checkout -q $BASE
           git -c user.name=ci -c user.email=ci@localhost am "$GITHUB_WORKSPACE"/upstream/espressif/esp-iot-solution/*.patch
           git log --oneline -2
-      - name: The lvgl9 test app for esp32p4, sdkconfig.ci.${{ matrix.config }}
+      - name: The lvgl9 test app for esp32p4, ESP-IDF ${{ matrix.idf }}, sdkconfig.ci.${{ matrix.config }}
         shell: bash
         run: |
           . $IDF_PATH/export.sh
