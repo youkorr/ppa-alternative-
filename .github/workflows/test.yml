@@ -37,13 +37,15 @@ jobs:
       - name: The two-core test catches every mistake planted in it
         run: python3 test/ppa_mutants.py --cores build-mt
       # LVGL's own render thread races its own dispatcher (reported with one
-      # core as with two); what must never appear is lv_draw_ortho.
+      # core as with two); what must never appear is lv_draw_ortho. One race
+      # inside LVGL 9.6 and master, met by both cores in its circle cache, is
+      # set aside in test/tsan.supp, which says why it is harmless.
       - name: Two cores, under ThreadSanitizer
         run: |
           sudo sysctl vm.mmap_rnd_bits=28
           make -C test -j4 LVGL=/tmp/lvgl BUILD=build-tsan CFLAGS="-O1 -g -fsanitize=thread -DLV_USE_OS=1" build-tsan/ortho_test
           cd test/build-tsan
-          TSAN_OPTIONS="halt_on_error=0 exitcode=0" ./ortho_test --cores > out.txt 2> tsan.txt
+          TSAN_OPTIONS="halt_on_error=0 exitcode=0 suppressions=$PWD/../tsan.supp" ./ortho_test --cores > out.txt 2> tsan.txt
           tail -1 out.txt
           ! grep -n FAIL out.txt
           echo "$(grep -c 'WARNING: ThreadSanitizer' tsan.txt) report(s), all LVGL's own:"

@@ -554,6 +554,11 @@ pthreads, draws every case with the second thread painting (207 cases, pixel
 for pixel), again with no room for more than two tiles (the halves), and under
 ThreadSanitizer, which reports nothing in lv_draw_ortho -- what it reports is
 LVGL's own render thread against its own dispatcher, the same with one core.
+One more is LVGL's and only on 9.6 and `master`: `release_mask_radius()`
+reads a circle-cache entry outside the mutex that guards it (9.5 reads it
+inside), so two cores drawing rounded corners meet there, as LVGL's own
+drawing threads would. It cannot change what is read -- a cached entry's
+`life` is never negative -- and `test/tsan.supp` sets that one report aside.
 `ppa_mutants.py --cores` plants four mistakes (a tile handed over while the PPA
 still turns it out, a tile turned out before the other core has finished it,
 two halves in the same memory, both cores in one tile) and the test catches

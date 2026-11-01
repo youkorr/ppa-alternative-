@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# ThreadSanitizer: one race in LVGL itself, not in lv_draw_ortho.
+#
+# LVGL 9.6 and master read a circle-cache entry's `life` in
+# release_mask_radius() (src/draw/sw/lv_draw_sw_mask.c) outside
+# circle_cache_mutex, while another thread's acquire_mask_radius_from_cache()
+# ages the same entry under it. 9.5 reads it under the mutex. LVGL's own
+# drawing threads (LV_DRAW_SW_DRAW_UNIT_CNT > 1) meet the same race. The read
+# only asks whether `life` is negative, which a cached entry never is (it is
+# set to 0 and only ever raised, up to 1000), so the answer cannot change.
+race:release_mask_radius
