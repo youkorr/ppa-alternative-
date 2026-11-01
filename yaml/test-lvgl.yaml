@@ -11,6 +11,8 @@
 #          guition    Guition JC8012P4A1, landscape (90)
 #          waveshare  Waveshare 7B, turned over (180)
 #   mode:  ortho      lv_draw_ortho, the PPA turning while the CPU draws
+#          ortho_2cores  lv_draw_ortho and the PPA, the second core painting
+#                     every other tile (off by default: compare with ortho)
 #          ortho_cpu  lv_draw_ortho, the CPU turning (to compare with the PPA)
 #          lvgl       ESPHome's own rotation, as before lvgl_ortho
 #

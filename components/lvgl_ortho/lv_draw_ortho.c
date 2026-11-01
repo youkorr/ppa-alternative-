@@ -58,12 +58,19 @@ typedef struct {
     lv_draw_unit_t base;
     lv_draw_task_t * task_act;
     job_t * jobs;            /* LV_DRAW_ORTHO_MAX_BATCH */
-    /* LV_DRAW_ORTHO_TILE_BYTES each, aligned to a cache line. The second only
-     * with a turner: one is drawn while the other is being turned. */
-    uint8_t * tile[2];
-    void * tile_alloc[2];
-    uint32_t ticket[2];      /* the last turn reading each tile, 0 if none */
+    /* LV_DRAW_ORTHO_TILE_BYTES each, aligned to a cache line. The second with
+     * a turner (one is drawn while the other is being turned) or a second
+     * core (each draws one); the third and fourth with both, so a pair is
+     * drawn while the last pair is being turned. */
+    uint8_t * tile[4];
+    void * tile_alloc[4];
+    uint32_t ticket[4];      /* the last turn reading each tile, 0 if none */
     int32_t next;
+    int32_t pair;
+    /* What a tile holds: LV_DRAW_ORTHO_TILE_BYTES, or half of it when the
+     * third and fourth are the second halves of the first two (two cores and
+     * a turner, with no internal RAM for more). */
+    size_t tile_bytes;
 } ortho_unit_t;
 
 static ortho_unit_t * g_unit;
@@ -656,8 +663,22 @@ static bool job_touches(const job_t * j, const lv_area_t * tile)
     return true;
 }
 
-static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t * whole_tile,
-                      uint8_t * mem, size_t mem_size, uint32_t * ticket)
+/* One tile on its way: prepared and read back by the first core, painted by
+ * either, put back turned by the first. Painting touches nothing but the tile
+ * and LVGL's own drawing state, so the other core can do it. */
+typedef struct {
+    const job_t * jobs;
+    int32_t n, first;
+    lv_area_t tile;      /* upright: the part the jobs reach */
+    lv_area_t nat;
+    lv_draw_buf_t tb;
+    lv_layer_t * target;
+    int32_t px;
+    uint64_t drawn;      /* bytes the renderer wrote, for the stats */
+} tile_work_t;
+
+static bool prep_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t * whole_tile,
+                      uint8_t * mem, size_t mem_size, tile_work_t * w)
 {
     /* Only the part of the tile the jobs reach: a run of a scroll bar down
      * the right edge and another along the bottom spans the whole screen, and
@@ -674,56 +695,284 @@ static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
         }
         else lv_area_join(&reach, &reach, &a);
     }
-    if(first < 0) return;
+    if(first < 0) return false;
     const lv_area_t * tile = &reach;
 
     lv_layer_t * target = jobs[first].t->target_layer;
     lv_draw_buf_t * nb = target->draw_buf;
     const lv_color_format_t cf = nb->header.cf;
     const int32_t px = lv_color_format_get_size(cf);
-    const int32_t w = lv_area_get_width(tile);
+    const int32_t wd = lv_area_get_width(tile);
     const int32_t h = lv_area_get_height(tile);
-    const uint32_t stride = lv_draw_buf_width_to_stride(w, cf);
+    const uint32_t stride = lv_draw_buf_width_to_stride(wd, cf);
 
-    lv_draw_buf_t tb;
-    if(lv_draw_buf_init(&tb, w, h, cf, stride, mem, mem_size) != LV_RESULT_OK) {
-        LV_LOG_WARN("ortho: tile %dx%d does not fit", (int)w, (int)h);
-        return;
+    if(lv_draw_buf_init(&w->tb, wd, h, cf, stride, mem, mem_size) != LV_RESULT_OK) {
+        LV_LOG_WARN("ortho: tile %dx%d does not fit", (int)wd, (int)h);
+        return false;
     }
-
-    lv_area_t nat;
-    ortho_area(o, tile, &nat);
+    w->jobs = jobs;
+    w->n = n;
+    w->first = first;
+    w->tile = reach;
+    w->target = target;
+    w->px = px;
+    w->drawn = 0;
+    ortho_area(o, tile, &w->nat);
 
     /* The tile starts as what is already under it, so blending is right --
      * unless the first thing drawn paints all of it anyway. */
     if(!covers(&jobs[first], tile)) {
         uint32_t t = turn_or_cpu(o, cf, px, nb->data, nb->header.stride, &target->buf_area,
-                                 tb.data, stride, tile, &nat, false);
+                                 w->tb.data, stride, tile, &w->nat, false);
         if(!wait_ticket(&t))   /* it is drawn on next */
-            move_turned(o, px, nb->data, nb->header.stride, &target->buf_area, tb.data, stride, tile, &nat, false);
+            move_turned(o, px, nb->data, nb->header.stride, &target->buf_area, w->tb.data, stride, tile, &w->nat,
+                        false);
     }
     else g_stats.tiles_unread++;
+    return true;
+}
 
+/* No globals of this file in here: it may run on the other core. */
+static void paint_tile(tile_work_t * w)
+{
     lv_layer_t tl;
-    tile_layer(&tl, &tb, tile, target);
-    for(int32_t i = first; i < n; i++) {
+    tile_layer(&tl, &w->tb, &w->tile, w->target);
+    for(int32_t i = w->first; i < w->n; i++) {
         lv_area_t clip, drawn;
-        if(!job_touches(&jobs[i], tile)) continue;
-        if(lv_area_intersect(&clip, &jobs[i].t->clip_area, tile)) {
-            sw_execute_on(jobs[i].t, &tl, &jobs[i].t->area, &clip);
-            if(lv_area_intersect(&drawn, &jobs[i].todo, &clip))
-                g_stats.bytes_drawn += (uint64_t)lv_area_get_size(&drawn) * (uint64_t)px;
+        const job_t * j = &w->jobs[i];
+        if(!job_touches(j, &w->tile)) continue;
+        if(lv_area_intersect(&clip, &j->t->clip_area, &w->tile)) {
+            sw_execute_on(j->t, &tl, &j->t->area, &clip);
+            if(lv_area_intersect(&drawn, &j->todo, &clip))
+                w->drawn += (uint64_t)lv_area_get_size(&drawn) * (uint64_t)w->px;
         }
     }
+}
 
+static void finish_tile(const ortho_t * o, tile_work_t * w, uint32_t * ticket)
+{
+    lv_draw_buf_t * nb = w->target->draw_buf;
+    const lv_color_format_t cf = nb->header.cf;
+    g_stats.bytes_drawn += w->drawn;
     lv_area_t parts[4];
-    const int32_t np = outside_window(target, &nat, parts);
+    const int32_t np = outside_window(w->target, &w->nat, parts);
     for(int32_t i = 0; i < np; i++) {
-        const uint32_t t = turn_or_cpu(o, cf, px, nb->data, nb->header.stride, &target->buf_area,
-                                       tb.data, stride, tile, &parts[i], true);
+        const uint32_t t = turn_or_cpu(o, cf, w->px, nb->data, nb->header.stride, &w->target->buf_area,
+                                       w->tb.data, w->tb.header.stride, &w->tile, &parts[i], true);
         if(t) *ticket = t;
     }
     g_stats.tiles++;
+}
+
+static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t * whole_tile,
+                      uint8_t * mem, size_t mem_size, uint32_t * ticket)
+{
+    tile_work_t w;
+    if(!prep_tile(jobs, n, o, whole_tile, mem, mem_size, &w)) return;
+    paint_tile(&w);
+    finish_tile(o, &w, ticket);
+}
+
+/* ------------------------------------------------------------------------ */
+/* The other core                                                           */
+/* ------------------------------------------------------------------------ */
+
+/* A second core paints every other tile: LVGL's software renderer, into a
+ * tile of its own, and nothing else. Reading the frame buffer back, turning
+ * and handing work to the PPA stay on the first core, so the frame buffer
+ * and the turner have one user as before.
+ *
+ * Two of LVGL's renderers at once is what LVGL itself does with
+ * LV_DRAW_SW_DRAW_UNIT_CNT > 1, and it is safe for the same reason: its
+ * shared caches (the circle cache of rounded corners, the image decoders and
+ * their cache) are behind LVGL's own mutexes -- which are real only with an
+ * OS. With LV_OS_NONE they compile to nothing, so then there is no second
+ * core. youkorr/lvgl_9.5 runs LV_OS_FREERTOS on an ESP32. */
+#if defined(LV_DRAW_ORTHO_SIM_CORES)
+#define ORTHO_HELPER 1   /* the P4 simulation: run where it is joined, counted apart */
+#elif LV_USE_OS == LV_OS_FREERTOS && defined(ESP_PLATFORM)
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+#if CONFIG_FREERTOS_NUMBER_OF_CORES > 1
+#define ORTHO_HELPER 2
+#endif
+#elif LV_USE_OS == LV_OS_PTHREAD
+#include <pthread.h>
+#define ORTHO_HELPER 3
+#endif
+#ifndef ORTHO_HELPER
+#define ORTHO_HELPER 0
+#endif
+
+typedef struct {
+    bool on;
+    tile_work_t * volatile work;
+    volatile bool quit;
+#if ORTHO_HELPER == 2
+    TaskHandle_t task;
+    SemaphoreHandle_t go, done;
+#elif ORTHO_HELPER == 3
+    pthread_t thread;
+    pthread_mutex_t m;
+    pthread_cond_t c;
+    int state;   /* 0 idle, 1 work handed over, 2 painted */
+#endif
+} helper_t;
+
+static helper_t g_helper;
+
+#if ORTHO_HELPER == 2
+static void helper_main(void * arg)
+{
+    LV_UNUSED(arg);
+    for(;;) {
+        xSemaphoreTake(g_helper.go, portMAX_DELAY);
+        if(g_helper.quit) break;
+        paint_tile(g_helper.work);
+        xSemaphoreGive(g_helper.done);
+    }
+    xSemaphoreGive(g_helper.done);
+    vTaskDelete(NULL);
+}
+#elif ORTHO_HELPER == 3
+static void * helper_main(void * arg)
+{
+    LV_UNUSED(arg);
+    pthread_mutex_lock(&g_helper.m);
+    for(;;) {
+        while(g_helper.state != 1 && !g_helper.quit) pthread_cond_wait(&g_helper.c, &g_helper.m);
+        if(g_helper.quit) break;
+        pthread_mutex_unlock(&g_helper.m);
+        paint_tile(g_helper.work);
+        pthread_mutex_lock(&g_helper.m);
+        g_helper.state = 2;
+        pthread_cond_broadcast(&g_helper.c);
+    }
+    pthread_mutex_unlock(&g_helper.m);
+    return NULL;
+}
+#endif
+
+static bool helper_start_thread(void)
+{
+#if ORTHO_HELPER == 1
+    return true;
+#elif ORTHO_HELPER == 2
+    g_helper.go = xSemaphoreCreateBinary();
+    g_helper.done = xSemaphoreCreateBinary();
+    if(g_helper.go && g_helper.done) {
+        /* On the core LVGL is not on, at LVGL's priority: it is LVGL's work. */
+        const BaseType_t core = xPortGetCoreID() ^ 1;
+        const uint32_t stack = LV_MAX(LV_DRAW_THREAD_STACK_SIZE, 12 * 1024);
+        if(xTaskCreatePinnedToCore(helper_main, "lv_ortho2", stack, NULL, uxTaskPriorityGet(NULL),
+                                   &g_helper.task, core) == pdPASS) return true;
+    }
+    if(g_helper.go) vSemaphoreDelete(g_helper.go);
+    if(g_helper.done) vSemaphoreDelete(g_helper.done);
+    g_helper.go = g_helper.done = NULL;
+    return false;
+#elif ORTHO_HELPER == 3
+    pthread_mutex_init(&g_helper.m, NULL);
+    pthread_cond_init(&g_helper.c, NULL);
+    g_helper.state = 0;
+    if(pthread_create(&g_helper.thread, NULL, helper_main, NULL) == 0) return true;
+    pthread_cond_destroy(&g_helper.c);
+    pthread_mutex_destroy(&g_helper.m);
+    return false;
+#else
+    return false;
+#endif
+}
+
+static void helper_stop_thread(void)
+{
+#if ORTHO_HELPER == 2
+    g_helper.quit = true;   /* the semaphore orders it before the task reads it */
+    xSemaphoreGive(g_helper.go);
+    xSemaphoreTake(g_helper.done, portMAX_DELAY);
+    vSemaphoreDelete(g_helper.go);
+    vSemaphoreDelete(g_helper.done);
+    g_helper.go = g_helper.done = NULL;
+#elif ORTHO_HELPER == 3
+    pthread_mutex_lock(&g_helper.m);
+    g_helper.quit = true;
+    pthread_cond_broadcast(&g_helper.c);
+    pthread_mutex_unlock(&g_helper.m);
+    pthread_join(g_helper.thread, NULL);
+    pthread_cond_destroy(&g_helper.c);
+    pthread_mutex_destroy(&g_helper.m);
+#endif
+    g_helper.quit = false;
+}
+
+#if ORTHO_HELPER == 1
+/* The simulation runs one core: the other core's painting runs at the join,
+ * between markers, and p4cache.c counts it apart. Markers: 2042 the other
+ * core is handed its tile, 2044..2043 its painting, 2041 the join. */
+#define SIM_MARK(n) __asm__ volatile("addi x0, x0, %0" :: "i"(n) : "memory")
+#endif
+
+static void helper_paint(tile_work_t * w)
+{
+    g_helper.work = w;
+#if ORTHO_HELPER == 1
+    SIM_MARK(2042);
+#elif ORTHO_HELPER == 2
+    xSemaphoreGive(g_helper.go);
+#elif ORTHO_HELPER == 3
+    pthread_mutex_lock(&g_helper.m);
+    g_helper.state = 1;
+    pthread_cond_broadcast(&g_helper.c);
+    pthread_mutex_unlock(&g_helper.m);
+#endif
+}
+
+static void helper_join(void)
+{
+#if ORTHO_HELPER == 1
+    SIM_MARK(2044);
+    paint_tile(g_helper.work);
+    SIM_MARK(2043);
+    SIM_MARK(2041);
+#elif ORTHO_HELPER == 2
+    xSemaphoreTake(g_helper.done, portMAX_DELAY);
+#elif ORTHO_HELPER == 3
+    pthread_mutex_lock(&g_helper.m);
+    while(g_helper.state != 2) pthread_cond_wait(&g_helper.c, &g_helper.m);
+    g_helper.state = 0;
+    pthread_mutex_unlock(&g_helper.m);
+#endif
+    g_helper.work = NULL;
+}
+
+/* Two tiles at once: the second painted by the other core while this one
+ * reads back and paints the first. Its read-back goes first so the other
+ * core starts as early as it can; the first's read-back then runs while the
+ * other core paints. Both are turned out after the join, in order. With four
+ * tiles the pairs alternate, so a pair is painted while the PPA turns out
+ * the last one. */
+static void draw_pair(ortho_unit_t * u, const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t rect[2])
+{
+    int32_t base = 0;
+    if(u->tile[2] && u->tile[3]) {
+        base = 2 * u->pair;
+        u->pair ^= 1;
+    }
+    tile_work_t w[2];
+    bool ok[2];
+    wait_ticket(&u->ticket[base + 1]);
+    ok[1] = prep_tile(jobs, n, o, &rect[1], u->tile[base + 1], u->tile_bytes, &w[1]);
+    if(ok[1]) helper_paint(&w[1]);
+    wait_ticket(&u->ticket[base]);
+    ok[0] = prep_tile(jobs, n, o, &rect[0], u->tile[base], u->tile_bytes, &w[0]);
+    if(ok[0]) paint_tile(&w[0]);
+    if(ok[1]) {
+        helper_join();
+        g_stats.tiles_other_core++;
+    }
+    if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);
+    if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);
 }
 
 static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ortho_t * o)
@@ -752,24 +1001,39 @@ static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
     /* As wide as the area allows, then as many rows as fit. */
     const int32_t w = lv_area_get_width(&box);
     int32_t tw = w;
-    while(tw > 1 && lv_draw_buf_width_to_stride(tw, cf) > LV_DRAW_ORTHO_TILE_BYTES) tw = (tw + 1) / 2;
+    while(tw > 1 && lv_draw_buf_width_to_stride(tw, cf) > u->tile_bytes) tw = (tw + 1) / 2;
     const uint32_t tstride = lv_draw_buf_width_to_stride(tw, cf);
-    int32_t th = (int32_t)(LV_DRAW_ORTHO_TILE_BYTES / tstride);
+    int32_t th = (int32_t)(u->tile_bytes / tstride);
     if(th < 1) th = 1;
 
+    const bool two = g_helper.on && u->tile[1];
+    lv_area_t held[2];
+    int32_t nheld = 0;
     for(int32_t y = box.y1; y <= box.y2; y += th) {
         for(int32_t x = box.x1; x <= box.x2; x += tw) {
             lv_area_t tile = {x, y, LV_MIN(x + tw - 1, box.x2), LV_MIN(y + th - 1, box.y2)};
+            if(two) {
+                held[nheld++] = tile;
+                if(nheld == 2) {
+                    draw_pair(u, jobs, n, o, held);
+                    nheld = 0;
+                }
+                continue;
+            }
             /* With two tiles, this one is drawn while the turner still has
              * the other: it waits only for the turns reading THIS one. */
             const int32_t k = u->next;
             if(u->tile[1]) u->next ^= 1;
             wait_ticket(&u->ticket[k]);
-            draw_tile(jobs, n, o, &tile, u->tile[k], LV_DRAW_ORTHO_TILE_BYTES, &u->ticket[k]);
+            draw_tile(jobs, n, o, &tile, u->tile[k], u->tile_bytes, &u->ticket[k]);
         }
     }
+    if(nheld) {   /* an odd one out, drawn here */
+        wait_ticket(&u->ticket[0]);
+        draw_tile(jobs, n, o, &held[0], u->tile[0], u->tile_bytes, &u->ticket[0]);
+    }
     fence();
-    u->ticket[0] = u->ticket[1] = 0;
+    for(int i = 0; i < 4; i++) u->ticket[i] = 0;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1110,13 +1374,25 @@ static void tile_free(void * p)
     heap_caps_free(p);
 }
 #else
+/* LV_DRAW_ORTHO_TEST_TILES: at most that many tiles at once, so a test can
+ * see what a board with little internal RAM does. */
+#ifdef LV_DRAW_ORTHO_TEST_TILES
+static int g_test_tiles;
+#endif
 static void * tile_alloc(size_t size, bool * internal)
 {
     *internal = false;
+#ifdef LV_DRAW_ORTHO_TEST_TILES
+    if(g_test_tiles >= LV_DRAW_ORTHO_TEST_TILES) return NULL;
+    g_test_tiles++;
+#endif
     return lv_malloc(size);
 }
 static void tile_free(void * p)
 {
+#ifdef LV_DRAW_ORTHO_TEST_TILES
+    g_test_tiles--;
+#endif
     lv_free(p);
 }
 #endif
@@ -1126,34 +1402,59 @@ static uint8_t * tile_aligned(void * p)
     return (uint8_t *)(((uintptr_t)p + TILE_ALIGN - 1) & ~(uintptr_t)(TILE_ALIGN - 1));
 }
 
-/* The second tile, when a turner can use it: internal RAM or nothing, since a
- * tile in PSRAM would put all the drawing on the bus the turn is meant to
- * keep it off. */
-static void second_tile(ortho_unit_t * u)
+/* The tiles past the first: internal RAM or nothing, since a tile in PSRAM
+ * would put all the drawing on the bus the turn is meant to keep it off. The
+ * second when a turner or a second core can use it, the third and fourth
+ * when both can. */
+static bool more_tiles(ortho_unit_t * u)
 {
-    if(u->tile[1] || g_turn == NULL) return;
-    bool internal = false;
-    void * p = tile_alloc(LV_DRAW_ORTHO_TILE_BYTES + TILE_ALIGN, &internal);
+    const int want = g_turn && g_helper.on ? 4 : g_turn || g_helper.on ? 2 : 1;
+    for(int i = 1; i < want; i++) {
+        if(u->tile[i]) continue;
+        bool internal = false;
+        void * p = tile_alloc(LV_DRAW_ORTHO_TILE_BYTES + TILE_ALIGN, &internal);
 #if !defined(ESP_PLATFORM)
-    internal = true;   /* a PC has one kind of memory */
+        internal = true;   /* a PC has one kind of memory */
 #endif
-    if(p && !internal) {
-        tile_free(p);
-        p = NULL;
+        if(p && !internal) {
+            tile_free(p);
+            p = NULL;
+        }
+        if(p == NULL && i >= 2) {
+            /* No room for two more: the first two cut in half make four,
+             * which is what lets a pair be painted while the last is turned
+             * -- smaller tiles, but no RAM more than one core needs. */
+            if(i == 3) {
+                tile_free(u->tile_alloc[2]);
+                u->tile_alloc[2] = NULL;
+            }
+            const size_t half = (LV_DRAW_ORTHO_TILE_BYTES / 2) & ~(size_t)(TILE_ALIGN - 1);
+            u->tile[2] = u->tile[0] + half;
+            u->tile[3] = u->tile[1] + half;
+            u->tile_bytes = half;
+            LV_LOG_WARN("ortho: no internal RAM for two more tiles; four of %u KiB from the two there are",
+                        (unsigned)(half / 1024));
+            return true;
+        }
+        if(p == NULL) {
+            LV_LOG_WARN("ortho: no internal RAM for tile %d of %d", i + 1, want);
+            return false;
+        }
+        u->tile_alloc[i] = p;
+        u->tile[i] = tile_aligned(p);
     }
-    if(p == NULL) {
-        LV_LOG_WARN("ortho: no internal RAM for a second tile; the CPU waits for each turn");
-        return;
-    }
-    u->tile_alloc[1] = p;
-    u->tile[1] = tile_aligned(p);
+    return true;
 }
 
 static int32_t delete_cb(lv_draw_unit_t * draw_unit)
 {
     ortho_unit_t * u = (ortho_unit_t *)draw_unit;
     fence();
-    for(int i = 0; i < 2; i++) {
+    if(g_helper.on) {
+        helper_stop_thread();
+        g_helper.on = false;
+    }
+    for(int i = 0; i < 4; i++) {
         if(u->tile_alloc[i]) tile_free(u->tile_alloc[i]);
         u->tile_alloc[i] = NULL;
         u->tile[i] = NULL;
@@ -1177,10 +1478,11 @@ void lv_draw_ortho_init(void)
     LV_ASSERT_MALLOC(u->tile_alloc[0]);
     g_tile_internal = internal;
     u->tile[0] = tile_aligned(u->tile_alloc[0]);
+    u->tile_bytes = LV_DRAW_ORTHO_TILE_BYTES;
     u->jobs = lv_malloc(sizeof(job_t) * LV_DRAW_ORTHO_MAX_BATCH);
     LV_ASSERT_MALLOC(u->jobs);
     g_unit = u;
-    second_tile(u);
+    more_tiles(u);
 }
 
 void lv_draw_ortho_set_filler(lv_draw_ortho_fill_cb_t fill)
@@ -1195,10 +1497,52 @@ void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_c
     g_turn = wait ? turn : NULL;
     g_wait = g_turn ? wait : NULL;
     if(g_unit) {
-        g_unit->ticket[0] = g_unit->ticket[1] = 0;
+        for(int i = 0; i < 4; i++) g_unit->ticket[i] = 0;
         g_unit->next = 0;
-        second_tile(g_unit);
+        g_unit->pair = 0;
+        more_tiles(g_unit);
     }
+}
+
+/* The halves go back to being whole tiles. */
+static void whole_tiles(ortho_unit_t * u)
+{
+    fence();
+    for(int i = 2; i < 4; i++) {
+        if(u->tile_alloc[i] == NULL) u->tile[i] = NULL;
+        u->ticket[i] = 0;
+    }
+    u->tile_bytes = LV_DRAW_ORTHO_TILE_BYTES;
+}
+
+bool lv_draw_ortho_set_cores(uint32_t cores)
+{
+    if(g_unit == NULL) return false;
+    if(cores < 2) {
+        if(g_helper.on) helper_stop_thread();
+        g_helper.on = false;
+        if(g_unit->tile_bytes != LV_DRAW_ORTHO_TILE_BYTES) whole_tiles(g_unit);
+        return true;
+    }
+    if(g_helper.on) return true;
+    if(ORTHO_HELPER == 0) {
+        LV_LOG_WARN("ortho: no second core without an OS (LV_USE_OS), which LVGL's own locks need");
+        return false;
+    }
+    g_helper.on = true;   /* more_tiles asks */
+    if(!more_tiles(g_unit) || g_unit->tile[1] == NULL) {
+        g_helper.on = false;
+        LV_LOG_WARN("ortho: no internal RAM for the second core's tile");
+        return false;
+    }
+    g_helper.on = false;
+    if(!helper_start_thread()) {
+        LV_LOG_WARN("ortho: the second core's task could not be started");
+        return false;
+    }
+    g_unit->pair = 0;
+    g_helper.on = true;
+    return true;
 }
 
 void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb)
@@ -1219,7 +1563,8 @@ void lv_draw_ortho_set_batching(bool enable)
 const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void)
 {
     g_stats.tile_internal = g_tile_internal;
-    g_stats.tiles_in_turn = g_unit && g_unit->tile[1] && g_turn ? 2 : 1;
+    g_stats.tiles_in_turn = g_unit && g_unit->tile[1] && g_turn ? (g_helper.on && g_unit->tile[3] ? 4 : 2) : 1;
+    g_stats.cores = g_helper.on ? 2 : 1;
     g_stats.turner_failed = g_turner_failed;
     return &g_stats;
 }

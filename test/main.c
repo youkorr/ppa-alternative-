@@ -35,6 +35,9 @@
 #include <time.h>
 
 static int g_failures;
+/* --cores: a second core paints every other tile; how many it painted. */
+static bool g_two_cores;
+static uint32_t g_other_total;
 static int g_cases;
 
 typedef struct {
@@ -450,6 +453,7 @@ static void check_scene(const char * scene, int32_t nw, int32_t nh, lv_color_for
         lv_draw_ortho_reset_stats();
         lv_refr_now(nat->disp);
         const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+        g_other_total += st->tiles_other_core;
         char what[200];
         snprintf(what, sizeof(what), "%s %dx%d %s at %s, %s, fast %s, %s (%u fills, %u images, %u tiles, %u refused)",
                  scene, (int)nw, (int)nh, cf_name(cf), rot_name(rot), partial ? "partial" : "direct ",
@@ -513,6 +517,7 @@ static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_displ
                  st->fills_hidden);
         const int pending = p4fake_pending();
         g_hidden_total += st->fills_hidden;
+        g_other_total += st->tiles_other_core;
         diffs_t d;
         long nd = count_diffs(nat, want, cf, &d);
         int32_t excused = nd > 0 && nd <= MAX_EXCUSED ? excuse(nat, &d, nw, nh, cf, rot, build) : -1;
@@ -527,7 +532,7 @@ static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_displ
          * buffer, so the bottom rows stay the CPU's. On these test sizes that
          * is every tile at 90 and 270, the declining path proved too. */
         const bool lines = (lv_draw_buf_width_to_stride(nw, cf) * (uint32_t)nh) % 128 == 0;
-        if(!partial && (st->tiles_in_turn != 2 || (lines && st->bytes_turned > 0 && st->bytes_handed == 0))) {
+        if(!partial && (st->tiles_in_turn < 2 || (lines && st->bytes_turned > 0 && st->bytes_handed == 0))) {
             g_failures++;
             printf("  FAIL  ...and the PPA turned nothing (%u tiles in turn)\n", st->tiles_in_turn);
         }
@@ -1439,6 +1444,30 @@ int main(int argc, char ** argv)
     lv_draw_ortho_init();
     if(quirk) return lvgl_quirk();
 
+    /* The second core: started on request, and refused without an OS --
+     * LVGL's locks are what make two renderers at once safe. */
+    g_two_cores = argc > 1 && strcmp(argv[1], "--cores") == 0;
+    g_cases++;
+    if(g_two_cores) {
+        if(lv_draw_ortho_set_cores(2) && lv_draw_ortho_get_stats()->cores == 2)
+            printf("  ok    a second core paints every other tile from here on\n");
+        else {
+            g_failures++;
+            printf("  FAIL  the second core would not start\n");
+        }
+    }
+    else {
+        const bool started = lv_draw_ortho_set_cores(2);
+        lv_draw_ortho_set_cores(1);
+        if(started == (LV_USE_OS != LV_OS_NONE))
+            printf("  ok    a second core %s\n", started ? "starts with an OS (and is stopped again)"
+                   : "is refused without an OS");
+        else {
+            g_failures++;
+            printf("  FAIL  a second core %s\n", started ? "started without an OS" : "would not start with one");
+        }
+    }
+
     const lv_display_rotation_t rots[] = {LV_DISPLAY_ROTATION_90, LV_DISPLAY_ROTATION_180,
                                           LV_DISPLAY_ROTATION_270, LV_DISPLAY_ROTATION_0
                                          };
@@ -1475,6 +1504,9 @@ int main(int argc, char ** argv)
             check_scene_ppa("ui", 333, 517, rots[r], scene_ui);
             check_scene_ppa("plain", 320, 480, rots[r], scene_plain);
         }
+        /* With two cores, a Tab5-sized panel: enough tiles in one batch for
+         * a pair to come back to tiles the PPA may still be turning out. */
+        if(g_two_cores) check_scene_ppa("ui", 720, 1280, LV_DISPLAY_ROTATION_270, scene_ui);
         /* A background under a full-screen picture is not drawn at all. */
         g_hidden_total = 0;
         for(unsigned r = 0; r < 3; r++) check_scene_ppa("covered", 320, 480, rots[r], scene_covered);
@@ -1560,6 +1592,16 @@ int main(int argc, char ** argv)
 
     /* Last: after it the PPA is stuck, as it would stay on a board. */
     check_ppa_stall(320, 480, LV_DISPLAY_ROTATION_270);
+
+    if(g_two_cores) {
+        g_cases++;
+        if(g_other_total > 0)
+            printf("  ok    the second core painted %u of the tiles above\n", (unsigned)g_other_total);
+        else {
+            g_failures++;
+            printf("  FAIL  the second core painted nothing, so the cases above proved nothing about it\n");
+        }
+    }
 
     printf("%d of %d cases passed\n", g_cases - g_failures, g_cases);
 

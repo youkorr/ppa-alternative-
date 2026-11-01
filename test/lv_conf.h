@@ -9,7 +9,10 @@
 #define LV_USE_STDLIB_MALLOC LV_STDLIB_CLIB
 #define LV_USE_STDLIB_STRING LV_STDLIB_CLIB
 #define LV_USE_STDLIB_SPRINTF LV_STDLIB_CLIB
+/* make CFLAGS=-DLV_USE_OS=1 builds the pthread variant, where the second core runs */
+#ifndef LV_USE_OS
 #define LV_USE_OS LV_OS_NONE
+#endif
 #define LV_USE_LOG 1
 #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
 #define LV_LOG_PRINTF 1

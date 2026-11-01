@@ -33,6 +33,15 @@
  * between them is counted in phase 2045 and kept out of the caches -- a DMA
  * engine reads and writes memory without them.
  *
+ * A second core is simulated on this one: lv_draw_ortho (built with
+ * LV_DRAW_ORTHO_SIM_CORES) hands the other core its tile at marker 2042 and
+ * runs its painting at the join, between 2044 and 2043, then marks the join
+ * with 2041. What the other core runs is counted apart (phase + OTHER), and
+ * each stretch from hand-over to join is written out as a segment -- what
+ * this core did meanwhile and what the other did -- so p4sim.py can take the
+ * slower of the two, as the two cores would. The caches are shared between
+ * them here, which is optimistic if the P4's L1 is per core.
+ *
  * Built against QEMU 8.2's qemu-plugin.h (plugin API version 1).
  */
 
@@ -57,8 +66,36 @@ typedef struct {
     uint64_t internal_writeback;
 } counts_t;
 
-static counts_t g_counts[PHASES];
+static counts_t g_counts[2 * PHASES];
 static int g_phase;
+#define OTHER PHASES   /* g_counts[phase + OTHER]: the other core's */
+
+/* Segments: from hand-over to join, this core's and the other's counts. */
+typedef struct { int phase; counts_t main, other; } segment_t;
+static segment_t * g_seg;
+static int g_nseg, g_capseg;
+static counts_t g_seg_start;     /* this core's counts at the hand-over */
+static counts_t g_other_start;
+static int g_in_seg, g_main_phase;
+
+/* The timeline: at each of markers 2040..2044, both cores' counts so far
+ * in the phase being drawn, in the order they came. */
+typedef struct { int marker, phase; counts_t main, other; } stamp_t;
+static stamp_t * g_stamp;
+static int g_nstamp, g_capstamp;
+
+static void stamp(int marker, int phase)
+{
+    if(g_nstamp == g_capstamp) {
+        g_capstamp = g_capstamp ? 2 * g_capstamp : 4096;
+        g_stamp = realloc(g_stamp, sizeof(stamp_t) * g_capstamp);
+    }
+    stamp_t * s = &g_stamp[g_nstamp++];
+    s->marker = marker;
+    s->phase = phase;
+    s->main = g_counts[phase];
+    s->other = g_counts[phase + OTHER];
+}
 static uint64_t g_psram_lo = 0x90000000u, g_psram_hi = 0xA0000000u;
 
 typedef struct {
@@ -200,11 +237,40 @@ static void on_tb(unsigned int vcpu, void * udata)
 static void on_marker(unsigned int vcpu, void * udata)
 {
     const int n = (int)(uintptr_t)udata;
+    if(n >= 2040 && n <= 2044) stamp(n, g_phase >= OTHER ? g_phase - OTHER : g_phase);
+    if(n == 2040) return;
     if(n == 2047) {
         g_saved_phase = g_phase;
         g_phase = DMA_PHASE;
     }
     else if(n == 2046) g_phase = g_saved_phase;
+    else if(n == 2042) {
+        g_in_seg = 1;
+        g_main_phase = g_phase;
+        g_seg_start = g_counts[g_phase];
+    }
+    else if(n == 2044) {
+        g_main_phase = g_phase;
+        g_other_start = g_counts[g_phase + OTHER];
+        g_phase += OTHER;
+    }
+    else if(n == 2043) g_phase = g_main_phase;
+    else if(n == 2041) {
+        if(g_in_seg) {
+            if(g_nseg == g_capseg) {
+                g_capseg = g_capseg ? 2 * g_capseg : 1024;
+                g_seg = realloc(g_seg, sizeof(segment_t) * g_capseg);
+            }
+            segment_t * sg = &g_seg[g_nseg++];
+            const counts_t * a = &g_counts[g_phase], * b = &g_counts[g_phase + OTHER];
+            sg->phase = g_phase;
+#define DIFF(f) sg->main.f = a->f - g_seg_start.f; sg->other.f = b->f - g_other_start.f;
+            DIFF(insns) DIFF(loads) DIFF(stores) DIFF(l1_miss_internal) DIFF(l1_miss_psram) DIFF(l2_hit)
+            DIFF(psram_fill) DIFF(psram_writeback) DIFF(internal_writeback)
+#undef DIFF
+        }
+        g_in_seg = 0;
+    }
     else g_phase = n;
 }
 
@@ -242,12 +308,26 @@ static void at_exit(qemu_plugin_id_t id, void * p)
     if(!f) return;
     fprintf(f, "phase insns loads stores l1_miss_internal l1_miss_psram l2_hit psram_fill psram_writeback "
             "internal_writeback\n");
-    for(int i = 1; i < PHASES; i++) {
+    for(int i = 1; i < 2 * PHASES; i++) {
         const counts_t * k = &g_counts[i];
         if(!k->insns) continue;
         fprintf(f, "%d %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64
                 " %" PRIu64 "\n", i, k->insns, k->loads, k->stores, k->l1_miss_internal, k->l1_miss_psram,
                 k->l2_hit, k->psram_fill, k->psram_writeback, k->internal_writeback);
+    }
+    for(int i = 0; i < g_nseg; i++) {
+        const counts_t * m = &g_seg[i].main, * o = &g_seg[i].other;
+        fprintf(f, "segment %d %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64
+                " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 "\n", g_seg[i].phase,
+                m->insns, m->l1_miss_internal, m->l2_hit, m->psram_fill, m->psram_writeback, m->internal_writeback,
+                o->insns, o->l1_miss_internal, o->l2_hit, o->psram_fill, o->psram_writeback, o->internal_writeback);
+    }
+    for(int i = 0; i < g_nstamp; i++) {
+        const counts_t * m = &g_stamp[i].main, * o = &g_stamp[i].other;
+        fprintf(f, "stamp %d %d %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64
+                " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 "\n", g_stamp[i].marker, g_stamp[i].phase,
+                m->insns, m->l1_miss_internal, m->l2_hit, m->psram_fill, m->psram_writeback, m->internal_writeback,
+                o->insns, o->l1_miss_internal, o->l2_hit, o->psram_fill, o->psram_writeback, o->internal_writeback);
     }
     if(g_profile) {
         fprintf(f, "profile of phase %d\n", g_profile);

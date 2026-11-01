@@ -24,6 +24,30 @@ jobs:
         run: python3 test/ppa_mutants.py
       - name: LVGL alone, drawn whole and in bands
         run: test/build/ortho_test --lvgl-quirk
+      # The second core needs an OS: LVGL built with pthreads, every case
+      # drawn with every other tile painted on another thread.
+      - name: Two cores, every case
+        run: |
+          make -C test -j4 LVGL=/tmp/lvgl BUILD=build-mt CFLAGS="-O2 -g -DLV_USE_OS=1" build-mt/ortho_test
+          test/build-mt/ortho_test --cores
+      - name: Two cores, with no internal RAM for more than two tiles
+        run: |
+          make -C test -j4 LVGL=/tmp/lvgl BUILD=build-mt2 CFLAGS="-O2 -g -DLV_USE_OS=1 -DLV_DRAW_ORTHO_TEST_TILES=2" build-mt2/ortho_test
+          test/build-mt2/ortho_test --cores
+      - name: The two-core test catches every mistake planted in it
+        run: python3 test/ppa_mutants.py --cores build-mt
+      # LVGL's own render thread races its own dispatcher (reported with one
+      # core as with two); what must never appear is lv_draw_ortho.
+      - name: Two cores, under ThreadSanitizer
+        run: |
+          sudo sysctl vm.mmap_rnd_bits=28
+          make -C test -j4 LVGL=/tmp/lvgl BUILD=build-tsan CFLAGS="-O1 -g -fsanitize=thread -DLV_USE_OS=1" build-tsan/ortho_test
+          cd test/build-tsan
+          TSAN_OPTIONS="halt_on_error=0 exitcode=0" ./ortho_test --cores > out.txt 2> tsan.txt
+          tail -1 out.txt
+          ! grep -n FAIL out.txt
+          echo "$(grep -c 'WARNING: ThreadSanitizer' tsan.txt) report(s), all LVGL's own:"
+          ! grep -n "lv_draw_ortho\|helper_main\|paint_tile" tsan.txt
       - name: Under AddressSanitizer
         run: >-
           ASAN_OPTIONS=detect_leaks=0 make -C test -j4 LVGL=/tmp/lvgl BUILD=build-asan
@@ -82,7 +106,7 @@ jobs:
       fail-fast: false
       matrix:
         board: [tab5, guition, waveshare]
-        mode: [ortho, ortho_cpu, lvgl]
+        mode: [ortho, ortho_2cores, ortho_cpu, lvgl]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

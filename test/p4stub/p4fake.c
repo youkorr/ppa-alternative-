@@ -41,6 +41,7 @@ static struct {
     ppa_fill_oper_config_t fill;
     int is_fill;
     int stuck;
+    int qid;
 } g_queue[QUEUE];
 
 static int g_head, g_count;
@@ -81,9 +82,31 @@ esp_err_t esp_cache_msync(void * addr, size_t size, int flags)
 #if defined(P4SIM)
 #define DMA_BEGIN() __asm__ volatile("addi x0, x0, 2047" ::: "memory")
 #define DMA_END() __asm__ volatile("addi x0, x0, 2046" ::: "memory")
+/* The timeline the simulation replays: each transaction queued, and each
+ * moment the CPU needed one finished. p4cache.c snapshots its counts at the
+ * marker, in the same order, and p4sim.py puts the two together. */
+p4fake_event_t g_p4_ev[P4FAKE_EVENTS];
+int g_p4_nev;
+static int g_qid;
+static void note(char type, int id, unsigned px, int fill)
+{
+    if(g_p4_nev < P4FAKE_EVENTS) {
+        g_p4_ev[g_p4_nev].type = type;
+        g_p4_ev[g_p4_nev].id = id;
+        g_p4_ev[g_p4_nev].px = px;
+        g_p4_ev[g_p4_nev].fill = fill;
+    }
+    g_p4_nev++;
+    __asm__ volatile("addi x0, x0, 2040" ::: "memory");
+}
+#define NOTE_QUEUED(id, px, fill) note('Q', id, px, fill)
+#define NOTE_WAITED(id) note('R', id, 0, 0)
 #else
 #define DMA_BEGIN() do {} while(0)
 #define DMA_END() do {} while(0)
+static int g_qid;
+#define NOTE_QUEUED(id, px, fill) do {} while(0)
+#define NOTE_WAITED(id) do {} while(0)
 #endif
 
 int g_p4_fills;
@@ -162,6 +185,7 @@ static void finish_one(void)
 {
     if(g_count == 0 || g_queue[g_head].stuck) return;
     ppa_client_handle_t c = g_queue[g_head].c;
+    NOTE_WAITED(g_queue[g_head].qid);
     if(g_queue[g_head].is_fill) run_fill(&g_queue[g_head].fill);
     else run(&g_queue[g_head].op);
     void * user = g_queue[g_head].op.user_data;
@@ -270,7 +294,9 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t c, const ppa_srm_oper_c
         g_queue[(g_head + g_count) % QUEUE].op = *op;
         g_queue[(g_head + g_count) % QUEUE].is_fill = 0;
         g_queue[(g_head + g_count) % QUEUE].stuck = stuck;
+        g_queue[(g_head + g_count) % QUEUE].qid = ++g_qid;
         g_count++;
+        NOTE_QUEUED(g_qid, ow * oh, 0);
         return ESP_OK;
     }
     /* A blocking one waits for the queue ahead of it: the engine is FIFO. A
@@ -282,6 +308,8 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t c, const ppa_srm_oper_c
         fprintf(stderr, "p4fake: a blocking PPA transaction that would never return\n");
         return ESP_FAIL;
     }
+    NOTE_QUEUED(++g_qid, ow * oh, 0);
+    NOTE_WAITED(g_qid);
     run(op);
     return ESP_OK;
 }
@@ -303,11 +331,15 @@ esp_err_t ppa_do_fill(ppa_client_handle_t c, const ppa_fill_oper_config_t * f)
         g_queue[i].is_fill = 1;
         g_queue[i].stuck = g_stall_next;
         g_stall_next = 0;
+        g_queue[i].qid = ++g_qid;
         g_count++;
+        NOTE_QUEUED(g_qid, f->fill_block_w * f->fill_block_h, 1);
         return ESP_OK;
     }
     p4fake_run_all();
     if(g_count) return ESP_FAIL;
+    NOTE_QUEUED(++g_qid, f->fill_block_w * f->fill_block_h, 1);
+    NOTE_WAITED(g_qid);
     run_fill(f);
     return ESP_OK;
 }

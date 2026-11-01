@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# lv_draw_ortho with the PPA turning, and the second core painting every
+# other tile. Compare with mode: ortho -- it is off by default.
+
+lvgl_ortho:
+  id: ortho
+  rotation: ${rotation}
+  ppa: true
+  cores: 2

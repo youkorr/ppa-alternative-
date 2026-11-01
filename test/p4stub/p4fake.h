@@ -34,3 +34,13 @@ void p4fake_stall_next(void);
 /* Drop everything queued, stuck or not, as a reset would. */
 void p4fake_reset(void);
 extern p4fake_t g_p4;
+/* The timeline, under P4SIM only: 'Q' a transaction queued (its pixels, and
+ * whether it is a fill), 'R' the CPU needing transaction `id` finished. */
+typedef struct {
+    char type;
+    int id, fill;
+    unsigned px;
+} p4fake_event_t;
+#define P4FAKE_EVENTS 8192
+extern p4fake_event_t g_p4_ev[P4FAKE_EVENTS];
+extern int g_p4_nev;

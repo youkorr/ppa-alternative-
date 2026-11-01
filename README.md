@@ -85,6 +85,9 @@ not yet on a board.**
   error, an unturned fill, never reading back, a border hole that swallows the
   border, a batch drawn in reverse, no margin for glyphs) each fail it.
 - Clean under AddressSanitizer and UBSan.
+- With a second core painting every other tile (`cores: 2`, needs an OS): the
+  same cases on real threads, pixel for pixel, nothing in lv_draw_ortho under
+  ThreadSanitizer, and four planted mistakes caught (see "Two cores").
 - Timings, LVGL 9.6.0, 720×1280 at 270°, RGB565, on the build machine (an x86
   server, **not an ESP32-P4**; only the ratios mean anything):
 
@@ -270,6 +273,8 @@ lvgl:
 lvgl_ortho:
   id: ortho
   rotation: 270           # what lvgl: had (ESPHome's degrees, clockwise)
+  # ppa: true             # the default: the PPA turns, the CPU draws
+  # cores: 2              # off by default: the second core paints every other tile
 ```
 
 What it does once ESPHome's lvgl has built the display:
@@ -438,21 +443,25 @@ CI runs it (`p4sim`); 25 seconds, no board.
 python3 test/p4sim/p4sim.py --lvgl /path/to/lvgl-9.5.0
 ```
 
-What it says, at 360 MHz, ms per frame (middle assumptions). A range is the
-CPU and the PPA overlapping fully, then one after the other:
+What it says, at 360 MHz, ms per frame (middle assumptions). The lv_draw_ortho
++ PPA columns are the redraw REPLAYED: the fake PPA notes when each transfer is
+queued and when the CPU needs one finished, the plugin notes both cores' counts
+at those moments, and `p4sim.py` runs the PPA through its queue at the measured
+rate while the CPU goes on -- so the overlap is the one the code really gets,
+not a range.
 
-| | ESPHome / esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho, CPU turning | lv_draw_ortho + PPA, panel buffers |
-|---|---|---|---|---|
-| Tab5 UI (270) | 94.5 | 88.4 | 96.1 | **40.0 - 62.3** |
-| Guition UI (90) | 103.4 | 96.6 | 105.8 | **43.7 - 68.5** |
-| Waveshare UI (180) | 68.2 | 64.1 | 57.5 | **29.7 - 44.6** |
-| Tab5 full-screen picture | 92.9 | 86.7 | 87.8 | **25.5 - 47.8** |
-| Tab5 camera through `ortho_id` | 92.9 | 86.7 | 22.3 | 22.3 |
+| | ESPHome / esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho, CPU turning | + PPA, one core | + PPA, two cores (`cores: 2`) |
+|---|---|---|---|---|---|
+| Tab5 UI (270) | 94.5 | 88.4 | 96.1 | **44.8** (1.97x) | **34.7** (2.55x) |
+| Guition UI (90) | 103.4 | 96.5 | 105.9 | **49.8** (1.94x) | **38.9** (2.48x) |
+| Waveshare UI (180) | 68.2 | 64.1 | 57.6 | **32.9** (1.95x) | **25.1** (2.55x) |
+| Tab5 full-screen picture | 92.9 | 86.7 | 62.4 | **22.4** (3.87x) | 22.4 |
+| Tab5 camera through `ortho_id` | 92.9 | 86.7 | 22.3 | 22.3 | 22.3 |
 
-With ESPHome's own `mipi_dsi` add the display copy, 6.2 ms on the Tab5.
-**The PPA is what beats the adapter**: 1.4 to 2.2 times faster on a UI, on
-all three boards, whichever way the overlap falls. The rest of this section
-is how that was found.
+(x: how many times faster than esp_lvgl_adapter.) With ESPHome's own
+`mipi_dsi` add the display copy, 6.2 ms on the Tab5. **The PPA is what beats
+the adapter**, about twice as fast on a UI on all three boards; the second
+core takes another fifth off. The rest of this section is how that was found.
 
 **The first run did not agree with the PC, and the P4 is the one to believe.** The
 camera through `ortho_id` is three times faster, because the PPA turns each
@@ -478,6 +487,14 @@ Where the PPA cannot (a format other than RGB565/RGB888, a buffer it cannot
 write, a frame buffer whose size is not a whole number of cache lines, a full
 queue) the CPU turns that block, after everything queued has finished.
 
+**Plain rectangles are the PPA's fills.** A screen's background drawn straight
+into the frame buffer is 1.8 MB the CPU would write through its cache into
+PSRAM; it is a PPA fill instead, its colour handed over already at RGB565's
+precision so the pixel is LVGL's whatever the engine does when it narrows. A
+fill that an opaque picture later in the same layer covers is not drawn at
+all. That is why a full-screen picture is now the PPA's turn and nothing else
+-- 22.4 ms on the Tab5, the CPU free.
+
 One thing tried and thrown out, because the simulation said so: tiles cut
 tall and narrow at 90 and 270, so each comes out as whole rows of the panel.
 It did cut the PSRAM traffic of the CPU turn by a third, and cost LVGL itself
@@ -493,6 +510,61 @@ Two figures are assumed rather than measured, and the table is printed across
 a range of them: cycles per instruction outside a miss, and the cost of a line
 from internal RAM or from the L2. The PPA and the display copy are modelled
 from their measured rates, not run.
+
+### Two cores: `cores: 2`
+
+With the PPA turning, what is left of a UI redraw is LVGL drawing -- about
+14 M instructions on the Tab5, on one core while the other idles. `cores: 2`
+paints every other tile on the second core.
+
+**Only the drawing moves.** The second core runs LVGL's software renderer into
+a tile of its own and touches nothing else; reading the frame buffer back,
+turning and every PPA transfer stay on the core LVGL runs on, so the frame
+buffer and the PPA keep one user. Two renderers at once is what LVGL itself
+does with `LV_DRAW_SW_DRAW_UNIT_CNT` > 1, and it is safe for the same reason:
+the state they share (the circle cache of rounded corners, the image decoders
+and their cache) is behind LVGL's own mutexes. **Those are real only with an
+OS**: with `LV_OS_NONE` they compile to nothing, so then `cores: 2` is refused
+and one core draws. youkorr/lvgl_9.5 builds with `LV_OS_FREERTOS` on an ESP32,
+so it is there. The two cores see each other's writes the way any two
+FreeRTOS tasks on a P4 do; the PPA reads a tile only after it is written back
+from the cache, as before.
+
+**Tiles in pairs.** The second core is handed its tile first (read back if it
+has to be), the first core reads back and paints the other meanwhile, and
+both are turned out after the join. With a PPA that takes four tiles, so a
+pair is painted while the last pair is turned. Where internal RAM has no room
+for two more, the two there are cut in half: four of 64 KiB, no RAM more than
+one core needs. Smaller tiles cost LVGL about a quarter more drawing (17.8 M
+instructions against 14.0), and the two cores still win:
+
+| ms, panel buffers | one core | two cores, halves (no RAM more) | two cores, four whole tiles (+256 KiB) |
+|---|---|---|---|
+| Tab5 UI | 44.8 | **34.7** | 31.8 |
+| Guition UI | 49.8 | **38.9** | 33.9 |
+| Waveshare UI | 32.9 | **25.1** | 23.7 |
+
+The simulation runs one core: the second core's painting runs at the join,
+counted apart (`LV_DRAW_ORTHO_SIM_CORES`), and each pair costs the slower of
+the two. It shares the caches between them, which is optimistic if the P4's L1
+is per core -- Espressif's documentation does not say.
+
+**Tested with real threads.** `ortho_test --cores`, on LVGL built with
+pthreads, draws every case with the second thread painting (207 cases, pixel
+for pixel), again with no room for more than two tiles (the halves), and under
+ThreadSanitizer, which reports nothing in lv_draw_ortho -- what it reports is
+LVGL's own render thread against its own dispatcher, the same with one core.
+`ppa_mutants.py --cores` plants four mistakes (a tile handed over while the PPA
+still turns it out, a tile turned out before the other core has finished it,
+two halves in the same memory, both cores in one tile) and the test catches
+each.
+
+**Off by default**, because it costs: the second core's time, a 12 KiB stack,
+and on a board short of internal RAM smaller tiles. Compare with `lvgl_bench`
+(mode `ortho_2cores` in `yaml/test-lvgl.yaml`) and keep it if it is faster. The
+log says, every ten seconds, how many tiles the second core painted. Not run on
+a board: whether the P4's memory keeps up with two cores drawing while the PPA
+and the display's scan-out share the PSRAM is what a board will say.
 
 ### The PPA's faults, and what the others do about them
 
@@ -554,8 +626,9 @@ at its top choose everything:
 ```yaml
 substitutions:
   board: tab5     # tab5, guition or waveshare
-  mode: ortho     # ortho (the PPA turning), ortho_cpu (the CPU turning), or
-                  # lvgl (ESPHome's own rotation)
+  mode: ortho     # ortho (the PPA turning), ortho_2cores (and the second
+                  # core drawing), ortho_cpu (the CPU turning), or lvgl
+                  # (ESPHome's own rotation)
 ```
 
 | `board:` | board | screen | turn |
@@ -569,9 +642,10 @@ modes differ only in where the rotation is and who turns, so flashing one,
 pressing "LVGL bench", then another and pressing again compares the rotation
 and nothing else. It takes only `lvgl` from `youkorr/lvgl_9.5`, keeps
 `buffer_size: 100%`, and needs `wifi_ssid`, `wifi_password` and
-`api_encryption_key` in `secrets.yaml`. All nine combinations are compiled
+`api_encryption_key` in `secrets.yaml`. All twelve combinations are compiled
 with ESP-IDF by CI, and generate `set_lvgl_rotation(...)` in `lvgl` mode,
-`ortho->set_rotation(...)` and `set_ppa(...)` in the other two. Not flashed.
+`ortho->set_rotation(...)`, `set_ppa(...)` and `set_cores(...)` in the other
+three. Not flashed.
 
 ## Use
 
@@ -618,11 +692,16 @@ store the rows as they will be on the glass, give the native row length in
 ```
 git clone --depth 1 -b v9.6.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 175 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 202 cases, and the ESPHome component at four angles
 make LVGL=/tmp/lvgl bench          # timings
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 build/ortho_test --ppa             # the PPA's cases alone
 python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case
+
+# the second core: LVGL built with pthreads
+make LVGL=/tmp/lvgl BUILD=build-mt CFLAGS="-O2 -g -DLV_USE_OS=1" build-mt/ortho_test
+build-mt/ortho_test --cores        # every case, every other tile on another thread
+python3 ppa_mutants.py --cores     # each mistake planted in the two-core path must fail
 ```
 
 The PPA's cases run on a fake one (`test/p4stub/p4fake.c`) that turns as the
