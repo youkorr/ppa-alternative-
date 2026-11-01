@@ -450,6 +450,10 @@ at those moments, and `p4sim.py` runs the PPA through its queue at the measured
 rate while the CPU goes on -- so the overlap is the one the code really gets,
 not a range.
 
+![Milliseconds per frame: PPA alternative against Espressif and LVGL](docs/avance.svg)
+
+(`docs/chart.py` draws it from `docs/p4sim-resultats.csv`, the figures below.)
+
 | | ESPHome / esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho, CPU turning | + PPA, one core | + PPA, two cores (`cores: 2`) |
 |---|---|---|---|---|---|
 | Tab5 UI (270) | 94.5 | 88.4 | 96.1 | **44.8** (1.97x) | **34.7** (2.55x) |

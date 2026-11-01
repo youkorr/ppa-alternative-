@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 664" width="920" height="664" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-label="Millisecondes par image : PPA alternative contre Espressif et LVGL">
+<style>
+  .bg { fill: #ffffff } .fg { fill: #1f2328 } .mute { fill: #59636e } .grid { stroke: #d1d9e0 }
+  .s0 { fill: #b6bec8 } .s1 { fill: #e0823d } .s2 { fill: #6cb4ee } .s3 { fill: #1a6fd1 } .gain { fill: #1a7f37 }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #0d1117 } .fg { fill: #e6edf3 } .mute { fill: #9198a1 } .grid { stroke: #3d444d }
+    .s0 { fill: #5a626c } .s1 { fill: #f0883e } .s2 { fill: #79c0ff } .s3 { fill: #388bfd } .gain { fill: #3fb950 }
+  }
+</style>
+<rect class="bg" width="920" height="664"/>
+<text class="fg" x="24" y="38" font-size="22" font-weight="600">PPA alternative : l'avance sur Espressif et LVGL</text>
+<text class="mute" x="24" y="62" font-size="13">Millisecondes par image, plus court est meilleur. ESP32-P4 à 360 MHz simulé (test/p4sim), pas encore mesuré sur une carte.</text>
+<rect class="s0" x="24" y="90" width="12" height="12" rx="2"/>
+<text class="mute" x="41" y="100" font-size="12">LVGL d'ESPHome / esp_lvgl_port</text>
+<rect class="s1" x="256.0" y="90" width="12" height="12" rx="2"/>
+<text class="mute" x="273.0" y="100" font-size="12">esp_lvgl_adapter (Espressif)</text>
+<rect class="s2" x="474.79999999999995" y="90" width="12" height="12" rx="2"/>
+<text class="mute" x="491.79999999999995" y="100" font-size="12">PPA alternative, 1 cœur</text>
+<rect class="s3" x="660.5999999999999" y="90" width="12" height="12" rx="2"/>
+<text class="mute" x="677.5999999999999" y="100" font-size="12">PPA alternative, 2 cœurs</text>
+<line class="grid" x1="170.0" x2="170.0" y1="126" y2="624"/>
+<text class="mute" x="170.0" y="642" font-size="11" text-anchor="middle">0 ms</text>
+<line class="grid" x1="274.5" x2="274.5" y1="126" y2="624"/>
+<text class="mute" x="274.5" y="642" font-size="11" text-anchor="middle">20 ms</text>
+<line class="grid" x1="379.1" x2="379.1" y1="126" y2="624"/>
+<text class="mute" x="379.1" y="642" font-size="11" text-anchor="middle">40 ms</text>
+<line class="grid" x1="483.6" x2="483.6" y1="126" y2="624"/>
+<text class="mute" x="483.6" y="642" font-size="11" text-anchor="middle">60 ms</text>
+<line class="grid" x1="588.2" x2="588.2" y1="126" y2="624"/>
+<text class="mute" x="588.2" y="642" font-size="11" text-anchor="middle">80 ms</text>
+<line class="grid" x1="692.7" x2="692.7" y1="126" y2="624"/>
+<text class="mute" x="692.7" y="642" font-size="11" text-anchor="middle">100 ms</text>
+<text class="fg" x="158" y="168.5" font-size="13" text-anchor="end">Tab5 interface</text>
+<rect class="s0" x="170" y="134" width="494.0" height="13" rx="2"/>
+<text class="mute" x="669.0" y="145" font-size="10.5">94,5</text>
+<rect class="s1" x="170" y="150" width="462.1" height="13" rx="2"/>
+<text class="mute" x="637.1" y="161" font-size="10.5">88,4</text>
+<rect class="s2" x="170" y="166" width="234.2" height="13" rx="2"/>
+<text class="mute" x="409.2" y="177" font-size="10.5">44,8</text>
+<rect class="s3" x="170" y="182" width="181.4" height="13" rx="2"/>
+<text class="mute" x="356.4" y="193" font-size="10.5">34,7</text>
+<text class="gain" x="763" y="161.5" font-size="15" font-weight="700">2,5× <tspan class="mute" font-size="11" font-weight="400">vs Espressif</tspan></text>
+<text class="mute" x="763" y="178.5" font-size="11">2,7× vs LVGL</text>
+<text class="fg" x="158" y="251.5" font-size="13" text-anchor="end">Guition interface</text>
+<rect class="s0" x="170" y="217" width="540.5" height="13" rx="2"/>
+<text class="mute" x="715.5" y="228" font-size="10.5">103,4</text>
+<rect class="s1" x="170" y="233" width="504.4" height="13" rx="2"/>
+<text class="mute" x="679.4" y="244" font-size="10.5">96,5</text>
+<rect class="s2" x="170" y="249" width="260.3" height="13" rx="2"/>
+<text class="mute" x="435.3" y="260" font-size="10.5">49,8</text>
+<rect class="s3" x="170" y="265" width="203.3" height="13" rx="2"/>
+<text class="mute" x="378.3" y="276" font-size="10.5">38,9</text>
+<text class="gain" x="763" y="244.5" font-size="15" font-weight="700">2,5× <tspan class="mute" font-size="11" font-weight="400">vs Espressif</tspan></text>
+<text class="mute" x="763" y="261.5" font-size="11">2,7× vs LVGL</text>
+<text class="fg" x="158" y="334.5" font-size="13" text-anchor="end">Waveshare interface</text>
+<rect class="s0" x="170" y="300" width="356.5" height="13" rx="2"/>
+<text class="mute" x="531.5" y="311" font-size="10.5">68,2</text>
+<rect class="s1" x="170" y="316" width="335.1" height="13" rx="2"/>
+<text class="mute" x="510.1" y="327" font-size="10.5">64,1</text>
+<rect class="s2" x="170" y="332" width="172.0" height="13" rx="2"/>
+<text class="mute" x="347.0" y="343" font-size="10.5">32,9</text>
+<rect class="s3" x="170" y="348" width="131.2" height="13" rx="2"/>
+<text class="mute" x="306.2" y="359" font-size="10.5">25,1</text>
+<text class="gain" x="763" y="327.5" font-size="15" font-weight="700">2,6× <tspan class="mute" font-size="11" font-weight="400">vs Espressif</tspan></text>
+<text class="mute" x="763" y="344.5" font-size="11">2,7× vs LVGL</text>
+<text class="fg" x="158" y="417.5" font-size="13" text-anchor="end">Tab5 image</text>
+<rect class="s0" x="170" y="383" width="485.6" height="13" rx="2"/>
+<text class="mute" x="660.6" y="394" font-size="10.5">92,9</text>
+<rect class="s1" x="170" y="399" width="453.2" height="13" rx="2"/>
+<text class="mute" x="628.2" y="410" font-size="10.5">86,7</text>
+<rect class="s2" x="170" y="415" width="117.1" height="13" rx="2"/>
+<text class="mute" x="292.1" y="426" font-size="10.5">22,4</text>
+<rect class="s3" x="170" y="431" width="117.1" height="13" rx="2"/>
+<text class="mute" x="292.1" y="442" font-size="10.5">22,4</text>
+<text class="gain" x="763" y="410.5" font-size="15" font-weight="700">3,9× <tspan class="mute" font-size="11" font-weight="400">vs Espressif</tspan></text>
+<text class="mute" x="763" y="427.5" font-size="11">4,1× vs LVGL</text>
+<text class="fg" x="158" y="500.5" font-size="13" text-anchor="end">Guition image</text>
+<rect class="s0" x="170" y="466" width="539.5" height="13" rx="2"/>
+<text class="mute" x="714.5" y="477" font-size="10.5">103,2</text>
+<rect class="s1" x="170" y="482" width="503.9" height="13" rx="2"/>
+<text class="mute" x="678.9" y="493" font-size="10.5">96,4</text>
+<rect class="s2" x="170" y="498" width="130.2" height="13" rx="2"/>
+<text class="mute" x="305.2" y="509" font-size="10.5">24,9</text>
+<rect class="s3" x="170" y="514" width="130.2" height="13" rx="2"/>
+<text class="mute" x="305.2" y="525" font-size="10.5">24,9</text>
+<text class="gain" x="763" y="493.5" font-size="15" font-weight="700">3,9× <tspan class="mute" font-size="11" font-weight="400">vs Espressif</tspan></text>
+<text class="mute" x="763" y="510.5" font-size="11">4,1× vs LVGL</text>
+<text class="fg" x="158" y="583.5" font-size="13" text-anchor="end">Waveshare image</text>
+<rect class="s0" x="170" y="549" width="324.1" height="13" rx="2"/>
+<text class="mute" x="499.1" y="560" font-size="10.5">62,0</text>
+<rect class="s1" x="170" y="565" width="302.7" height="13" rx="2"/>
+<text class="mute" x="477.7" y="576" font-size="10.5">57,9</text>
+<rect class="s2" x="170" y="581" width="78.4" height="13" rx="2"/>
+<text class="mute" x="253.4" y="592" font-size="10.5">15,0</text>
+<rect class="s3" x="170" y="597" width="78.4" height="13" rx="2"/>
+<text class="mute" x="253.4" y="608" font-size="10.5">15,0</text>
+<text class="gain" x="763" y="576.5" font-size="15" font-weight="700">3,9× <tspan class="mute" font-size="11" font-weight="400">vs Espressif</tspan></text>
+<text class="mute" x="763" y="593.5" font-size="11">4,1× vs LVGL</text>
+</svg>

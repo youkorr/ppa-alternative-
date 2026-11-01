@@ -1,0 +1,7 @@
+cas,carte,scene,lvgl_esphome,esp_lvgl_adapter,ppa_1_coeur,ppa_2_coeurs
+Tab5 interface,Tab5 720x1280 (270),interface,94.5,88.4,44.8,34.7
+Guition interface,Guition 800x1280 (90),interface,103.4,96.5,49.8,38.9
+Waveshare interface,Waveshare 1024x600 (180),interface,68.2,64.1,32.9,25.1
+Tab5 image,Tab5 720x1280 (270),image plein ecran,92.9,86.7,22.4,22.4
+Guition image,Guition 800x1280 (90),image plein ecran,103.2,96.4,24.9,24.9
+Waveshare image,Waveshare 1024x600 (180),image plein ecran,62.0,57.9,15.0,15.0
