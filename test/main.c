@@ -35,6 +35,9 @@
 #include <time.h>
 
 static int g_failures;
+/* --cores: a second core paints every other tile; how many it painted. */
+static bool g_two_cores;
+static uint32_t g_other_total;
 static int g_cases;
 
 typedef struct {
@@ -450,6 +453,7 @@ static void check_scene(const char * scene, int32_t nw, int32_t nh, lv_color_for
         lv_draw_ortho_reset_stats();
         lv_refr_now(nat->disp);
         const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+        g_other_total += st->tiles_other_core;
         char what[200];
         snprintf(what, sizeof(what), "%s %dx%d %s at %s, %s, fast %s, %s (%u fills, %u images, %u tiles, %u refused)",
                  scene, (int)nw, (int)nh, cf_name(cf), rot_name(rot), partial ? "partial" : "direct ",
@@ -479,6 +483,8 @@ static void check_scene(const char * scene, int32_t nw, int32_t nh, lv_color_for
  * let pass or a blocking one follows, so a wait lv_draw_ortho forgets leaves
  * the frame buffer as it was, and the picture is wrong: this is what catches
  * one (test/ppa_mutants.py takes the waits out one at a time to prove it). */
+static uint32_t g_hidden_total;   /* fills left undrawn under a picture, over every run */
+
 static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_display_rotation_t rot,
                             void (*build)(lv_obj_t *))
 {
@@ -503,11 +509,15 @@ static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_displ
         lv_refr_now(nat->disp);
         const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
         char what[200];
-        snprintf(what, sizeof(what), "PPA: %s %dx%d at %s, %s, fast %s, %s (%u tiles, %u PPA turns, %.0f%% of the bytes)",
+        snprintf(what, sizeof(what), "PPA: %s %dx%d at %s, %s, fast %s, %s (%u tiles, %u PPA turns, %.0f%% of the bytes, "
+                 "%u of %u fills, %u hidden)",
                  scene, (int)nw, (int)nh, rot_name(rot), partial ? "partial" : "direct ", fast ? "on " : "off",
                  batch ? "batched" : "one by one", st->tiles, g_p4_runs - runs,
-                 st->bytes_turned ? 100.0 * st->bytes_handed / st->bytes_turned : 0.0);
+                 st->bytes_turned ? 100.0 * st->bytes_handed / st->bytes_turned : 0.0, st->fills_handed, st->fills_direct,
+                 st->fills_hidden);
         const int pending = p4fake_pending();
+        g_hidden_total += st->fills_hidden;
+        g_other_total += st->tiles_other_core;
         diffs_t d;
         long nd = count_diffs(nat, want, cf, &d);
         int32_t excused = nd > 0 && nd <= MAX_EXCUSED ? excuse(nat, &d, nw, nh, cf, rot, build) : -1;
@@ -522,7 +532,7 @@ static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_displ
          * buffer, so the bottom rows stay the CPU's. On these test sizes that
          * is every tile at 90 and 270, the declining path proved too. */
         const bool lines = (lv_draw_buf_width_to_stride(nw, cf) * (uint32_t)nh) % 128 == 0;
-        if(!partial && (st->tiles_in_turn != 2 || (lines && st->bytes_handed == 0))) {
+        if(!partial && (st->tiles_in_turn < 2 || (lines && st->bytes_turned > 0 && st->bytes_handed == 0))) {
             g_failures++;
             printf("  FAIL  ...and the PPA turned nothing (%u tiles in turn)\n", st->tiles_in_turn);
         }
@@ -545,6 +555,43 @@ static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_displ
     lv_draw_ortho_set_batching(true);
     lv_draw_ortho_ppa_deinit();
     free(want);
+}
+
+/* Plain opaque rectangles, coloured so that no channel is a multiple of what
+ * RGB565 keeps: the PPA's fills, compared to LVGL's own. */
+static void scene_plain(lv_obj_t * scr)
+{
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x83B5D7), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_t * a = lv_obj_create(scr);
+    lv_obj_set_pos(a, 17, 23);
+    lv_obj_set_size(a, 151, 97);
+    lv_obj_set_style_radius(a, 0, 0);
+    lv_obj_set_style_border_width(a, 0, 0);
+    lv_obj_set_style_bg_color(a, lv_color_hex(0x4C9A2B), 0);
+    lv_obj_set_style_bg_opa(a, LV_OPA_COVER, 0);
+    lv_obj_t * b = lv_obj_create(scr);
+    lv_obj_set_pos(b, 60, 200);
+    lv_obj_set_size(b, 233, 61);
+    lv_obj_set_style_radius(b, 0, 0);
+    lv_obj_set_style_border_width(b, 0, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0xF3077D), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+}
+
+/* A plain background under an opaque picture as big as the screen: the
+ * background is never seen, and lv_draw_ortho should not draw it. */
+static void scene_covered(lv_obj_t * scr)
+{
+    static lv_image_dsc_t * pic;
+    lv_obj_update_layout(scr);
+    const int32_t w = lv_obj_get_width(scr), h = lv_obj_get_height(scr);
+    if(pic == NULL || (int32_t)pic->header.w != w || (int32_t)pic->header.h != h) pic = image_of(w, h, LV_COLOR_FORMAT_RGB565, 9);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x83B5D7), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_t * img = lv_image_create(scr);
+    lv_image_set_src(img, pic);
+    lv_obj_set_pos(img, 0, 0);
 }
 
 /* The PPA stops answering in the middle of a screen, as the P4's does in the
@@ -1397,6 +1444,30 @@ int main(int argc, char ** argv)
     lv_draw_ortho_init();
     if(quirk) return lvgl_quirk();
 
+    /* The second core: started on request, and refused without an OS --
+     * LVGL's locks are what make two renderers at once safe. */
+    g_two_cores = argc > 1 && strcmp(argv[1], "--cores") == 0;
+    g_cases++;
+    if(g_two_cores) {
+        if(lv_draw_ortho_set_cores(2) && lv_draw_ortho_get_stats()->cores == 2)
+            printf("  ok    a second core paints every other tile from here on\n");
+        else {
+            g_failures++;
+            printf("  FAIL  the second core would not start\n");
+        }
+    }
+    else {
+        const bool started = lv_draw_ortho_set_cores(2);
+        lv_draw_ortho_set_cores(1);
+        if(started == (LV_USE_OS != LV_OS_NONE))
+            printf("  ok    a second core %s\n", started ? "starts with an OS (and is stopped again)"
+                   : "is refused without an OS");
+        else {
+            g_failures++;
+            printf("  FAIL  a second core %s\n", started ? "started without an OS" : "would not start with one");
+        }
+    }
+
     const lv_display_rotation_t rots[] = {LV_DISPLAY_ROTATION_90, LV_DISPLAY_ROTATION_180,
                                           LV_DISPLAY_ROTATION_270, LV_DISPLAY_ROTATION_0
                                          };
@@ -1427,26 +1498,50 @@ int main(int argc, char ** argv)
     {
         g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
         g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
+        const int fills = g_p4_fills;
         for(unsigned r = 0; r < 3; r++) {
             check_scene_ppa("ui", 320, 480, rots[r], scene_ui);
             check_scene_ppa("ui", 333, 517, rots[r], scene_ui);
+            check_scene_ppa("plain", 320, 480, rots[r], scene_plain);
+        }
+        /* With two cores, a Tab5-sized panel: enough tiles in one batch for
+         * a pair to come back to tiles the PPA may still be turning out. */
+        if(g_two_cores) check_scene_ppa("ui", 720, 1280, LV_DISPLAY_ROTATION_270, scene_ui);
+        /* A background under a full-screen picture is not drawn at all. */
+        g_hidden_total = 0;
+        for(unsigned r = 0; r < 3; r++) check_scene_ppa("covered", 320, 480, rots[r], scene_covered);
+        const uint32_t hidden = g_hidden_total;
+        g_cases++;
+        if(hidden > 0) printf("  ok    a background under a full-screen picture was left undrawn (%u times)\n", (unsigned)hidden);
+        else {
+            g_failures++;
+            printf("  FAIL  a background under a full-screen picture was drawn anyway\n");
+        }
+        g_cases++;
+        if(g_p4_fills > fills) printf("  ok    PPA: %d plain rectangles were the PPA's fills\n", g_p4_fills - fills);
+        else {
+            g_failures++;
+            printf("  FAIL  PPA: no plain rectangle was the PPA's fill, so the fills were not tested\n");
         }
     }
     {
         /* Camera frames: whole pictures, drawn by the fast path straight into
          * the frame buffer -- by the PPA now, in one pass. */
-        const int runs = g_p4_runs;
+        const int runs = g_p4_runs, fills = g_p4_fills;
         lv_draw_ortho_ppa_init();
         check_camera(400, 640, LV_DISPLAY_ROTATION_90, 322, 182);
         check_camera(512, 300, LV_DISPLAY_ROTATION_180, 640, 480);
         check_camera(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
         lv_draw_ortho_ppa_deinit();
         g_cases++;
-        if(g_p4_runs > runs && p4fake_pending() == 0)
-            printf("  ok    PPA: the camera frames above were turned by the PPA (%d transactions)\n", g_p4_runs - runs);
+        /* The screen's plain background behind the frame is the PPA's fill. */
+        if(g_p4_runs > runs && g_p4_fills > fills && p4fake_pending() == 0)
+            printf("  ok    PPA: the camera frames above were turned by the PPA and their background filled by it "
+                   "(%d transactions, %d fills)\n", g_p4_runs - runs, g_p4_fills - fills);
         else {
             g_failures++;
-            printf("  FAIL  PPA: the camera frames were not turned by the PPA, or left queued\n");
+            printf("  FAIL  PPA: the camera frames were not turned, or their background not filled, by the PPA, "
+                   "or left queued\n");
         }
     }
     if(argc > 1 && strcmp(argv[1], "--ppa") == 0) {
@@ -1497,6 +1592,16 @@ int main(int argc, char ** argv)
 
     /* Last: after it the PPA is stuck, as it would stay on a board. */
     check_ppa_stall(320, 480, LV_DISPLAY_ROTATION_270);
+
+    if(g_two_cores) {
+        g_cases++;
+        if(g_other_total > 0)
+            printf("  ok    the second core painted %u of the tiles above\n", (unsigned)g_other_total);
+        else {
+            g_failures++;
+            printf("  FAIL  the second core painted nothing, so the cases above proved nothing about it\n");
+        }
+    }
 
     printf("%d of %d cases passed\n", g_cases - g_failures, g_cases);
 

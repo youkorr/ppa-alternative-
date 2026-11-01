@@ -57,6 +57,9 @@ MHZ = 360                      # CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360, the boards
 COPY_MS = (32.0, 35.0)         # Tab5, 1280x620 RGB565 memcpy PSRAM to PSRAM
 PPA_NS_PX = 14865e3 / (1024 * 600)        # Waveshare 7B, rotate whole panel
 DISPLAY_NS_PX = (18964 - 14865) * 1e3 / (1024 * 600)   # its copy to the panel
+# A fill only writes, where a turn reads and writes the same bus: half the
+# time a pixel. An estimate, not a measurement -- no fill was timed on a board.
+FILL_NS_PX = PPA_NS_PX / 2
 
 BOARDS = [  # name, panel, phase of the UI, phase of the picture
     ("Tab5, 720x1280 at 270", 720 * 1280, 20, 50),
@@ -93,8 +96,11 @@ def build(lvgl, work):
     stub = os.path.join(TEST, "p4stub")
     # The tile asks for internal RAM as it does on a board: ESP_PLATFORM,
     # with p4sim/stub's heap_caps. LVGL's own Kconfig header is left out.
+    # LV_DRAW_ORTHO_SIM_CORES: the second core's painting runs at the join,
+    # between markers p4cache.c counts apart.
     objs.append(one(os.path.join(ORTHO, "lv_draw_ortho.c"),
-                    ["-DESP_PLATFORM", "-DLV_KCONFIG_IGNORE", f"-I{HERE}/stub"], "ortho.o"))
+                    ["-DESP_PLATFORM", "-DLV_KCONFIG_IGNORE", "-DLV_DRAW_ORTHO_SIM_CORES", f"-I{HERE}/stub"],
+                    "ortho.o"))
     objs.append(one(os.path.join(ORTHO, "lv_draw_ortho_video.c"), [f"-I{stub}"], "video.o"))
     # P4SIM: the fake PPA marks its copying as DMA, kept out of the counts.
     objs.append(one(os.path.join(stub, "p4fake.c"), [f"-I{stub}", "-DP4SIM"], "p4fake.o"))
@@ -123,10 +129,102 @@ def simulate(elf, so, out, l1=64, l1ways=4, l2=128):
     return log
 
 
+SEG = ["insns", "l1_miss_internal", "l2_hit", "psram_fill", "psram_writeback", "internal_writeback"]
+
+
 def read(path):
+    """Counts per phase; the second core's at phase + 2048; and the
+    segments, each a phase with this core's and the other's counts from
+    the hand-over of a tile to the join, under p["segments"]."""
+    p = {"segments": [], "stamps": {}}
     with open(path) as f:
         head = f.readline().split()
-        return {int(r[0]): dict(zip(head[1:], map(int, r[1:]))) for r in (l.split() for l in f)}
+        for r in (l.split() for l in f):
+            if r and r[0] == "stamp":
+                v = list(map(int, r[3:]))
+                p["stamps"].setdefault(int(r[2]), []).append(
+                    (int(r[1]), dict(zip(SEG, v[:6])), dict(zip(SEG, v[6:]))))
+            elif r and r[0] == "segment":
+                v = list(map(int, r[2:]))
+                p["segments"].append((int(r[1]), dict(zip(SEG, v[:6])), dict(zip(SEG, v[6:]))))
+            elif r and r[0].isdigit():
+                p[int(r[0])] = dict(zip(head[1:], map(int, r[1:])))
+            else:
+                break   # a profile
+    return p
+
+
+OTHER = 2048
+
+
+def timelines(log):
+    """The fake PPA's timeline of each measured redraw: ('Q', id, pixels,
+    fill) for a transaction queued, ('R', id) for the CPU needing it done."""
+    out = {}
+    for m in re.finditer(r"^timeline (\d+):(.*)$", log, re.M):
+        ev = []
+        for tok in m.group(2).split():
+            if tok.startswith("Q"):
+                i, px, fill = tok[1:].split(":")
+                ev.append(("Q", int(i), int(px), int(fill)))
+            elif tok.startswith("R"):
+                ev.append(("R", int(tok[1:])))
+            else:
+                ev = None
+                break
+        if ev is not None:
+            out[int(m.group(1))] = ev
+    return out
+
+
+def replay(p, ph, events, cpi, c_int, c_l2, c_line):
+    """A redraw as it runs on the board: this core's time from its counts,
+    the PPA working through its queue at the measured rates while the CPU
+    goes on, the CPU stopping where it needed a transaction finished, and a
+    second core's painting from hand-over to join. Returns ms, or None when
+    the plugin's snapshots and the fake's timeline do not line up."""
+    stamps = p["stamps"].get(ph, [])
+    if sum(1 for s in stamps if s[0] == 2040) != len(events):
+        return None
+    zero = dict.fromkeys(SEG, 0)
+
+    def cost(a, b):
+        return ms({k: a[k] - b[k] for k in SEG}, cpi, c_int, c_l2, c_line)
+
+    t, dma_free, done, prev, ev = 0.0, 0.0, {}, zero, iter(events)
+    other_start = other_before = other_ms = 0.0
+    for marker, main, other in stamps:
+        t += cost(main, prev)
+        prev = main
+        if marker == 2040:
+            e = next(ev)
+            if e[0] == "Q":
+                start = max(t, dma_free)
+                dma_free = start + e[2] * (FILL_NS_PX if e[3] else PPA_NS_PX) / 1e6
+                done[e[1]] = dma_free
+            else:
+                t = max(t, done.get(e[1], t))
+        elif marker == 2042:
+            other_start = t
+        elif marker == 2044:
+            other_before = other
+        elif marker == 2043:
+            other_ms = cost(other, other_before)
+        elif marker == 2041:
+            t = max(t, other_start + other_ms)
+    t += cost(p[ph], prev)
+    return max(t, dma_free)
+
+
+def two_cores_ms(p, ph, cpi, c_int, c_l2, c_line):
+    """A phase with a second core: this core's time, where each stretch from
+    handing a tile over to the join costs the slower of the two cores."""
+    t = ms(p[ph], cpi, c_int, c_l2, c_line)
+    for sp, a, b in p["segments"]:
+        if sp == ph:
+            ta, tb = ms(a, cpi, c_int, c_l2, c_line), ms(b, cpi, c_int, c_l2, c_line)
+            t += max(ta, tb) - ta
+    return t
 
 
 def cycles(k, cpi, c_int, c_l2, c_line):
@@ -148,10 +246,25 @@ def ms(k, cpi, c_int, c_l2, c_line):
 
 def ppa_pixels(log):
     """What the PPA turned in each measured redraw, as p4bench reports it."""
-    return {int(m.group(1)): int(m.group(2)) for m in re.finditer(r"^ppa (\d+): (\d+) pixels", log, re.M)}
+    return {int(m.group(1)): (int(m.group(2)), int(m.group(3)))
+            for m in re.finditer(r"^ppa (\d+): (\d+) pixels, (\d+) filled", log, re.M)}
 
 
-def report(p, ppa_px):
+def timeline_rows(p, ph, tl, cases, rows, disp, what):
+    """The replayed timeline: one figure rather than a range."""
+    if ph not in tl:
+        return
+    t = [replay(p, ph, tl[ph], *c[:3], model(p, *c[:3], c[3])) for c in cases]
+    if None in t:
+        print(f"  (timeline of phase {ph} does not line up with the counts)")
+        return
+    print(f"  {'  timeline, ' + what + ' (mipi_dsi)':40s}" + "".join(f"{x + disp:14.1f}" for x in t))
+    print(f"  {'  timeline, ' + what + ' (panel)':40s}" + "".join(f"{x:14.1f}" for x in t))
+    print(f"  {'    against the adapter':40s}" + "".join(f"{r[1] / x:13.2f}x" for r, x in zip(rows, t)))
+
+
+def report(p, ppa_px, tl=None):
+    tl = tl or {}
     cases = [(1.0, 10, 20, sum(COPY_MS) / 2, "middle"),
              (1.0, 10, 20, COPY_MS[0], "PSRAM faster"), (1.0, 10, 20, COPY_MS[1], "PSRAM slower"),
              (1.5, 20, 40, sum(COPY_MS) / 2, "slower core")]
@@ -186,7 +299,8 @@ def report(p, ppa_px):
                 # the PPA's timed at the measured rate. The two overlap when a
                 # tile is drawn while the last one is turned; between fully
                 # overlapped and one after the other is where a board lands.
-                k2, dma = p[ph + 2], ppa_px[ph + 2] * PPA_NS_PX / 1e6
+                moved, filled = ppa_px[ph + 2]
+                k2, dma = p[ph + 2], ((moved - filled) * PPA_NS_PX + filled * FILL_NS_PX) / 1e6
                 both, best, worst = [], [], []
                 for c, r in zip(cases, rows):
                     cpu = ms(k2, *c[:3], model(p, *c[:3], c[3]))
@@ -201,9 +315,33 @@ def report(p, ppa_px):
                       "".join(f"{lo:7.1f}-{hi:<6.1f}" for lo, hi in both))
                 print(f"  {'  against the adapter':40s}" +
                       "".join(f"{w:6.2f}-{b:.2f}x " for w, b in zip(worst, best)))
-                print(f"    of which the PPA {dma:.1f} ms ({ppa_px[ph + 2]} pixels), the CPU "
+                timeline_rows(p, ph + 2, tl, cases, rows, disp, "1 core")
+                print(f"    of which the PPA {dma:.1f} ms ({moved - filled} pixels turned, {filled} filled), the CPU "
                       f"{k2['insns'] / 1e6:.1f} M instructions and "
                       f"{(k2['psram_fill'] + k2['psram_writeback']) * 64 / 1024:.0f} KiB through the PSRAM")
+            if ph + 3 in p and ph + 3 in ppa_px:
+                # And a second core painting every other tile: per pair, the
+                # slower of the two; the PPA as above.
+                moved, filled = ppa_px[ph + 3]
+                dma = ((moved - filled) * PPA_NS_PX + filled * FILL_NS_PX) / 1e6
+                both, best, worst = [], [], []
+                for c, r in zip(cases, rows):
+                    cpu = two_cores_ms(p, ph + 3, *c[:3], model(p, *c[:3], c[3]))
+                    lo, hi = max(cpu, dma), cpu + dma
+                    both.append((lo, hi))
+                    best.append(r[1] / lo)
+                    worst.append(r[1] / hi)
+                disp = px * DISPLAY_NS_PX / 1e6
+                k3, k4 = p[ph + 3], p.get(ph + 3 + OTHER, {"insns": 0})
+                print(f"  {'lv_draw_ortho + PPA, 2 cores (mipi_dsi)':40s}" +
+                      "".join(f"{lo + disp:7.1f}-{hi + disp:<6.1f}" for lo, hi in both))
+                print(f"  {'lv_draw_ortho + PPA, 2 cores (panel)':40s}" +
+                      "".join(f"{lo:7.1f}-{hi:<6.1f}" for lo, hi in both))
+                print(f"  {'  against the adapter':40s}" +
+                      "".join(f"{w:6.2f}-{b:.2f}x " for w, b in zip(worst, best)))
+                timeline_rows(p, ph + 3, tl, cases, rows, disp, "2 cores")
+                print(f"    the first core {k3['insns'] / 1e6:.1f} M instructions, the second "
+                      f"{k4['insns'] / 1e6:.1f} M")
             if ph == pic:
                 # A camera through lvgl_camera_display's ortho_id: the PPA turns
                 # each frame once into a window LVGL keeps out of, and LVGL
@@ -227,7 +365,8 @@ def main():
     a = ap.parse_args()
     if a.counts:
         logf = os.path.join(os.path.dirname(a.counts), "log.txt")
-        report(read(a.counts), ppa_pixels(open(logf).read()) if os.path.exists(logf) else {})
+        log = open(logf).read() if os.path.exists(logf) else ""
+        report(read(a.counts), ppa_pixels(log), timelines(log))
         return
     if not a.lvgl:
         ap.error("--lvgl is needed to build")
@@ -242,7 +381,7 @@ def main():
     if "done" not in log or log.count("tile_internal 1") != 3:
         sys.exit("the simulated bench did not run as on a board (see above)")
     p = read(out)
-    report(p, ppa_pixels(log))
+    report(p, ppa_pixels(log), timelines(log))
     line = model(p, 1.0, 10, 20, sum(COPY_MS) / 2)
     if not 30 <= line <= 600:
         sys.exit(f"a PSRAM line comes out at {line:.0f} cycles: the calibration is off")

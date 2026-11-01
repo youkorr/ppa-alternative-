@@ -48,6 +48,7 @@ class LvglOrtho : public Component {
   // Turn tiles with the PPA, the CPU drawing the next one meanwhile; false
   // turns them on the CPU, which is what to compare the PPA against.
   void set_ppa(bool ppa) { this->ppa_ = ppa; }
+  void set_cores(int cores) { this->cores_ = cores; }
 
   void setup() override;
   void loop() override;
@@ -78,6 +79,8 @@ class LvglOrtho : public Component {
   display::Display *display_{nullptr};
   int degrees_{0};
   bool ppa_{true};
+  int cores_{1};
+  bool cores_on_{false};
   bool ppa_on_{false};
   bool ppa_lost_{false};  // said once, and the screen drawn again
   lv_display_t *disp_{nullptr};

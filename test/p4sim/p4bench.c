@@ -60,9 +60,9 @@ int clock_gettime(clockid_t id, struct timespec * ts)
 
 /* What the PPA turned in the measured redraw: p4sim.py times it at the rate
  * measured on a board. */
-static void report_ppa(int phase_id, unsigned long long before)
+static void report_ppa(int phase_id, unsigned long long before, unsigned long long filled)
 {
-    printf("ppa %d: %llu pixels\n", phase_id, g_p4_pixels - before);
+    printf("ppa %d: %llu pixels, %llu filled\n", phase_id, g_p4_pixels - before, g_p4_fill_pixels - filled);
 }
 
 static void redraw(lv_display_t * disp, lv_obj_t * obj, int phase_id)
@@ -70,23 +70,40 @@ static void redraw(lv_display_t * disp, lv_obj_t * obj, int phase_id)
     lv_obj_invalidate(obj);
     lv_refr_now(disp);            /* warm */
     lv_obj_invalidate(obj);
-    const unsigned long long px = g_p4_pixels;
+    const unsigned long long px = g_p4_pixels, filled = g_p4_fill_pixels;
+    g_p4_nev = 0;
     switch(phase_id) {
         /* The immediate has to be a constant: one marker per phase. */
 #define CASE(n) case n: PHASE(n); lv_refr_now(disp); PHASE(1999); break;
-        CASE(20) CASE(21) CASE(22) CASE(30) CASE(31) CASE(32) CASE(40) CASE(41) CASE(42)
-        CASE(50) CASE(51) CASE(52) CASE(60) CASE(61) CASE(62) CASE(70) CASE(71) CASE(72)
+        CASE(20) CASE(21) CASE(22) CASE(23) CASE(30) CASE(31) CASE(32) CASE(33) CASE(40) CASE(41) CASE(42) CASE(43)
+        CASE(50) CASE(51) CASE(52) CASE(53) CASE(60) CASE(61) CASE(62) CASE(63) CASE(70) CASE(71) CASE(72) CASE(73)
 #undef CASE
     }
-    report_ppa(phase_id, px);
+    report_ppa(phase_id, px, filled);
+    /* The timeline, for p4sim.py to replay against the plugin's snapshots. */
+    if(g_p4_nev > P4FAKE_EVENTS) printf("timeline %d: lost, %d events\n", phase_id, g_p4_nev);
+    else {
+        printf("timeline %d:", phase_id);
+        for(int i = 0; i < g_p4_nev; i++) {
+            const p4fake_event_t * e = &g_p4_ev[i];
+            if(e->type == 'Q') printf(" Q%d:%u:%d", e->id, e->px, e->fill);
+            else printf(" R%d", e->id);
+        }
+        printf("\n");
+    }
 }
 
 /* lv_draw_ortho with the PPA turning (lv_draw_ortho_ppa.c, on the fake
  * PPA): the UI, or a picture when one is given. The fake's copying is the
- * PPA's and not counted (P4SIM markers); its pixels are reported. */
+ * PPA's and not counted (P4SIM markers); its pixels are reported. With two
+ * cores, the second paints every other tile (p4cache.c counts it apart). */
 static void ortho_with_ppa(int32_t nw, int32_t nh, lv_display_rotation_t rot, int phase,
-                           const lv_image_dsc_t * frame)
+                           const lv_image_dsc_t * frame, int cores)
 {
+    if(!lv_draw_ortho_set_cores(cores)) {
+        printf("no second core\n");
+        return;
+    }
     if(lv_draw_ortho_ppa_init() != ESP_OK) {
         printf("no PPA\n");
         return;
@@ -103,10 +120,13 @@ static void ortho_with_ppa(int32_t nw, int32_t nh, lv_display_rotation_t rot, in
     lv_draw_ortho_reset_stats();
     redraw(nat->disp, obj, phase);
     const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
-    printf("ortho+ppa %d: %u of 2 tiles in turn, %.0f%% of the turning by the PPA, %u waits\n", phase,
-           st->tiles_in_turn, st->bytes_turned ? 100.0 * st->bytes_handed / st->bytes_turned : 0.0, st->waits / 2);
+    printf("ortho+ppa %d: %u cores, %u tiles in turn, %.0f%% of the turning by the PPA, %u waits, "
+           "%u of %u tiles on the second core\n", phase, st->cores,
+           st->tiles_in_turn, st->bytes_turned ? 100.0 * st->bytes_handed / st->bytes_turned : 0.0, st->waits / 2,
+           st->tiles_other_core / 2, st->tiles / 2);
     drop_screen(nat);
     lv_draw_ortho_ppa_deinit();
+    lv_draw_ortho_set_cores(1);
 }
 
 /* The UI of the PC bench (scene_ui), redrawn whole: upright as ESPHome's
@@ -136,7 +156,8 @@ static void ui(int32_t nw, int32_t nh, lv_display_rotation_t rot, int phase)
            st->tile_internal, (unsigned long long)st->bytes_turned / 2048,
            (unsigned long long)st->bytes_straight / 2048, st->tiles / 2);
     drop_screen(nat);
-    ortho_with_ppa(nw, nh, rot, phase + 2, NULL);
+    ortho_with_ppa(nw, nh, rot, phase + 2, NULL, 1);
+    ortho_with_ppa(nw, nh, rot, phase + 3, NULL, 2);
 }
 
 /* A full-screen picture (a video frame drawn by LVGL as an image). */
@@ -160,7 +181,8 @@ static void picture(int32_t nw, int32_t nh, lv_display_rotation_t rot, int phase
     lv_image_set_src(i2, frame);
     redraw(nat->disp, i2, phase + 1);
     drop_screen(nat);
-    ortho_with_ppa(nw, nh, rot, phase + 2, frame);
+    ortho_with_ppa(nw, nh, rot, phase + 2, frame, 1);
+    ortho_with_ppa(nw, nh, rot, phase + 3, frame, 2);
 }
 
 /* The calibration: a memcpy of 1280x620 RGB565, PSRAM to PSRAM -- what the

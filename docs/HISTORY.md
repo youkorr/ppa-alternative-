@@ -1,0 +1,776 @@
+# How lv_draw_ortho got here
+
+This is the README as it stood on 2026-11-01, before it was rewritten to
+describe only the current state. It keeps every step on the way: the
+measurements on a PC, the first simulated P4 run that showed the CPU turn
+losing to Espressif, the PPA turning tiles, the fills, and the second core.
+Several figures in it were later corrected; the current ones are in the
+README. The commit messages carry the same story, change by change.
+
+---
+
+## The README as it was
+
+**Draw a turned LVGL display in the panel's own orientation, instead of
+drawing it upright and turning every frame.**
+
+A panel used the other way round from how it was built — an ESP32-P4 Tab5 or
+Guition in landscape, any portrait MIPI or RGB panel on its side — costs LVGL
+two passes over every changed pixel today: it renders upright into a buffer,
+then the flush callback turns that buffer (in software, or with a 2D
+accelerator such as the ESP32-P4's PPA) into the frame buffer. The second pass
+is a transpose, the worst access pattern a memory bus can be given, and for
+full-screen motion it is what sets the frame rate. On a Tab5, a full-screen
+picture through LVGL at 270° measured about **8 frames a second, with or
+without the PPA**.
+
+LVGL 9 already has the right idea: `lv_display_set_matrix_rotation()` hands
+each draw task a matrix and lets the draw unit render through it. But only the
+vector GPU units read that matrix. In **9.5 and 9.6** alike, the software
+renderer and the ESP32-P4 PPA unit ignore it, so on those the option draws
+nothing. **`lv_draw_ortho` is a draw unit that reads it**, for the four quarter
+turns, on any CPU:
+
+| what is drawn | how |
+|---|---|
+| an opaque image, unscaled | copied **once**, turned on the way, in cache-sized blocks |
+| an image already stored native (`LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE`) | copied row by row, **no turn** — what a video or camera source can provide |
+| everything else (fills, text, borders, shadows, arcs, lines, masks, layers…) | a run of tasks is drawn by LVGL's own software renderer into one upright tile, which is turned **once** into the frame buffer |
+
+Three things make the general path cheaper than LVGL's own way, not just equal
+to it:
+- **Runs, not tasks.** All the tasks of a screen go through the same tiles, so
+  each pixel is turned once, however many widgets are stacked on it.
+- **No read-back under an opaque fill.** A tile whose first task paints it
+  entirely (a screen background, a card) is never read from the frame buffer.
+- **Holes.** A border never touches the middle of its rectangle, and a shadow
+  under an opaque background is painted over by it, so those pixels are not
+  turned at all.
+
+Anything that is not a fast path is drawn by LVGL's renderer itself, so there
+is nothing to re-implement and nothing to drift: the result is LVGL's, pixel
+for pixel.
+
+## Why this repository
+
+From the person who started it, after the frame rate had been chased in the
+PPA, the decoder and the network:
+
+> We had all been looking in the wrong place. The problem lies in the
+> screen's native resolution -- more precisely, in whether that native
+> resolution matches the layout you want to use. The trouble is ONLY the
+> rotation in LVGL: with or without the PPA, it is simply too slow for video
+> of decent quality.
+
+So the rule this repository follows: **when the layout matches the panel's
+native orientation, nothing is turned and nothing here is needed. When it
+does not, the turn is paid once, where the pixels are made** -- LVGL draws
+in the panel's orientation (`lv_draw_ortho`), and a camera frame is turned
+once by the PPA into a window LVGL keeps out of -- never by turning a
+finished picture afterwards.
+
+## Status
+
+**Verified on a PC against LVGL 9.5.0, 9.6.0 and `master` (10.0.0-dev),
+not yet on a board.**
+
+- `test/` builds LVGL and renders the same UI two ways: upright and then
+  turned (what a flush callback does today), and straight to native with
+  `lv_draw_ortho`. **136 of 136 cases match on 9.5.0, 9.6.0 and `master`**: 90, 180
+  and 270°, RGB565 and XRGB8888, two panel sizes (one odd), direct and partial
+  render modes, fast paths on and off, batched and task by task, plus
+  pre-turned pictures. The scene has gradients both ways, a shadow, borders,
+  rounded and circular buttons, text in two fonts, an arc, a polyline, opaque
+  and alpha images, an image hanging off the edge, a slider and a translucent
+  group.
+- **Exactly one pixel, in three cases, is excused, and only because LVGL draws
+  it the same way.** LVGL's own line renderer is not independent of where an
+  area is cut: `make bench` shows nothing, but `build/ortho_test --lvgl-quirk`
+  shows LVGL **alone** losing an anti-aliased edge pixel of a polyline when a
+  partial band ends on the joint (`ce79` drawn whole, `f7be` drawn in bands of
+  51 rows). Tiles cut too, so they can meet the same thing. The test excuses a
+  differing pixel **only** when LVGL itself, made to cut its bands on that
+  pixel's row, draws exactly what `lv_draw_ortho` drew. Anything else fails.
+  This is worth reporting to LVGL on its own.
+- The test catches a broken unit: six deliberately broken copies (a half-pixel
+  error, an unturned fill, never reading back, a border hole that swallows the
+  border, a batch drawn in reverse, no margin for glyphs) each fail it.
+- Clean under AddressSanitizer and UBSan.
+- With a second core painting every other tile (`cores: 2`, needs an OS): the
+  same cases on real threads, pixel for pixel, nothing in lv_draw_ortho under
+  ThreadSanitizer, and four planted mistakes caught (see "Two cores").
+- Timings, LVGL 9.6.0, 720×1280 at 270°, RGB565, on the build machine (an x86
+  server, **not an ESP32-P4**; only the ratios mean anything):
+
+  | | LVGL today (upright + turn in flush) | `lv_draw_ortho` |
+  |---|---|---|
+  | one full-screen picture | 1.23 ms | **0.55 ms** turned in one pass (2.2×) |
+  | the same, picture already native | 1.23 ms | **0.17 ms** (7×) |
+  | the whole test UI redrawn | 1.71 ms | **1.45 ms** (1.2×) |
+
+  LVGL 9.6's rewritten software renderer made blending faster but not the
+  turn: the full-screen figure is the same as on 9.5.
+
+  For a picture, the lesson is that **the turn itself is the cost**. One pass
+  instead of two halves it, and not turning at all removes it. A video decoder
+  or camera pipeline that writes its frames in the panel's orientation gets the
+  last line.
+
+### The ESP32-P4 camera (esp-video)
+
+`lvgl_camera_display` in `youkorr/esphome_esp-video` shows the camera without
+copying it: one `lv_draw_buf_t` pointed at the camera's DMA buffer, given to a
+canvas with `lv_canvas_set_draw_buf()`, its `.data` changed for every frame.
+That is exactly the shape this unit's fast path takes, an opaque unscaled
+RGB565 image, so **a camera frame goes from the DMA buffer to the frame buffer
+in one pass**, where today LVGL copies it into its own buffer and then turns
+that in the flush. `test/` does what that component does, frame after frame,
+and checks every frame against LVGL: 12 cases, at 90, 180 and 270°, frames
+smaller and bigger than the screen, upright and pre-turned.
+
+Timed on the households' own boards' geometry (the build machine again, not a
+P4):
+
+| board (esp-video `yaml/`) | camera | LVGL today | turned in one pass | frame pre-turned |
+|---|---|---|---|---|
+| Guition 10", 800×1280 at 90° (`tab10`) | 1288×728 | 1.35 ms | 0.57 ms (2.4×) | 0.19 ms (7.1×) |
+| Tab5 in landscape, 720×1280 at 270° | 1280×720 | 1.42 ms | 0.57 ms (2.5×) | 0.19 ms (7.5×) |
+| Waveshare 7", 1024×600 at 180° (`lvgl-kawaii`) | 1280×960 | 0.31 ms | 0.34 ms (0.9×) | 0.11 ms (2.8×) |
+
+A half turn is a copy read backwards, which is cheap for LVGL too, so at 180°
+the gain needs the frames pre-turned. That one is nearly free: a 180° native
+frame is the frame mirrored both ways, which the camera's own PPA pass does
+with `mirror_x: true` and `mirror_y: true` (not the sensor's own flip, which
+pixellates the OV02C10's Bayer pattern, as `ov02c10_custom_formats.h` notes).
+At 90 and 270°, the camera's `rotation:` makes the same PPA pass turn the
+frame. Either way the turn moves out of LVGL's flush and into the camera's one
+hardware pass, and the CPU only copies rows.
+
+On a Tab5 today, LVGL takes 50-73 ms per camera frame (10-15 fps). How much of
+that this removes is what a board will say: one memory pass instead of two or
+three is the mechanism, not a measured frame rate.
+
+What is **not** done yet:
+
+- Running on an ESP32-P4, and a number from one.
+- A copy callback (`lv_draw_ortho_set_copy_cb`) backed by the P4's 2D-DMA for
+  the straight copies, so the CPU is free during them.
+- ESPHome glue: its `lvgl:` component turns in its flush. With this unit the
+  display is created with `lv_display_set_rotation()` and
+  `lv_display_set_matrix_rotation(true)`, and the flush copies straight.
+- In `lvgl_camera_display`, marking a camera frame
+  `LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE` (with the native stride) when the camera
+  turned it. It must only ever be set with this unit running: LVGL alone
+  would read the rows the wrong way.
+- Objects with a free transform angle (`transform_rotation: 300`) under a
+  turned display: the matrix is then not a quarter turn, so this unit counts
+  the task in `tasks_refused` rather than drawing it wrongly.
+
+## Video at the sensor's frame rate
+
+**How Espressif and M5Stack do it**, read in their sources rather than
+assumed:
+
+- **Espressif** (`examples/peripherals/camera/mipi_isp_dsi` in ESP-IDF): the
+  camera controller's DMA is pointed **at the DSI panel's frame buffer**
+  (`example_dsi_resource_alloc(..., &frame_buffer, ...)`, then
+  `new_trans.buffer = frame_buffer`). No copy, no CPU, no LVGL, no turn: the
+  sensor's frames land on the glass at the sensor's rate.
+- **M5Stack** (Tab5 user demo, `hal_camera.cpp`): one PPA pass (a mirror)
+  from the camera's buffer into an LVGL canvas; LVGL renders in 50-row bands
+  in **internal** RAM (`buff_spiram = false`), and `esp_lvgl_port` turns each
+  band into the frame buffer with the PPA.
+
+The best of both is what `components/lvgl_ortho/lv_draw_ortho_video.c` does:
+
+```
+camera DMA -> camera buffer --(ONE PPA pass: turn, mirror, scale)--> frame buffer window
+LVGL      -> lv_draw_ortho: the rest of the screen, straight into the same frame buffer, never the window
+```
+
+Espressif's zero copy, with a UI around it and any panel orientation. LVGL
+never handles a video pixel; the CPU handles none at all. `lv_draw_ortho_set_window()`
+is the half that makes it safe: every write this unit makes into the frame
+buffer -- tiles, fills, images -- is cut around the window.
+
+```c
+lv_draw_ortho_video_t v;
+lv_draw_ortho_video_init(&v, disp);              /* a PPA SRM client */
+lv_draw_ortho_video_place(&v, &obj_coords);      /* where, in UI coordinates */
+/* from LVGL's own thread, for every camera frame: */
+lv_draw_ortho_video_show(&v, cam_buf, 1280, 720, LV_COLOR_FORMAT_RGB565, true, false);
+```
+
+**The household's three camera boards**, read in esp-video's `yaml/` and in
+the sensor drivers it builds (`components/esp_cam_sensor/sensor/*`). A
+sensor's MIPI lanes and frame rate belong to the format, not to anything
+downstream, so the rate in this table is the ceiling the display path has to
+keep up with:
+
+| board (YAML) | panel | ESPHome `rotation:` | = LVGL | sensor | format in use | lanes | sensor rate | shown |
+|---|---|---|---|---|---|---|---|---|
+| M5Stack Tab5 (`habbit (1).yaml`) | 720×1280 | 270° | `LV_DISPLAY_ROTATION_90` | SC2356 (SC202CS silicon) | RAW8 1280×720 | 1 | 30 fps | the whole frame, the whole screen |
+| Guition 10" (`tab10 .yaml`) | 800×1280 | 90° | `LV_DISPLAY_ROTATION_270` | OV02C10 | RAW10 1288×728 | 1 | 30 fps | its centre 1280×720 at 1:1, under 80 px of UI |
+| Waveshare 7" (`lvgl-kawaii.yaml`) | 1024×600 | 180° | `LV_DISPLAY_ROTATION_180` | OV5647 | RAW10 1280×960 binned | 2 | 45 fps (the YAML asks 30) | its centre 1024×600 at 1:1, the whole screen |
+
+**ESPHome and LVGL count their quarter turns opposite ways**, and that is not
+a detail: ESPHome's `rotation: 90` turns the picture clockwise (its own
+software loop sends the top-left pixel to the top-right), LVGL's
+`LV_DISPLAY_ROTATION_90` counter-clockwise (`lv_draw_rotate` sends it to the
+bottom-left). The PPA's angles are counter-clockwise on the screen, as its
+documentation says, so its `ANGLE_90` is LVGL's 90 and ESPHome's 270.
+
+All three are cases in `test/`, at those real sizes: the screen with the
+camera written by the (fake) PPA is the screen LVGL draws with that crop of
+the frame as an ordinary image. `lv_draw_ortho_video_set_crop()` is what the
+Guition and the Waveshare need: the PPA reads only the block shown, in the
+same pass, so a 1288×728 frame on a 1280×800 screen stays sharp instead of
+being scaled by 0.99.
+
+**The cache, which is where this goes wrong if it does.** LVGL writes right up
+to the window's edge, so a cache line can hold LVGL pixels and stale video
+pixels at once; written back after the PPA has run, it puts the stale video
+back. So before every PPA pass the window's rows are written back and
+invalidated together (`C2M | INVALIDATE`, on whole L2 lines), and the PPA
+writes into lines nobody holds. That only works if LVGL is not rendering at
+the same moment, which is why `show()` belongs on LVGL's own thread.
+
+**Verified on a PC**, with `test/p4stub/` standing in for ESP-IDF's PPA and
+cache: the declarations are copied from v5.5.5 field for field, and the fake
+PPA turns the way the household's boards do. That is itself a test: the
+rotation loops of `youkorr/lvgl_9.5` (`lvgl_esphome.cpp`), which show a correct
+UI on the Tab5 through the PPA path beside them, are copied, and the fake PPA
+at the angle that fork gives the PPA must produce exactly what those loops
+produce, at ESPHome's 90, 180 and 270 -- and LVGL's own `lv_draw_rotate` at the
+opposite angle must too. An earlier version of this file had the quarter
+turns of the PPA the wrong way round, reasoned from `esp_lvgl_port`; on a
+board the camera would have come out upside down on the Tab5 and the Guition.
+That check fails it. 12 cases: the screen with the camera
+written by the PPA is the screen LVGL draws with that frame as an ordinary
+image, at 0, 90, 180 and 270°, mirrored and not; a full LVGL redraw afterwards
+leaves it alone; one PPA pass; the cache synced on whole lines before it.
+Broken on purpose, each of a wrong angle, a missing cache sync and an unswapped
+mirror axis fails it.
+
+**Not known until a board says**:
+
+- Whether the PPA mirrors before or after it turns. The code assumes after
+  (the order of its name, scale-rotate-mirror) and swaps the mirror's axis at
+  90° and 270°. A mirrored camera flipped the wrong way on a turned panel
+  means this is the line.
+- How fast the PPA writes into a PSRAM frame buffer the DSI is reading at the
+  same time; the Waveshare 7B measured 14.9 ms for a whole 1024x600 turned.
+- Tearing: with one frame buffer, the scan-out can catch a frame half written,
+  as in Espressif's example.
+- Scaling: frames the size of the window are exact; the PPA rounds a scaled
+  block down, which can leave a 1-pixel edge (lvgl/lvgl#10265 patches that
+  case for its own images).
+
+## On an ESPHome board
+
+`components/lvgl_ortho` is an ESPHome external component. Two lines change in
+a board's YAML: `rotation:` leaves the `lvgl:` block and goes on `lvgl_ortho:`,
+with the same number.
+
+```yaml
+external_components:
+  - source: github://youkorr/ppa-alternative-@main
+    components: [lvgl_ortho]
+
+lvgl:
+  # no rotation: here any more
+  buffer_size: 10%        # LVGL's own buffer is replaced; keep it small
+
+lvgl_ortho:
+  id: ortho
+  rotation: 270           # what lvgl: had (ESPHome's degrees, clockwise)
+  # ppa: true             # the default: the PPA turns, the CPU draws
+  # cores: 2              # off by default: the second core paints every other tile
+```
+
+What it does once ESPHome's lvgl has built the display:
+
+- LVGL renders into **one panel-sized buffer in the panel's orientation**
+  (`LV_DISPLAY_RENDER_MODE_DIRECT`, PSRAM), through `lv_draw_ortho`, so
+  nothing is turned after it is drawn;
+- the flush copies the rows that changed to the display as they are (a
+  narrow area is packed first, so a clock along one edge is not a whole
+  panel of copying);
+- touches are turned back to the UI's coordinates (`lv_display_rotate_point`),
+  since LVGL 9 does not turn an input device's points itself;
+- the three LVGL defines it needs are written into ESPHome's `lv_conf.h` --
+  after the lvgl component's own code, because youkorr/lvgl_9.5 sets
+  `LV_USE_MATRIX` to 0 when no Lottie or SVG is used.
+
+**The camera.** `show_video(obj, frame, w, h)` turns a frame with one PPA pass
+straight into a window of that buffer, where LVGL does not draw, and puts it
+on the glass. youkorr/esphome_esp-video's `lvgl_camera_display` does it with
+one line, `ortho_id: ortho`. `example/guition-lvgl-ortho.yaml` is a whole
+board, validated with `esphome config` on ESPHome 2026.10.0.
+
+**Tested on a PC, end to end.** `test/esphome_test.cpp` runs the shipped
+`lvgl_ortho.cpp` on an LVGL display built the way ESPHome's lvgl builds it,
+with a stand-in display that keeps every `draw_pixels_at()`: the glass equals
+LVGL's upright UI turned, pixel for pixel, at 0, 90, 180 and 270, at 320x480
+and at the Tab5's and the Guition's real sizes -- whole, after a small change
+(484 pixels sent, not a panel), and with a camera frame through the fake PPA.
+A touch on the glass reads back as the UI point drawn there.
+`test/esphome_mutants.py` breaks the component five ways (touch not turned,
+flush area not turned, narrow area packed from the wrong column, ESPHome's 90
+taken as LVGL's 90, frame not centred) and the test catches every one.
+
+### No copy at all: the panel's own frame buffers
+
+With youkorr/lvgl_9.5's `mipi_dsi` and `framebuffers: 3`, `lvgl_ortho` gives
+LVGL the panel's **own scan-out buffers**: LVGL draws straight into one, in
+the panel's orientation, and a finished frame is shown by swapping the
+pointer the panel reads. The interface is never turned and never copied; a
+camera frame is one PPA pass into the buffer drawn next. With three buffers
+LVGL never draws into the one on the glass nor the one that has just left
+it, so nothing tears. Nothing to set on `lvgl_ortho`: it finds the buffers
+itself, and says in the log which way it is drawing.
+`example/guition-lvgl-ortho-panel-buffers.yaml` is the whole board.
+
+**Against Espressif's own pipeline** (read in esp-iot-solution on
+2026-10-30: `esp_lvgl_adapter` 0.7.4 and `esp_display_present` 1.2.0, which
+ESP-GSP also presents through): their rotated modes render upright and turn
+during a copy into the frame buffer ("Rotation is fused into partition
+copies"), and their direct mode, `DOUBLE_DIRECT`, **rejects any rotation**.
+This is that missing mode: direct, rotated, double or triple buffered.
+
+| | interface, rotated screen | camera, rotated screen |
+|---|---|---|
+| ESPHome's lvgl today | draw upright, turn every band (PPA or CPU) | copy into a canvas, draw, turn |
+| Espressif's presenter | draw upright in bands, turn while copying | turn into a frame buffer |
+| `lvgl_ortho`, copy mode | draw in place, copy the rows that changed | one PPA pass, then the copy |
+| `lvgl_ortho`, panel's buffers | **draw in place, swap a pointer** | **one PPA pass, swap a pointer** |
+
+What Espressif still has that this does not: years of boards, their TE
+synchronisation for panels with their own memory, and a workaround for a PPA
+hardware hang (DIG-734) that they hit with rotated partial modes -- the
+video path here makes one large PPA transfer a frame rather than many small
+ones, but it has not run on a board.
+
+**Tested on a PC.** The same `esphome_test.cpp`, built with that fork's
+header on the include path, plays a panel with three (or two) buffers: the
+buffer on the glass equals LVGL's upright UI turned at every angle and at
+the Tab5's and Guition's sizes, nothing is ever passed to
+`draw_pixels_at()`, a camera frame alone reaches the glass, a frame with two
+changed areas is shown once and whole, and LVGL never starts drawing into a
+buffer the panel could be showing. LVGL's own copy of the changed areas
+between buffers handles the rotation already (`refr_sync_areas`, 9.5). The
+mutants include a third buffer not handed over, a frame shown before it is
+whole, and a camera frame never made to show; each is caught.
+
+**Not compiled by ESP-IDF and not flashed.** What a board will say: the
+`lvgl_ortho` lines in its log (video frames, screens shown and rows copied
+each second), and the frame rate. Unknown until then: PSRAM bandwidth with
+the scanout, and whether the fork's swap waits for the panel's vsync
+(three buffers are what make that not matter).
+
+## Against Espressif's own ports
+
+Read in their sources (esp-bsp `esp_lvgl_port` 2.9.0; esp-iot-solution
+`esp_lvgl_adapter` 0.7.4 with `esp_display_present` 1.2.0), not remembered:
+
+| | esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho |
+|---|---|---|---|
+| how a turned screen is made | LVGL draws upright; the flush turns each area with the PPA into a buffer of its own (blocking), then copies it into the frame buffer | LVGL draws upright; the turn is fused into the copy into the frame buffer (PPA, or the CPU in 32x64 blocks) | LVGL draws each run of widgets upright into a tile in internal RAM; the PPA turns the tile into the frame buffer while the CPU draws the next one. A picture is turned by the PPA in one pass |
+| passes over a pixel after the draw | 2 | 1 | 0 for a native image, 1 for anything else (the PPA's), without a full-screen intermediate |
+| the drawing itself, in PSRAM | all of it, overdraw included | all of it, overdraw included | **none**: the tile is in internal RAM |
+| redraw only what changed, turned | yes (partial) | **refused**: `DOUBLE_DIRECT` rejects any rotation | **yes** (direct mode) |
+| video with LVGL running around it | no | no: Dummy Draw stops LVGL and blits the frame unturned | **yes**: turned (and scaled) once by the PPA into a window LVGL keeps out of |
+| tear-free frame-buffer swap | no | yes (2 or 3 frame buffers) | with youkorr/lvgl_9.5's `mipi_dsi` only |
+| run on a board | yes | yes | **not yet** |
+
+The adapter's own README says of the PPA: it "reduces CPU load" and
+"usually does not deliver noticeable FPS gains". It also ships a patch for
+a PPA freeze with rotation in `TRIPLE_PARTIAL` on the P4.
+
+On this machine (`make bench`; a PC, not a P4 -- only the ratios mean
+anything, and the PPA is a CPU loop here), best of 20, milliseconds:
+
+| | ESPHome lvgl | esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho |
+|---|---|---|---|---|
+| full-screen picture, 720x1280 at 270 | 1.37 | 1.54 | 1.03 | **0.58** |
+| full-screen picture, 800x1280 at 90 | 1.54 | 1.69 | 1.23 | **0.66** |
+| Tab5 camera 1280x720, at 270 | 1.38 | 1.53 | 1.04 | **0.56** (0.19 pre-turned) |
+| the whole test UI redrawn, 720x1280 at 270 | 2.08 | 2.34 | 1.69 | 1.70 |
+
+So: about **1.8x the adapter** on pictures and video, **5x** for a frame
+that arrives already turned, and **level with it in time** on a UI of text,
+shadows and borders. On a PC that is expected: both draw the same widgets
+once and turn the same 1800 KiB once, and a PC's memory is fast enough that
+where the bytes live makes no difference.
+
+**On a P4 it is where the bytes live that counts**, because PSRAM is shared
+by LVGL, the PPA, the JPEG decoder and the display's own scan-out. Counted
+per frame of that same UI (`make bench` prints it; drawn bytes include
+overdraw, 4056 KiB):
+
+| | PSRAM bytes per frame | how |
+|---|---|---|
+| ESPHome lvgl / esp_lvgl_port | 11256 KiB | draw into PSRAM, read it, PPA writes a turned copy, read that, write the frame buffer |
+| esp_lvgl_adapter | 7656 KiB | draw into PSRAM, read it, write the frame buffer turned |
+| lv_draw_ortho | **1800 KiB** (4.3x less) | draw in a 128 KiB tile in **internal RAM**, write the frame buffer turned |
+
+Three changes made that so, all measured here:
+
+- **The tile is taken from internal RAM** (`heap_caps_malloc` with
+  `MALLOC_CAP_INTERNAL`; ESPHome's LVGL allocator would have put it in
+  PSRAM). The boot log says where it landed: `Drawing tile: 128 KiB in
+  internal RAM`, or `PSRAM` if there was no room.
+- **Small images stay in the batch.** Only native frames and images over
+  32 KiB are drawn alone; an icon used to split a batch and force the tile
+  to be read back from the frame buffer. Turned bytes for the UI fell from
+  2095 to 1800 KiB: every tile is now written once and never read back.
+- **The 16-bit turn moves two rows at a time**, two 32-bit reads into two
+  32-bit writes, about 15% faster than pixel by pixel.
+
+**CORRECTED by the simulated P4 below: those 1800 KiB are a count, not
+what crosses the bus.** It assumed every frame-buffer line written once. A P4's
+cache allocates on a write and fetches the line first, and lv_draw_ortho's
+tiles leave lines half-written that come back later, so the simulation reads
+and writes 6095 KiB for that frame -- against 5690 for drawing it upright,
+before the PPA and the copy add theirs. The internal-RAM tile does keep the
+drawing itself off the PSRAM entirely; it is the turn that is not.
+
+### On a simulated ESP32-P4
+
+A PC is the wrong machine to time this on: x86 with SIMD, and memory fast
+enough that where a byte lives makes no difference. `test/p4sim/p4sim.py`
+builds the same bench for the P4's own core (RISC-V RV32IMAFC, `-O2`), runs it
+in QEMU under `p4cache.c`, a plugin that counts every instruction and runs
+every load and store through the P4's caches as ESP-IDF configures them (64 KiB
+L1 over everything, 128 KiB L2 with 64-byte lines in front of the PSRAM), and
+lays memory out as ESPHome does (LVGL's heap and every frame in PSRAM,
+lv_draw_ortho's tile in internal RAM). The counts become milliseconds with
+figures measured on the household's boards: a 1280x620 PSRAM-to-PSRAM copy at
+32-35 ms on the Tab5 calibrates the cost of a PSRAM line, and a Waveshare 7B's
+log gives the PPA's turn (14.9 ms for 1024x600) and the display copy (4.1 ms).
+CI runs it (`p4sim`); 25 seconds, no board.
+
+```
+python3 test/p4sim/p4sim.py --lvgl /path/to/lvgl-9.5.0
+```
+
+What it says, at 360 MHz, ms per frame (middle assumptions). The lv_draw_ortho
++ PPA columns are the redraw REPLAYED: the fake PPA notes when each transfer is
+queued and when the CPU needs one finished, the plugin notes both cores' counts
+at those moments, and `p4sim.py` runs the PPA through its queue at the measured
+rate while the CPU goes on -- so the overlap is the one the code really gets,
+not a range.
+
+![Milliseconds per frame: PPA alternative against Espressif and LVGL](avance.svg)
+
+(`docs/chart.py` draws it from `docs/p4sim-resultats.csv`, the figures below.)
+
+| | ESPHome / esp_lvgl_port | esp_lvgl_adapter | lv_draw_ortho, CPU turning | + PPA, one core | + PPA, two cores (`cores: 2`) |
+|---|---|---|---|---|---|
+| Tab5 UI (270) | 94.5 | 88.4 | 96.1 | **44.8** (1.97x) | **34.7** (2.55x) |
+| Guition UI (90) | 103.4 | 96.5 | 105.9 | **49.8** (1.94x) | **38.9** (2.48x) |
+| Waveshare UI (180) | 68.2 | 64.1 | 57.6 | **32.9** (1.95x) | **25.1** (2.55x) |
+| Tab5 full-screen picture | 92.9 | 86.7 | 62.4 | **22.4** (3.87x) | 22.4 |
+| Tab5 camera through `ortho_id` | 92.9 | 86.7 | 22.3 | 22.3 | 22.3 |
+
+(x: how many times faster than esp_lvgl_adapter.) With ESPHome's own
+`mipi_dsi` add the display copy, 6.2 ms on the Tab5. **The PPA is what beats
+the adapter**, about twice as fast on a UI on all three boards; the second
+core takes another fifth off. The rest of this section is how that was found.
+
+**The first run did not agree with the PC, and the P4 is the one to believe.** The
+camera through `ortho_id` is three times faster, because the PPA turns each
+frame once and LVGL draws nothing there. But a UI turned 90 or 270 is about
+14% SLOWER than the adapter: the adapter's turn is a PPA pass, which costs the
+CPU nothing, while lv_draw_ortho turns each tile on the CPU (about 5
+instructions a pixel on a core with no bit-manipulation instructions) and
+writes the frame buffer in PSRAM through the cache, line by line. The same
+simulation with the turn left out reads **no PSRAM line at all** for the
+drawing and 13.9 M instructions, about 40 ms on the Tab5: the drawing in
+internal RAM is cheap, the CPU turn into PSRAM is what costs.
+
+**So the PPA turns the tiles now** (`lv_draw_ortho_ppa.c`, on by default in
+`lvgl_ortho`, `ppa: false` for the CPU). Two tiles in internal RAM: the CPU
+draws one while the PPA turns the other into the frame buffer, and reads a
+tile back the same way when a widget has to be blended over what is already
+there. The CPU no longer touches the frame buffer for a UI at all -- the
+simulation counts **0 KiB** of PSRAM for it -- and waits only for a tile it
+wants to draw on again. Before each transfer the output rows are written back
+from the cache, as the video window does: ESP-IDF's driver invalidates them,
+and a line the CPU shares with the block would otherwise lose its pixels.
+Where the PPA cannot (a format other than RGB565/RGB888, a buffer it cannot
+write, a frame buffer whose size is not a whole number of cache lines, a full
+queue) the CPU turns that block, after everything queued has finished.
+
+**Plain rectangles are the PPA's fills.** A screen's background drawn straight
+into the frame buffer is 1.8 MB the CPU would write through its cache into
+PSRAM; it is a PPA fill instead, its colour handed over already at RGB565's
+precision so the pixel is LVGL's whatever the engine does when it narrows. A
+fill that an opaque picture later in the same layer covers is not drawn at
+all. That is why a full-screen picture is now the PPA's turn and nothing else
+-- 22.4 ms on the Tab5, the CPU free.
+
+One thing tried and thrown out, because the simulation said so: tiles cut
+tall and narrow at 90 and 270, so each comes out as whole rows of the panel.
+It did cut the PSRAM traffic of the CPU turn by a third, and cost LVGL itself
+more than that (a narrower tile is more rows, more shadows and gradients
+recomputed): 26.0 M instructions against 19.5.
+
+What is not known, and only a board says: how fast the PPA is on a tile, at
+90 and 270 a band 51 pixels wide on the panel, rather than on a whole screen,
+which is the only rate measured. `lvgl_ortho` logs, every ten seconds, how
+much it turned, how much of it the PPA did and how often the CPU waited.
+
+Two figures are assumed rather than measured, and the table is printed across
+a range of them: cycles per instruction outside a miss, and the cost of a line
+from internal RAM or from the L2. The PPA and the display copy are modelled
+from their measured rates, not run.
+
+### Two cores: `cores: 2`
+
+With the PPA turning, what is left of a UI redraw is LVGL drawing -- about
+14 M instructions on the Tab5, on one core while the other idles. `cores: 2`
+paints every other tile on the second core.
+
+**Only the drawing moves.** The second core runs LVGL's software renderer into
+a tile of its own and touches nothing else; reading the frame buffer back,
+turning and every PPA transfer stay on the core LVGL runs on, so the frame
+buffer and the PPA keep one user. Two renderers at once is what LVGL itself
+does with `LV_DRAW_SW_DRAW_UNIT_CNT` > 1, and it is safe for the same reason:
+the state they share (the circle cache of rounded corners, the image decoders
+and their cache) is behind LVGL's own mutexes. **Those are real only with an
+OS**: with `LV_OS_NONE` they compile to nothing, so then `cores: 2` is refused
+and one core draws. youkorr/lvgl_9.5 builds with `LV_OS_FREERTOS` on an ESP32,
+so it is there. The two cores see each other's writes the way any two
+FreeRTOS tasks on a P4 do; the PPA reads a tile only after it is written back
+from the cache, as before.
+
+**Tiles in pairs.** The second core is handed its tile first (read back if it
+has to be), the first core reads back and paints the other meanwhile, and
+both are turned out after the join. With a PPA that takes four tiles, so a
+pair is painted while the last pair is turned. Where internal RAM has no room
+for two more, the two there are cut in half: four of 64 KiB, no RAM more than
+one core needs. Smaller tiles cost LVGL about a quarter more drawing (17.8 M
+instructions against 14.0), and the two cores still win:
+
+| ms, panel buffers | one core | two cores, halves (no RAM more) | two cores, four whole tiles (+256 KiB) |
+|---|---|---|---|
+| Tab5 UI | 44.8 | **34.7** | 31.8 |
+| Guition UI | 49.8 | **38.9** | 33.9 |
+| Waveshare UI | 32.9 | **25.1** | 23.7 |
+
+The simulation runs one core: the second core's painting runs at the join,
+counted apart (`LV_DRAW_ORTHO_SIM_CORES`), and each pair costs the slower of
+the two. It shares the caches between them, which is optimistic if the P4's L1
+is per core -- Espressif's documentation does not say.
+
+**Tested with real threads.** `ortho_test --cores`, on LVGL built with
+pthreads, draws every case with the second thread painting (207 cases, pixel
+for pixel), again with no room for more than two tiles (the halves), and under
+ThreadSanitizer, which reports nothing in lv_draw_ortho -- what it reports is
+LVGL's own render thread against its own dispatcher, the same with one core.
+One more is LVGL's and only on 9.6 and `master`: `release_mask_radius()`
+reads a circle-cache entry outside the mutex that guards it (9.5 reads it
+inside), so two cores drawing rounded corners meet there, as LVGL's own
+drawing threads would. It cannot change what is read -- a cached entry's
+`life` is never negative -- and `test/tsan.supp` sets that one report aside.
+`ppa_mutants.py --cores` plants four mistakes (a tile handed over while the PPA
+still turns it out, a tile turned out before the other core has finished it,
+two halves in the same memory, both cores in one tile) and the test catches
+each.
+
+**Off by default**, because it costs: the second core's time, a 12 KiB stack,
+and on a board short of internal RAM smaller tiles. Compare with `lvgl_bench`
+(mode `ortho_2cores` in `yaml/test-lvgl.yaml`) and keep it if it is faster. The
+log says, every ten seconds, how many tiles the second core painted. Not run on
+a board: whether the P4's memory keeps up with two cores drawing while the PPA
+and the display's scan-out share the PSRAM is what a board will say.
+
+### The PPA's faults, and what the others do about them
+
+Read in ESP-IDF's, LVGL's and ESPHome's own issues and pull requests (October
+2026), because a PPA that turns tiles is only better than the others if it
+does not freeze where theirs do.
+
+| | what it is | Espressif / LVGL / ESPHome | here |
+|---|---|---|---|
+| **DIG-734** ([esp-idf #19023](https://github.com/espressif/esp-idf/issues/19023), [#19096](https://github.com/espressif/esp-idf/issues/19096), [#18768](https://github.com/espressif/esp-idf/pull/18768)) | at 90 and 270, a block whose last macro block leaves the DMA under its FIFO depth never finishes, and `ppa_do_scale_rotate_mirror()` never returns | fixed on master (469aa16) by sizing that block after the turn; **not in v5.5.6**, which ESPHome 2026.10 builds with. esp_lvgl_adapter's "PPA freeze with rotation in TRIPLE_PARTIAL" is this | the driver's test, both ways, in `lv_draw_ortho_ppa_dig734()`; a block that would hang is cut into pieces safe on either driver (every size to 1300x1300 checked: 17% need it, all cut, 24 pieces at most) |
+| **an unbounded wait** | the driver's blocking mode waits with `portMAX_DELAY`: a stuck transfer is a frozen screen | LVGL's PPA unit (in master) is blocking with no timeout; the author's own [lvgl #10265](https://github.com/lvgl/lvgl/pull/10265) (scaled and rotated images, open, not merged) keeps that call, and the bounded wait was asked for in its review and left for a later PR | every wait is bounded (`LV_DRAW_ORTHO_PPA_TIMEOUT_MS`, 250); past it the PPA is given up on, the CPU turns, the video window is refused at once, and lvgl_ortho redraws the screen and says so |
+| **DMA2D reset hang** ([esp-idf #18999](https://github.com/espressif/esp-idf/issues/18999), [#19108](https://github.com/espressif/esp-idf/issues/19108)) | after a software reset, a DMA2D channel can wait for ever for `reset_avail`, inside a spinlock | open, not reproduced by Espressif; worst with the JPEG decoder and the PPA running at once | **not handled**: it spins with interrupts off, below anything a component can bound. A power cycle clears it; a panel that froze after an OTA is the sign |
+| PPA fills | solid rectangles filled by DMA | LVGL's PPA unit does fills and 1:1 image blends | **not yet**: lv_draw_ortho's fills are the CPU's, in the tile or straight into the frame buffer |
+
+The fake PPA the tests run on reproduces DIG-734 as the v5.5.6 driver meets
+it -- written from `ppa_srm.c`, not shared with the code it tests -- and a
+stall on demand: `test/ppa_mutants.py` sends the blocks whole, unbounds the
+wait and lets the video use a stuck PPA, and each one fails a case.
+
+### Measuring it on the board
+
+`components/lvgl_bench` times every LVGL refresh on the board itself, from
+LVGL's `RENDER_START` to its `REFR_READY` -- the drawing, any turn, and the
+flush to the panel. It works with ESPHome's own lvgl and with lvgl_ortho
+alike, so the same lines in two firmwares compare them, and the figures
+reach Home Assistant, readable from a phone:
+
+```yaml
+external_components:
+  - source: github://youkorr/ppa-alternative-@main
+    components: [lvgl_bench]          # add lvgl_ortho for the new firmware
+
+lvgl_bench:
+  ms_per_frame:
+    name: "LVGL ms per frame"
+  max_fps:
+    name: "LVGL max fps"
+
+button:
+  - platform: template
+    name: "LVGL bench"
+    on_press:
+      - lvgl_bench.run: 10s           # redraws the whole screen, then reports
+```
+
+`yaml/test-lvgl.yaml` (next section) carries these lines on all three
+boards: flash it with `mode: lvgl`, press the button, note the figures;
+flash it with `mode: ortho`, press it again.
+LVGL refreshes at most every 33 ms by default, so the rate of refreshes says
+little: **ms per frame** is the figure that compares.
+
+## The test on the three boards
+
+`yaml/test-lvgl.yaml` is one small firmware for all three boards: an
+ordinary interface (text, cards with borders and shadows, a gradient, an
+arc, a bar, a slider, a switch), `lvgl_bench`, Wi-Fi and the API. Two words
+at its top choose everything:
+
+```yaml
+substitutions:
+  board: tab5     # tab5, guition or waveshare
+  mode: ortho     # ortho (the PPA turning), ortho_2cores (and the second
+                  # core drawing), ortho_cpu (the CPU turning), or lvgl
+                  # (ESPHome's own rotation)
+```
+
+| `board:` | board | screen | turn |
+|---|---|---|---|
+| `tab5` | M5Stack Tab5 | 720x1280 | 270 |
+| `guition` | Guition JC8012P4A1 | 800x1280 | 90 |
+| `waveshare` | Waveshare 7B | 1024x600 | 180 |
+
+Each board's hardware is in `yaml/boards/`, each mode in `yaml/modes/`; the
+modes differ only in where the rotation is and who turns, so flashing one,
+pressing "LVGL bench", then another and pressing again compares the rotation
+and nothing else. It takes only `lvgl` from `youkorr/lvgl_9.5`, keeps
+`buffer_size: 100%`, and needs `wifi_ssid`, `wifi_password` and
+`api_encryption_key` in `secrets.yaml`. All twelve combinations are compiled
+with ESP-IDF by CI, and generate `set_lvgl_rotation(...)` in `lvgl` mode,
+`ortho->set_rotation(...)`, `set_ppa(...)` and `set_cores(...)` in the other
+three. Not flashed.
+
+## Use
+
+```c
+#include "lv_draw_ortho.h"
+
+lv_init();
+lv_draw_ortho_init();                       /* after lv_init() */
+
+lv_display_t * d = lv_display_create(720, 1280);   /* the PANEL's size */
+lv_display_set_buffers(d, buf, NULL, size, LV_DISPLAY_RENDER_MODE_DIRECT);
+lv_display_set_rotation(d, LV_DISPLAY_ROTATION_270);
+lv_display_set_matrix_rotation(d, true);
+/* flush_cb: the buffer is already native -- copy it, never turn it. */
+```
+
+`lv_conf.h` needs `LV_USE_FLOAT 1`, `LV_USE_MATRIX 1` and
+`LV_DRAW_TRANSFORM_USE_MATRIX 1`. The private headers are reached through
+`lvgl_private.h`, which 9.5, 9.6 and `master` all provide. On `master` the
+software renderer draws a descriptor onto a layer within a clip, which is used
+directly; on 9.x a copy of the task is pointed at the tile.
+
+`LV_DRAW_ORTHO_TILE_BYTES` (128 KiB by default) is the one setting that
+matters. Every tile costs each task touching it a call into the software
+renderer, and a label lays its text out again, so a tile that is too small is
+slower than LVGL's own way. With the test UI: 32 KiB 2.6 ms, 64 KiB 1.8 ms,
+128 KiB 1.45 ms, 256 KiB 1.3 ms, against 1.7 ms for LVGL today.
+
+**Partial render mode** (a small buffer, which is what ESPHome uses) needs the
+patch for your LVGL in `patches/`: neither 9.5 nor 9.6 allows matrix rotation
+outside direct and full modes. The patch is three small hunks: allow the mode,
+size the partial buffer for the turned area, and flush the turned area. With
+it, the flush callback receives the native area and copies it as it is. It is
+meant to go upstream with this unit.
+
+A pre-turned picture: keep `header.w` × `header.h` as the size the UI sees,
+store the rows as they will be on the glass, give the native row length in
+`header.stride`, and set `LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE` in `header.flags`.
+
+`lv_draw_ortho_get_stats()` says which path each frame took.
+
+## Running the tests
+
+```
+git clone --depth 1 -b v9.6.0 https://github.com/lvgl/lvgl /tmp/lvgl
+cd test
+make LVGL=/tmp/lvgl run            # 202 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl bench          # timings
+build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
+build/ortho_test --ppa             # the PPA's cases alone
+python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case
+
+# the second core: LVGL built with pthreads
+make LVGL=/tmp/lvgl BUILD=build-mt CFLAGS="-O2 -g -DLV_USE_OS=1" build-mt/ortho_test
+build-mt/ortho_test --cores        # every case, every other tile on another thread
+python3 ppa_mutants.py --cores     # each mistake planted in the two-core path must fail
+```
+
+The PPA's cases run on a fake one (`test/p4stub/p4fake.c`) that turns as the
+boards' does and holds every non-blocking transfer until lv_draw_ortho waits
+for it: a wait forgotten leaves a tile or the frame buffer as it was, and the
+picture is wrong. `ppa_mutants.py` takes each wait out in turn to prove it.
+
+The LVGL tree is copied and the patch for its exact version applied inside
+`test/build`, so the tree given is never modified. 9.5.0 works the same way.
+
+## Going upstream
+
+The shape is chosen for LVGL: one draw unit, no platform code, LVGL's own
+`lv_matrix_t` and software renderer, and a test that compares against LVGL's
+own output. Nothing is specific to Espressif: any MCU driving a panel on its
+side has the same problem. A pull request to LVGL lands on `master`, which is
+why the unit and the tests build there too.
+
+**To LVGL**, three separate things:
+
+1. the draw unit, as the software renderer's answer to matrix rotation;
+2. the partial-mode patch to `lv_refr.c` and `lv_display.c`
+   (`patches/lvgl-10.0.0-*.patch` for `master`);
+3. the line renderer losing a pixel at a band cut, as a bug report, with
+   `--lvgl-quirk` as the reproduction (present on 9.5, 9.6 and `master`).
+
+**Beside lvgl/lvgl#10265** (the PPA unit's scaled and rotated images): it is
+complementary rather than competing. That PR turns *an image*; this unit
+stops turning *the screen*. Two things connect them:
+
+- The PPA unit's `ppa_evaluate` does not look at the task's matrix, so with
+  matrix rotation on and no `lv_draw_ortho` it would draw images unturned.
+  With `lv_draw_ortho` the PPA unit gives those tasks up whatever the order
+  the units are asked in, because this unit claims them at preference 0. One
+  line in `ppa_evaluate` (refuse a task whose matrix is not the identity)
+  makes the PPA unit correct on its own.
+- On the ESP32-P4 the PPA is the natural engine for this unit's two copies:
+  a turned copy is an SRM rotate, and a straight one an SRM copy, and the
+  block geometry is what `lv_draw_ppa_rot_calc_block()` in #10265 computes.
+  That is a back end for `lv_draw_ortho_set_copy_cb()` and a turned-copy
+  callback still to add, and it needs a board to be measured on.
+
+**To ESPHome**: ESPHome builds LVGL 9.5.0, so the unit can live in an
+external component first, where it can be flashed and measured, and become
+a `lvgl:` option once LVGL carries it. esphome/esphome#16944
+(`esp_video_camera`, the camera as a Home Assistant entity) does not touch
+the display; showing that camera on an LVGL screen is `lvgl_camera_display`
+in esp-video, which is the case measured above.
+
+## Licence
+
+MIT, like LVGL.

@@ -69,6 +69,8 @@ extern "C" {
 /** Counters, so a board can say where its time goes. */
 typedef struct {
     uint32_t fills_direct;     /**< solid fills drawn as native rectangles */
+    uint32_t fills_handed;     /**< of those, filled by a filler (the PPA) rather than the CPU */
+    uint32_t fills_hidden;     /**< of those, not drawn at all: an opaque picture drawn later covers them */
     uint32_t images_turned;    /**< images copied with their turn in one pass */
     uint32_t images_native;    /**< pre-turned images copied row by row */
     uint32_t tiles;            /**< upright tiles drawn by the software renderer */
@@ -83,7 +85,10 @@ typedef struct {
     uint64_t bytes_handed;     /**< of bytes_turned, those a turner (the PPA) moved rather than the CPU */
     uint32_t waits;            /**< times the CPU waited for a turner */
     uint8_t tile_internal;     /**< 1 when the tile is in internal RAM rather than PSRAM */
-    uint8_t tiles_in_turn;     /**< 2 when one tile is drawn while the other is turned */
+    uint8_t tiles_in_turn;     /**< 2 when one tile is drawn while the other is turned, 4 when a
+                                    pair is drawn on two cores while the last pair is turned */
+    uint8_t cores;             /**< 2 when a second core paints every other tile */
+    uint32_t tiles_other_core; /**< of `tiles`, those the second core painted */
     uint8_t turner_failed;     /**< 1, for good, once a turner stopped answering: the CPU turns
                                     from then on, and the screen must be drawn again once */
 } lv_draw_ortho_stats_t;
@@ -127,6 +132,27 @@ typedef bool (*lv_draw_ortho_wait_cb_t)(uint32_t ticket);
  * instead). Nothing it queued is left running when it hands a layer back.
  */
 void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait);
+
+/**
+ * Fill a rectangle of `dst` with one opaque colour, by DMA -- the ESP32-P4's
+ * PPA. Asked only for what LVGL would fill solid straight into the frame
+ * buffer (no gradient, no rounded corner, fully opaque); returns once it is
+ * in memory, or false to let the CPU do it.
+ */
+typedef bool (*lv_draw_ortho_fill_cb_t)(const lv_draw_ortho_pic_t * dst, const lv_area_t * rect, lv_color_t color,
+                                        lv_color_format_t cf);
+void lv_draw_ortho_set_filler(lv_draw_ortho_fill_cb_t fill);
+
+/**
+ * Paint every other tile on a second core: 2 to start it, 1 to stop it.
+ * Only LVGL's software renderer runs there, into a tile of its own; the
+ * frame buffer and the turner stay with the core LVGL runs on. Needs an OS
+ * (LV_USE_OS: FreeRTOS on an ESP32 with two cores, pthreads elsewhere),
+ * because two renderers at once are safe only behind LVGL's own locks, and
+ * a tile of internal RAM more (three more with a turner). Returns false and
+ * stays on one core when either is missing.
+ */
+bool lv_draw_ortho_set_cores(uint32_t cores);
 
 /** Create the draw unit. Call after `lv_init()`. */
 void lv_draw_ortho_init(void);

@@ -101,6 +101,12 @@ void LvglOrtho::setup() {
     if (!this->ppa_on_)
       ESP_LOGW(TAG, "No PPA client (error 0x%x): the CPU turns the tiles", (unsigned) err);
   }
+  // After the PPA, so the second core gets tiles to alternate with its turns.
+  if (this->cores_ > 1) {
+    this->cores_on_ = lv_draw_ortho_set_cores(2);
+    if (!this->cores_on_)
+      ESP_LOGW(TAG, "cores: 2 refused (LVGL built without an OS, or no internal RAM for the tile): one core draws");
+  }
   if (!this->use_panel_buffers_()) {
     const size_t size = ((size_t) this->stride_ * this->height_ + LINE - 1) & ~(LINE - 1);
     this->buf_ = (uint8_t *) heap_caps_aligned_alloc(LINE, size, MALLOC_CAP_SPIRAM);
@@ -196,11 +202,17 @@ void LvglOrtho::dump_config() {
   ESP_LOGCONFIG(TAG, "  Drawing tile: %u KiB in %s", (unsigned) (LV_DRAW_ORTHO_TILE_BYTES / 1024),
                 lv_draw_ortho_get_stats()->tile_internal ? "internal RAM" : "PSRAM (internal RAM was full)");
   if (this->ppa_on_) {
-    ESP_LOGCONFIG(TAG, "  Turns: the PPA, %s", lv_draw_ortho_get_stats()->tiles_in_turn == 2
+    ESP_LOGCONFIG(TAG, "  Turns: the PPA, %s", lv_draw_ortho_get_stats()->tiles_in_turn >= 2
                   ? "the CPU drawing one tile while it turns the other"
                   : "the CPU waiting for each (no internal RAM for a second tile)");
   } else {
     ESP_LOGCONFIG(TAG, "  Turns: the CPU%s", this->ppa_ ? " (no PPA client)" : " (ppa: false)");
+  }
+  if (this->cores_on_) {
+    ESP_LOGCONFIG(TAG, "  Drawing: two cores, every other tile on the second%s",
+                  lv_draw_ortho_get_stats()->tiles_in_turn == 4 ? ", a pair drawn while the last is turned" : "");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Drawing: one core%s", this->cores_ > 1 ? " (cores: 2 refused, see above)" : "");
   }
 }
 
@@ -413,6 +425,10 @@ void LvglOrtho::loop() {
       if (st->bytes_turned > 0) {
         ESP_LOGI(TAG, "  turned %.0f KiB/s, %.0f%% of it by the PPA, the CPU waited %.1f times/s for it",
                  st->bytes_turned / 1024.0f / s, 100.0f * st->bytes_handed / st->bytes_turned, st->waits / s);
+      }
+      if (this->cores_on_ && st->tiles > 0) {
+        ESP_LOGI(TAG, "  %u of %u tiles painted on the second core", (unsigned) st->tiles_other_core,
+                 (unsigned) st->tiles);
       }
       lv_draw_ortho_reset_stats();
     }

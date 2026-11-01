@@ -6,6 +6,7 @@
     lvgl_ortho:
       rotation: 270        # what was on the lvgl: block, which loses it
       ppa: true            # the default: the PPA turns what LVGL draws
+      cores: 1             # 2: the second core paints every other tile
 
 Takes LVGL's display over after lvgl has built it: one panel-sized buffer in
 LV_DISPLAY_RENDER_MODE_DIRECT, LVGL's matrix rotation drawn by lv_draw_ortho,
@@ -38,6 +39,9 @@ CONFIG_SCHEMA = cv.All(
             # The PPA turns each tile while the CPU draws the next; false
             # leaves the turning to the CPU, to compare the two on a board.
             cv.Optional("ppa", default=True): cv.boolean,
+            # Off by default: it takes up to three more tiles of internal RAM
+            # and the other core's time. Compare with lvgl_bench first.
+            cv.Optional("cores", default=1): cv.int_range(min=1, max=2),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     only_on_variant(supported=[VARIANT_ESP32P4]),
@@ -118,4 +122,5 @@ async def to_code(config):
     cg.add(var.set_display(disp))
     cg.add(var.set_rotation(config[CONF_ROTATION]))
     cg.add(var.set_ppa(config["ppa"]))
+    cg.add(var.set_cores(config["cores"]))
     cg.add_define("USE_LVGL_ORTHO")
