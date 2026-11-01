@@ -1,0 +1,2958 @@
+From 1705dee6c3001977dab2ca5c0f973fb018c4e83c Mon Sep 17 00:00:00 2001
+From: youkorr <96953496+youkorr@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 22:33:50 +0000
+Subject: [PATCH] feat(esp_lvgl_adapter): draw rotated DOUBLE_DIRECT displays
+ in the panel's orientation
+
+Add CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW (LVGL v9, off by default). With
+rotation 90/180/270 and DOUBLE_DIRECT on an RGB or MIPI DSI panel, LVGL draws
+straight into the panel's two frame buffers in the panel's orientation,
+through LVGL's matrix rotation (lv_display_set_matrix_rotation) and the
+lv_draw_ortho draw unit, and the flush only switches buffers, as unrotated
+DOUBLE_DIRECT does. Nothing is drawn upright and copied rotated afterwards,
+and 2 frame buffers are needed instead of 3.
+
+lv_draw_ortho draws widgets with LVGL's software renderer into a small tile
+in internal RAM; on chips with a PPA the PPA rotates each tile into the frame
+buffer while the CPU draws the next one, and fills plain rectangles. Every
+PPA wait is bounded; a PPA that stops answering falls back to the CPU. Blocks
+the v5.5 driver would hang on at 90/270 (DIG-734) are split before they are
+sent.
+
+The lvgl9 test app runs its tests on a rotated DOUBLE_DIRECT display when the
+option is set; sdkconfig.ci.rotate_in_draw builds that for esp32p4.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TUymkF8hVRdZRPiwDncnJt
+---
+ .../tools/esp_lvgl_adapter/CHANGELOG.md       |    4 +
+ .../tools/esp_lvgl_adapter/CMakeLists.txt     |    9 +
+ .../display/tools/esp_lvgl_adapter/Kconfig    |   22 +
+ .../display/tools/esp_lvgl_adapter/README.md  |    3 +
+ .../tools/esp_lvgl_adapter/README_CN.md       |    3 +
+ .../tools/esp_lvgl_adapter/idf_component.yml  |    2 +-
+ .../src/display/display_manager.c             |   91 +
+ .../display/rotate_in_draw/lv_draw_ortho.c    | 1802 +++++++++++++++++
+ .../display/rotate_in_draw/lv_draw_ortho.h    |  200 ++
+ .../rotate_in_draw/lv_draw_ortho_ppa.c        |  494 +++++
+ .../rotate_in_draw/lv_draw_ortho_ppa.h        |   83 +
+ .../main/test_esp_lvgl_adapter_features.c     |    9 +-
+ .../lvgl9/sdkconfig.ci.rotate_in_draw         |    9 +
+ 13 files changed, 2728 insertions(+), 3 deletions(-)
+ create mode 100644 components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.c
+ create mode 100644 components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.h
+ create mode 100644 components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.c
+ create mode 100644 components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.h
+ create mode 100644 components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/sdkconfig.ci.rotate_in_draw
+
+diff --git a/components/display/tools/esp_lvgl_adapter/CHANGELOG.md b/components/display/tools/esp_lvgl_adapter/CHANGELOG.md
+index 8112163..b0b2c01 100644
+--- a/components/display/tools/esp_lvgl_adapter/CHANGELOG.md
++++ b/components/display/tools/esp_lvgl_adapter/CHANGELOG.md
+@@ -1,5 +1,9 @@
+ # ChangeLog
+ 
++## v0.8.0 (unreleased)
++
++* Add `CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW` (LVGL v9): a rotated `DOUBLE_DIRECT` display is drawn straight into the panel's two frame buffers in the panel's orientation, through LVGL's matrix rotation and the `lv_draw_ortho` draw unit, instead of being drawn upright and copied rotated. Needs 2 frame buffers instead of 3. On chips with a PPA, the PPA rotates each drawn tile while the CPU draws the next, and fills plain rectangles; every PPA wait is bounded. Off by default; other modes are unchanged.
++
+ ## v0.7.4 (2026-10-28)
+ 
+ * Fix the LVGL v9 flush deadlock when LVGL invokes the flush from a task other than the adapter task. v9 pipeline waits block on bridge-owned semaphores, so a flush no longer clears or increments the calling task's notification index 0. The frame-complete ISR wakes the registered flush and dummy-draw waiters; v8 still uses task notifications. Covers `pipeline_blit()`, `wait_free_buf()`, buffer-switch wait, and GPIO TE completion.
+diff --git a/components/display/tools/esp_lvgl_adapter/CMakeLists.txt b/components/display/tools/esp_lvgl_adapter/CMakeLists.txt
+index 74b36af..f0d7127 100644
+--- a/components/display/tools/esp_lvgl_adapter/CMakeLists.txt
++++ b/components/display/tools/esp_lvgl_adapter/CMakeLists.txt
+@@ -88,6 +88,15 @@ else()
+     list(APPEND ADAPTER_PRIV_INCLUDES "src/display/bridge/v9")
+ endif()
+ 
++# Rotation drawn in the panel's orientation (lv_draw_ortho), LVGL v9 only.
++if(CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW AND NOT lvgl_ver VERSION_LESS "9.0.0")
++    list(APPEND ADAPTER_SRCS "src/display/rotate_in_draw/lv_draw_ortho.c")
++    list(APPEND ADAPTER_PRIV_INCLUDES "src/display/rotate_in_draw")
++    if(${target} STREQUAL "esp32p4" OR ${target} STREQUAL "esp32s31")
++        list(APPEND ADAPTER_SRCS "src/display/rotate_in_draw/lv_draw_ortho_ppa.c")
++    endif()
++endif()
++
+ set(ADAPTER_REQ esp_lcd ${lvgl_name})
+ 
+ idf_component_register(
+diff --git a/components/display/tools/esp_lvgl_adapter/Kconfig b/components/display/tools/esp_lvgl_adapter/Kconfig
+index 85c3b0d..2030ae3 100644
+--- a/components/display/tools/esp_lvgl_adapter/Kconfig
++++ b/components/display/tools/esp_lvgl_adapter/Kconfig
+@@ -8,6 +8,28 @@ config ESP_LVGL_ADAPTER_ENABLE_DECODER
+     bool "Enable esp_lv_decoder integration"
+     default n
+ 
++config ESP_LVGL_ADAPTER_ROTATE_IN_DRAW
++    bool "Draw a rotated DOUBLE_DIRECT display in the panel's orientation (LVGL v9)"
++    default n
++    help
++        With rotation 90, 180 or 270 and ESP_LV_ADAPTER_TEAR_AVOID_MODE_DOUBLE_DIRECT,
++        LVGL draws straight into the panel's two frame buffers in the panel's own
++        orientation, through LVGL's matrix rotation, and the flush only switches
++        buffers. Nothing is drawn upright and copied turned afterwards, and one
++        frame buffer fewer is needed (2 instead of 3).
++
++        Widgets are drawn by LVGL's software renderer into a small upright tile in
++        internal RAM; on chips with a PPA, the PPA turns each tile into the frame
++        buffer while the CPU draws the next, and fills plain rectangles. Every PPA
++        wait is bounded; a PPA that stops answering falls back to the CPU.
++
++        Requirements:
++        - LVGL v9 with CONFIG_LV_USE_MATRIX and CONFIG_LV_DRAW_TRANSFORM_USE_MATRIX
++        - RGB or MIPI DSI panel, ESP_LV_ADAPTER_TEAR_AVOID_MODE_DOUBLE_DIRECT
++
++        Other modes, rotation 0 and LVGL v8 are unchanged. Under this option,
++        dummy-draw frames are shown as the panel stores them (not rotated).
++
+ config ESP_LVGL_ADAPTER_PARTIAL_AUX_IMG_CACHE
+     bool "Set LVGL image cache to max (partial tear-avoid modes)"
+     default n
+diff --git a/components/display/tools/esp_lvgl_adapter/README.md b/components/display/tools/esp_lvgl_adapter/README.md
+index 771f43f..b3355a1 100644
+--- a/components/display/tools/esp_lvgl_adapter/README.md
++++ b/components/display/tools/esp_lvgl_adapter/README.md
+@@ -250,6 +250,7 @@ uint8_t num_fbs = esp_lv_adapter_get_required_frame_buffer_count(
+ 
+ **Frame Buffer Count Rules**:
+ - Non-zero rotation (except `DOUBLE_PARTIAL`) or triple-buffer modes: **3** frame buffers
++- `DOUBLE_DIRECT` with `ESP_LVGL_ADAPTER_ROTATE_IN_DRAW` (LVGL v9): **2** frame buffers, rotated or not
+ - Double-buffer modes without rotation, and `DOUBLE_PARTIAL`: **2** frame buffers
+ - Single-buffer mode: **1** frame buffer
+ 
+@@ -681,6 +682,7 @@ Configure via `idf.py menuconfig`:
+ | `ESP_LV_ADAPTER_ENABLE_BUTTON` | Enable navigation button input support |
+ | `ESP_LV_ADAPTER_ENABLE_KNOB` | Enable rotary encoder input support |
+ | `ESP_LV_ADAPTER_PARTIAL_AUX_IMG_CACHE` | Resolve repeated decoding issues in partial modes by setting image cache to max |
++| `ESP_LVGL_ADAPTER_ROTATE_IN_DRAW` | LVGL v9: draw a rotated `DOUBLE_DIRECT` display in the panel's orientation (see Rotation Limitations) |
+ 
+ **Default Task Stack Size**:
+ - LVGL adapter task stack: 8KB
+@@ -700,6 +702,7 @@ Configure via `idf.py menuconfig`:
+ 
+ - **RGB/MIPI DSI**:
+   - `TEAR_AVOID_MODE_NONE` **forbids rotation** (any non-zero rotation is rejected)
++  - With `ESP_LVGL_ADAPTER_ROTATE_IN_DRAW` (LVGL v9, `DOUBLE_DIRECT`), LVGL draws the rotated UI straight into the panel's two frame buffers in the panel's orientation, through LVGL's matrix rotation: nothing is drawn upright and copied rotated afterwards, and one frame buffer fewer is needed. Requires `CONFIG_LV_USE_MATRIX` and `CONFIG_LV_DRAW_TRANSFORM_USE_MATRIX`. Widgets are drawn by LVGL's software renderer into a small tile in internal RAM, which the PPA rotates into the frame buffer while the CPU draws the next one (the CPU rotates on chips without a PPA). Dummy-draw frames are shown as the panel stores them, not rotated
+ 
+ - **OTHER (SPI/I2C/I80/QSPI)**:
+   - `NONE` and synchronous `TE_SYNC` do not apply adapter-side 90°/270° rotation; configure panel orientation and matching touch mapping
+diff --git a/components/display/tools/esp_lvgl_adapter/README_CN.md b/components/display/tools/esp_lvgl_adapter/README_CN.md
+index c651188..94caa14 100644
+--- a/components/display/tools/esp_lvgl_adapter/README_CN.md
++++ b/components/display/tools/esp_lvgl_adapter/README_CN.md
+@@ -246,6 +246,7 @@ uint8_t num_fbs = esp_lv_adapter_get_required_frame_buffer_count(
+ 
+ **帧缓冲数量规则**：
+ - 非 0° 旋转（`DOUBLE_PARTIAL` 除外）或三缓冲模式：需要 **3** 个帧缓冲
++- 启用 `ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`（LVGL v9）的 `DOUBLE_DIRECT`：无论是否旋转均需要 **2** 个帧缓冲
+ - 未旋转的双缓冲模式以及 `DOUBLE_PARTIAL`：需要 **2** 个帧缓冲
+ - 单缓冲模式：需要 **1** 个帧缓冲
+ 
+@@ -675,6 +676,7 @@ static void panel_wake_cb(void *user_data)
+ | `ESP_LV_ADAPTER_ENABLE_BUTTON` | 启用按键导航输入 |
+ | `ESP_LV_ADAPTER_ENABLE_KNOB` | 启用旋钮/编码器输入 |
+ | `ESP_LV_ADAPTER_PARTIAL_AUX_IMG_CACHE` | 解决局部刷新下的重复解码问题，将图片缓存设置为最大 |
++| `ESP_LVGL_ADAPTER_ROTATE_IN_DRAW` | LVGL v9：以面板原生方向绘制旋转后的 `DOUBLE_DIRECT` 显示（见旋转限制） |
+ 
+ **默认任务栈大小**：
+ - LVGL 适配器任务栈：8KB
+@@ -694,6 +696,7 @@ static void panel_wake_cb(void *user_data)
+ 
+ - **RGB/MIPI DSI**：
+   - 在 `TEAR_AVOID_MODE_NONE` 下**不支持旋转**（任何非 0 旋转会被拒绝）
++  - 启用 `ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`（LVGL v9，`DOUBLE_DIRECT`）后，LVGL 通过矩阵旋转直接以面板原生方向绘制到面板的两个帧缓冲中：不再先正向绘制再旋转拷贝，并少用一个帧缓冲。需要 `CONFIG_LV_USE_MATRIX` 和 `CONFIG_LV_DRAW_TRANSFORM_USE_MATRIX`。控件由 LVGL 软件渲染器绘制到内部 RAM 中的小图块，CPU 绘制下一块时由 PPA 将其旋转写入帧缓冲（无 PPA 的芯片由 CPU 旋转）。Dummy draw 的帧按面板存储方向显示，不做旋转
+ 
+ - **OTHER (SPI/I2C/I80/QSPI)**：
+   - `NONE` 和同步 `TE_SYNC` 不执行适配器侧 90°/270° 旋转；需配置面板方向并同步调整触摸映射
+diff --git a/components/display/tools/esp_lvgl_adapter/idf_component.yml b/components/display/tools/esp_lvgl_adapter/idf_component.yml
+index 7ed176f..1da923e 100644
+--- a/components/display/tools/esp_lvgl_adapter/idf_component.yml
++++ b/components/display/tools/esp_lvgl_adapter/idf_component.yml
+@@ -1,4 +1,4 @@
+-version: "0.7.4"
++version: "0.8.0"
+ description: LVGL adapter with unified display management, tearing control, thread safety, and optional filesystem/decoder/FreeType support.
+ url: https://github.com/espressif/esp-iot-solution/tree/master/components/display/tools/esp_lvgl_adapter
+ repository: https://github.com/espressif/esp-iot-solution.git
+diff --git a/components/display/tools/esp_lvgl_adapter/src/display/display_manager.c b/components/display/tools/esp_lvgl_adapter/src/display/display_manager.c
+index 6392f6e..a4658e0 100644
+--- a/components/display/tools/esp_lvgl_adapter/src/display/display_manager.c
++++ b/components/display/tools/esp_lvgl_adapter/src/display/display_manager.c
+@@ -35,6 +35,18 @@
+ #include "display_te_sync.h"
+ #include "display_manager.h"
+ 
++/* A rotated DOUBLE_DIRECT display drawn in the panel's orientation (see the
++ * ESP_LVGL_ADAPTER_ROTATE_IN_DRAW Kconfig option). */
++#if CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW && LVGL_VERSION_MAJOR >= 9
++#define ESP_LV_ADAPTER_ROTATE_IN_DRAW 1
++#include "lv_draw_ortho.h"
++#if SOC_PPA_SUPPORTED
++#include "lv_draw_ortho_ppa.h"
++#endif
++#else
++#define ESP_LV_ADAPTER_ROTATE_IN_DRAW 0
++#endif
++
+ /*********************
+  *      TYPEDEFS
+  *********************/
+@@ -864,6 +876,61 @@ static void display_manager_flush_cb_v8(lv_disp_drv_t *drv,
+  *   INTERNAL NODE MANAGEMENT
+  **********************/
+ 
++#if ESP_LV_ADAPTER_ROTATE_IN_DRAW
++static bool display_manager_rotates_in_draw(const esp_lv_adapter_display_config_t *pub)
++{
++    return pub->tear_avoid_mode == ESP_LV_ADAPTER_TEAR_AVOID_MODE_DOUBLE_DIRECT &&
++           pub->profile.rotation != ESP_LV_ADAPTER_ROTATE_0 &&
++           pub->profile.mono_layout == ESP_LV_ADAPTER_MONO_LAYOUT_NONE &&
++           (pub->profile.interface == ESP_LV_ADAPTER_PANEL_IF_RGB ||
++            pub->profile.interface == ESP_LV_ADAPTER_PANEL_IF_MIPI_DSI);
++}
++
++/* The adapter turns clockwise and LVGL counter-clockwise: the adapter's 90 is
++ * LVGL's 270, as the PPA angles of the rotating flush paths already show. */
++static lv_display_rotation_t display_manager_lvgl_rotation(esp_lv_adapter_rotation_t rotation)
++{
++    switch (rotation) {
++    case ESP_LV_ADAPTER_ROTATE_90:
++        return LV_DISPLAY_ROTATION_270;
++    case ESP_LV_ADAPTER_ROTATE_180:
++        return LV_DISPLAY_ROTATION_180;
++    case ESP_LV_ADAPTER_ROTATE_270:
++        return LV_DISPLAY_ROTATION_90;
++    default:
++        return LV_DISPLAY_ROTATION_0;
++    }
++}
++
++/**
++ * @brief Let LVGL draw the display in the panel's orientation
++ *
++ * LVGL hands each draw task a matrix for the rotation, and lv_draw_ortho draws
++ * through it: widgets go through LVGL's software renderer into an upright tile
++ * in internal RAM, and the tile is turned into the frame buffer (by the PPA
++ * where there is one). The display itself keeps the panel's size; LVGL swaps
++ * the logical resolution, and syncs the two buffers in the panel's
++ * orientation (refr_sync_areas).
++ */
++static void display_manager_setup_rotate_in_draw(lv_display_t *disp, esp_lv_adapter_rotation_t rotation)
++{
++    static bool unit_ready = false;
++    if (!unit_ready) {
++        lv_draw_ortho_init();
++#if SOC_PPA_SUPPORTED
++        esp_err_t err = lv_draw_ortho_ppa_init();
++        if (err != ESP_OK) {
++            ESP_LOGW(TAG, "rotate in draw: no PPA client (%s), the CPU turns the tiles", esp_err_to_name(err));
++        }
++#endif
++        unit_ready = true;
++    }
++    lv_display_set_rotation(disp, display_manager_lvgl_rotation(rotation));
++    lv_display_set_matrix_rotation(disp, true);
++    ESP_LOGI(TAG, "rotation %d drawn in the panel's orientation", (int)rotation);
++}
++#endif
++
+ /**
+  * @brief Initialize a display node with LVGL and bridge setup
+  */
+@@ -877,6 +944,16 @@ static bool display_manager_init_node(esp_lv_adapter_display_node_t *node)
+     cfg->mono_layout = pub->profile.mono_layout;
+     cfg->mono_buf = NULL;
+ 
++#if ESP_LV_ADAPTER_ROTATE_IN_DRAW
++    /* The panel pipeline below is then the unrotated DOUBLE_DIRECT one; LVGL is
++     * given the rotation once the display exists. */
++    const esp_lv_adapter_rotation_t draw_rotation =
++        display_manager_rotates_in_draw(pub) ? pub->profile.rotation : ESP_LV_ADAPTER_ROTATE_0;
++    if (draw_rotation != ESP_LV_ADAPTER_ROTATE_0) {
++        cfg->base.profile.rotation = ESP_LV_ADAPTER_ROTATE_0;
++    }
++#endif
++
+ #if CONFIG_ESP_LVGL_ADAPTER_ENABLE_FPS_STATS
+     /* Initialize FPS statistics */
+     node->fps_stats.frame_count = 0;
+@@ -975,6 +1052,12 @@ static bool display_manager_init_node(esp_lv_adapter_display_node_t *node)
+     node->lv_disp = disp;
+     cfg->lv_disp = disp;
+ 
++#if ESP_LV_ADAPTER_ROTATE_IN_DRAW
++    if (draw_rotation != ESP_LV_ADAPTER_ROTATE_0) {
++        display_manager_setup_rotate_in_draw(disp, draw_rotation);
++    }
++#endif
++
+     if (mono_enabled && !display_manager_alloc_mono_buffer(cfg, &pub->profile)) {
+         display_manager_free_draw_buffers(node);
+         lv_display_delete(disp);
+@@ -1689,6 +1772,14 @@ uint8_t display_manager_required_frame_buffer_count(esp_lv_adapter_tear_avoid_mo
+         return 1;
+     }
+ 
++#if ESP_LV_ADAPTER_ROTATE_IN_DRAW
++    /* Drawn in the panel's orientation, a rotated DOUBLE_DIRECT display is the
++     * unrotated one: LVGL draws into the two scanout buffers directly. */
++    if (tear_avoid_mode == ESP_LV_ADAPTER_TEAR_AVOID_MODE_DOUBLE_DIRECT) {
++        return 2;
++    }
++#endif
++
+     /* Any non-zero rotation requires 3 buffers for rotation processing.
+      * DOUBLE_PARTIAL has its own drawing buffers and is out of scope here.
+      */
+diff --git a/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.c b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.c
+new file mode 100644
+index 0000000..31dcad6
+--- /dev/null
++++ b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.c
+@@ -0,0 +1,1802 @@
++/*
++ * SPDX-FileCopyrightText: 2026 youkorr
++ *
++ * SPDX-License-Identifier: MIT
++ *
++ * From https://github.com/youkorr/ppa-alternative- (components/lvgl_ortho).
++ */
++
++/**
++ * @file lv_draw_ortho.c
++ *
++ * See lv_draw_ortho.h for what this is for. The comments here are about how.
++ */
++
++#include "lv_draw_ortho.h"
++
++#if LV_USE_DRAW_ORTHO
++
++#include "lvgl_private.h"
++#include <math.h>
++#include <string.h>
++
++/* LVGL 10 renamed the draw task types after their descriptors. */
++#if LVGL_VERSION_MAJOR < 10
++#define LV_DRAW_DSC_TYPE_FILL           LV_DRAW_TASK_TYPE_FILL
++#define LV_DRAW_DSC_TYPE_BORDER         LV_DRAW_TASK_TYPE_BORDER
++#define LV_DRAW_DSC_TYPE_BOX_SHADOW     LV_DRAW_TASK_TYPE_BOX_SHADOW
++#define LV_DRAW_DSC_TYPE_LETTER         LV_DRAW_TASK_TYPE_LETTER
++#define LV_DRAW_DSC_TYPE_LABEL          LV_DRAW_TASK_TYPE_LABEL
++#define LV_DRAW_DSC_TYPE_IMAGE          LV_DRAW_TASK_TYPE_IMAGE
++#define LV_DRAW_DSC_TYPE_ARC            LV_DRAW_TASK_TYPE_ARC
++#define LV_DRAW_DSC_TYPE_LINE           LV_DRAW_TASK_TYPE_LINE
++#define LV_DRAW_DSC_TYPE_BLUR           LV_DRAW_TASK_TYPE_BLUR
++#define LV_DRAW_DSC_TYPE_TRIANGLE       LV_DRAW_TASK_TYPE_TRIANGLE
++#define LV_DRAW_DSC_TYPE_LAYER          LV_DRAW_TASK_TYPE_LAYER
++#define LV_DRAW_DSC_TYPE_MASK_RECTANGLE LV_DRAW_TASK_TYPE_MASK_RECTANGLE
++#define LV_DRAW_DSC_TYPE_VECTOR         LV_DRAW_TASK_TYPE_VECTOR
++#endif
++
++/* Any id no other unit uses. LVGL's own units count up from 1. */
++#define DRAW_UNIT_ID_ORTHO 79
++
++/**
++ * A quarter-turn matrix reduced to integers, pixel for pixel:
++ *     native_x = a * x + b * y + tx
++ *     native_y = c * x + d * y + ty
++ * The matrix LVGL hands over maps pixel EDGES (a vector renderer's view), so
++ * a pixel's centre x + 0.5 lands on native_x + 0.5. Where a row of the matrix
++ * sums to -1 that moves the integer result down by one; `ortho_from_matrix`
++ * folds that in so nothing downstream has to know.
++ */
++typedef struct {
++    int32_t a, b, c, d;
++    int32_t tx, ty;
++} ortho_t;
++
++typedef struct _job_t job_t;
++
++typedef struct {
++    lv_draw_unit_t base;
++    lv_draw_task_t * task_act;
++    job_t * jobs;            /* LV_DRAW_ORTHO_MAX_BATCH */
++    /* LV_DRAW_ORTHO_TILE_BYTES each, aligned to a cache line. The second with
++     * a turner (one is drawn while the other is being turned) or a second
++     * core (each draws one); the third and fourth with both, so a pair is
++     * drawn while the last pair is being turned. */
++    uint8_t * tile[4];
++    void * tile_alloc[4];
++    uint32_t ticket[4];      /* the last turn reading each tile, 0 if none */
++    int32_t next;
++    int32_t pair;
++    /* What a tile holds: LV_DRAW_ORTHO_TILE_BYTES, or half of it when the
++     * third and fourth are the second halves of the first two (two cores and
++     * a turner, with no internal RAM for more). */
++    size_t tile_bytes;
++} ortho_unit_t;
++
++static ortho_unit_t * g_unit;
++static lv_draw_ortho_stats_t g_stats;
++static lv_draw_ortho_copy_cb_t g_copy_cb;
++static bool g_fast = true;
++static bool g_batch = true;
++static bool g_tile_internal;
++
++/* A turner (the PPA) and the last ticket it was handed that may still be
++ * running, 0 when none is. */
++static lv_draw_ortho_turn_cb_t g_turn;
++static lv_draw_ortho_wait_cb_t g_wait;
++static lv_draw_ortho_fill_cb_t g_fill;
++static uint32_t g_last;
++static bool g_turner_failed;
++
++/* A turner writes by DMA, and its output has to start on a cache line: the
++ * ESP32-P4's PPA wants its L2's, which is at most 128 bytes. */
++#define TILE_ALIGN 128
++
++/* The video window: a native rectangle of one display's frame buffer that
++ * LVGL leaves to a source writing there itself. */
++static lv_display_t * g_win_disp;
++static lv_area_t g_win;
++
++/* ------------------------------------------------------------------------ */
++/* The matrix                                                               */
++/* ------------------------------------------------------------------------ */
++
++static bool near_int(float v, int32_t * out)
++{
++    float r = roundf(v);
++    if (fabsf(v - r) > 1e-3f) {
++        return false;
++    }
++    *out = (int32_t)r;
++    return true;
++}
++
++static bool ortho_from_matrix(const lv_matrix_t * m, ortho_t * o)
++{
++    int32_t tx, ty;
++    if (!near_int(m->m[0][0], &o->a) || !near_int(m->m[0][1], &o->b) ||
++            !near_int(m->m[1][0], &o->c) || !near_int(m->m[1][1], &o->d) ||
++            !near_int(m->m[0][2], &tx) || !near_int(m->m[1][2], &ty)) {
++        return false;
++    }
++
++    /* No perspective. */
++    if (fabsf(m->m[2][0]) > 1e-3f || fabsf(m->m[2][1]) > 1e-3f || fabsf(m->m[2][2] - 1.0f) > 1e-3f) {
++        return false;
++    }
++
++    /* A signed permutation: exactly one +-1 per row and per column. */
++    if (LV_ABS(o->a) + LV_ABS(o->b) != 1 || LV_ABS(o->c) + LV_ABS(o->d) != 1) {
++        return false;
++    }
++    if (LV_ABS(o->a) + LV_ABS(o->c) != 1 || LV_ABS(o->b) + LV_ABS(o->d) != 1) {
++        return false;
++    }
++
++    o->tx = tx + ((o->a + o->b) == 1 ? 0 : -1);
++    o->ty = ty + ((o->c + o->d) == 1 ? 0 : -1);
++    return true;
++}
++
++static inline bool ortho_is_identity(const ortho_t * o)
++{
++    return o->a == 1 && o->b == 0 && o->c == 0 && o->d == 1 && o->tx == 0 && o->ty == 0;
++}
++
++static inline void ortho_point(const ortho_t * o, int32_t x, int32_t y, int32_t * nx, int32_t * ny)
++{
++    *nx = o->a * x + o->b * y + o->tx;
++    *ny = o->c * x + o->d * y + o->ty;
++}
++
++/* The inverse of a signed permutation is its transpose. */
++static inline void ortho_unpoint(const ortho_t * o, int32_t nx, int32_t ny, int32_t * x, int32_t * y)
++{
++    int32_t u = nx - o->tx, v = ny - o->ty;
++    *x = o->a * u + o->c * v;
++    *y = o->b * u + o->d * v;
++}
++
++static void ortho_area(const ortho_t * o, const lv_area_t * in, lv_area_t * out)
++{
++    int32_t x1, y1, x2, y2;
++    ortho_point(o, in->x1, in->y1, &x1, &y1);
++    ortho_point(o, in->x2, in->y2, &x2, &y2);
++    out->x1 = LV_MIN(x1, x2);
++    out->x2 = LV_MAX(x1, x2);
++    out->y1 = LV_MIN(y1, y2);
++    out->y2 = LV_MAX(y1, y2);
++}
++
++static void ortho_unarea(const ortho_t * o, const lv_area_t * in, lv_area_t * out)
++{
++    int32_t x1, y1, x2, y2;
++    ortho_unpoint(o, in->x1, in->y1, &x1, &y1);
++    ortho_unpoint(o, in->x2, in->y2, &x2, &y2);
++    out->x1 = LV_MIN(x1, x2);
++    out->x2 = LV_MAX(x1, x2);
++    out->y1 = LV_MIN(y1, y2);
++    out->y2 = LV_MAX(y1, y2);
++}
++
++/* ------------------------------------------------------------------------ */
++/* The video window                                                         */
++/* ------------------------------------------------------------------------ */
++
++/* Whether writes into this layer must keep out of the window: only the
++ * display's own layer, rendered straight into its frame buffer. A child
++ * layer is a separate buffer, and in partial mode the band is copied by the
++ * flush callback, which is where a window would have to be honoured. */
++static bool has_window(const lv_layer_t * layer)
++{
++    if (g_win_disp == NULL || layer->parent != NULL) {
++        return false;
++    }
++    if (lv_refr_get_disp_refreshing() != g_win_disp) {
++        return false;
++    }
++    return lv_display_get_render_mode(g_win_disp) == LV_DISPLAY_RENDER_MODE_DIRECT;
++}
++
++/* The parts of a native rectangle outside the window: up to four. */
++static int32_t outside_window(const lv_layer_t * layer, const lv_area_t * nat, lv_area_t out[4])
++{
++    lv_area_t w;
++    if (!has_window(layer) || !lv_area_intersect(&w, nat, &g_win)) {
++        out[0] = *nat;
++        return 1;
++    }
++    int32_t n = 0;
++    if (nat->y1 < w.y1) {
++        lv_area_set(&out[n++], nat->x1, nat->y1, nat->x2, w.y1 - 1);
++    }
++    if (nat->y2 > w.y2) {
++        lv_area_set(&out[n++], nat->x1, w.y2 + 1, nat->x2, nat->y2);
++    }
++    if (nat->x1 < w.x1) {
++        lv_area_set(&out[n++], nat->x1, w.y1, w.x1 - 1, w.y2);
++    }
++    if (nat->x2 > w.x2) {
++        lv_area_set(&out[n++], w.x2 + 1, w.y1, nat->x2, w.y2);
++    }
++    g_stats.window_skips++;
++    return n;
++}
++
++/* ------------------------------------------------------------------------ */
++/* Moving pixels                                                            */
++/* ------------------------------------------------------------------------ */
++
++static void copy_straight(uint8_t * dest, int32_t dest_stride, const uint8_t * src, int32_t src_stride,
++                          int32_t row_bytes, int32_t h)
++{
++    g_stats.bytes_straight += (uint64_t)row_bytes * (uint64_t)h;
++    if (g_copy_cb && g_copy_cb(dest, dest_stride, src, src_stride, row_bytes, h)) {
++        return;
++    }
++    for (int32_t r = 0; r < h; r++) {
++        lv_memcpy(dest, src, row_bytes);
++        dest += dest_stride;
++        src += src_stride;
++    }
++}
++
++/* Square blocks a transpose works in. A native row walks a column of the
++ * upright side, touching one cache line per pixel; done a block at a time,
++ * the BLOCK lines a block touches are still cached when the next native row
++ * of the same block wants the pixel beside the one it just read. */
++#ifndef LV_DRAW_ORTHO_BLOCK
++#define LV_DRAW_ORTHO_BLOCK 32
++#endif
++
++/**
++ * Move the pixels of a NATIVE rectangle between the native buffer and an
++ * upright one, in either direction. `up` addresses upright pixel (x, y) as
++ * up + (y - up_area->y1) * up_stride + (x - up_area->x1) * px.
++ */
++static void move_turned(const ortho_t * o, int32_t px,
++                        uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
++                        uint8_t * up, int32_t up_stride, const lv_area_t * up_area,
++                        const lv_area_t * nat_rect, bool to_native)
++{
++    /* One step right in native space is (a, b) in upright space. */
++    const intptr_t up_step = (intptr_t)o->a * px + (intptr_t)o->b * up_stride;
++    g_stats.bytes_turned += (uint64_t)lv_area_get_width(nat_rect) *
++                            (uint64_t)lv_area_get_height(nat_rect) * (uint64_t)px;
++
++    /* Two native rows next to each other are two upright columns next to each
++     * other, so in 16 bits one 32-bit read of the upright side carries a pixel
++     * of each, and two such reads a column apart fill a 32-bit write of each
++     * native row: a quarter of the loads and stores of a pixel at a time. A
++     * P4 core is in order and has no wider load, so this is where its turn
++     * spends its time. */
++    const int32_t col_step = o->c * px + o->d * up_stride;  /* one native row down, upright */
++    const bool quad = px == 2 && (col_step == 2 || col_step == -2) &&
++                      (up_step == up_stride || up_step == -up_stride);
++
++    for (int32_t by = nat_rect->y1; by <= nat_rect->y2; by += LV_DRAW_ORTHO_BLOCK) {
++        const int32_t ey = LV_MIN(by + LV_DRAW_ORTHO_BLOCK - 1, nat_rect->y2);
++        for (int32_t bx = nat_rect->x1; bx <= nat_rect->x2; bx += LV_DRAW_ORTHO_BLOCK) {
++            const int32_t w = LV_MIN(bx + LV_DRAW_ORTHO_BLOCK - 1, nat_rect->x2) - bx + 1;
++            int32_t ny = by;
++            if (quad) {
++                for (; ny + 1 <= ey; ny += 2) {
++                    int32_t x, y;
++                    ortho_unpoint(o, bx, ny, &x, &y);
++                    uint8_t * u = up + (intptr_t)(y - up_area->y1) * up_stride + (intptr_t)(x - up_area->x1) * px;
++                    uint16_t * n0 = (uint16_t *)(nat + (intptr_t)(ny - nat_buf_area->y1) * nat_stride +
++                                                 (intptr_t)(bx - nat_buf_area->x1) * px);
++                    uint16_t * n1 = (uint16_t *)((uint8_t *)n0 + nat_stride);
++                    /* The pair in upright memory: row ny at the lower address
++                     * when the next native row is one pixel right upright.
++                     * Halves of a 32-bit word in little-endian order, which
++                     * the P4 and every host this is tested on are. */
++                    uint8_t * pair = col_step > 0 ? u : u - 2;
++                    int32_t i = 0;
++                    if (((uintptr_t)pair & 3) == 0 && ((uintptr_t)n0 & 3) == 0 && (nat_stride & 3) == 0 &&
++                            (up_stride & 3) == 0) {
++                        const intptr_t two = 2 * up_step;
++                        for (; i + 1 < w; i += 2, pair += two) {
++                            uint32_t * a = (uint32_t *)pair;
++                            uint32_t * b = (uint32_t *)(pair + up_step);
++                            uint32_t * w0 = (uint32_t *)(n0 + i);
++                            uint32_t * w1 = (uint32_t *)(n1 + i);
++                            if (to_native) {
++                                const uint32_t va = *a, vb = *b;
++                                if (col_step > 0) {
++                                    *w0 = (va & 0xffffu) | (vb << 16);
++                                    *w1 = (va >> 16) | (vb & 0xffff0000u);
++                                } else {
++                                    *w0 = (va >> 16) | (vb & 0xffff0000u);
++                                    *w1 = (va & 0xffffu) | (vb << 16);
++                                }
++                            } else {
++                                const uint32_t v0 = *w0, v1 = *w1;
++                                if (col_step > 0) {
++                                    *a = (v0 & 0xffffu) | (v1 << 16);
++                                    *b = (v0 >> 16) | (v1 & 0xffff0000u);
++                                } else {
++                                    *a = (v1 & 0xffffu) | (v0 << 16);
++                                    *b = (v1 >> 16) | (v0 & 0xffff0000u);
++                                }
++                            }
++                        }
++                    }
++                    /* What is left, and any pair that is not word-aligned. */
++                    uint8_t * u0 = u + (intptr_t)i * up_step;
++                    for (; i < w; i++, u0 += up_step) {
++                        uint16_t * p0 = (uint16_t *)u0;
++                        uint16_t * p1 = (uint16_t *)(u0 + col_step);
++                        if (to_native) {
++                            n0[i] = *p0;
++                            n1[i] = *p1;
++                        } else {
++                            *p0 = n0[i];
++                            *p1 = n1[i];
++                        }
++                    }
++                }
++            }
++            for (; ny <= ey; ny++) {
++                int32_t x, y;
++                ortho_unpoint(o, bx, ny, &x, &y);
++                uint8_t * u = up + (intptr_t)(y - up_area->y1) * up_stride + (intptr_t)(x - up_area->x1) * px;
++                uint8_t * n = nat + (intptr_t)(ny - nat_buf_area->y1) * nat_stride +
++                              (intptr_t)(bx - nat_buf_area->x1) * px;
++                if (px == 2) {
++                    uint16_t * n16 = (uint16_t *)n;
++                    if (to_native) for (int32_t i = 0; i < w; i++, u += up_step) {
++                            n16[i] = *(const uint16_t *)u;
++                        } else for (int32_t i = 0; i < w; i++, u += up_step) {
++                            *(uint16_t *)u = n16[i];
++                        }
++                } else if (px == 4) {
++                    uint32_t * n32 = (uint32_t *)n;
++                    if (to_native) for (int32_t i = 0; i < w; i++, u += up_step) {
++                            n32[i] = *(const uint32_t *)u;
++                        } else for (int32_t i = 0; i < w; i++, u += up_step) {
++                            *(uint32_t *)u = n32[i];
++                        }
++                } else {
++                    for (int32_t i = 0; i < w; i++, u += up_step, n += px) {
++                        if (to_native) {
++                            lv_memcpy(n, u, px);
++                        } else {
++                            lv_memcpy(u, n, px);
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
++
++/* ------------------------------------------------------------------------ */
++/* Turning with a turner                                                    */
++/* ------------------------------------------------------------------------ */
++
++/* Wait for everything handed to the turner. Whatever the CPU is about to read
++ * or write in a buffer a queued turn may still be reading or writing, it does
++ * after this -- and it is done at the end of every run of tasks, so nothing is
++ * left running when LVGL takes its layer back. */
++/* A turner that stopped answering: the CPU from now on. What it had queued
++ * is lost, so the screen has to be drawn again -- lvgl_ortho does, seeing
++ * turner_failed; nothing can be invalidated from inside a refresh. */
++static void turner_failed(void)
++{
++    LV_LOG_ERROR("ortho: the turner stopped answering; the CPU turns from now on");
++    g_turn = NULL;
++    g_wait = NULL;
++    g_last = 0;
++    g_turner_failed = true;
++}
++
++static bool wait_for(uint32_t t)
++{
++    if (t == 0 || g_wait == NULL) {
++        return true;
++    }
++    g_stats.waits++;
++    if (g_wait(t)) {
++        return true;
++    }
++    turner_failed();
++    return false;
++}
++
++static void fence(void)
++{
++    wait_for(g_last);
++    g_last = 0;
++}
++
++/* The display rotation a quarter-turn matrix is; false for a mirror. */
++static bool ortho_rotation(const ortho_t * o, lv_display_rotation_t * rot)
++{
++    if (o->a == 1 && o->d == 1 && o->b == 0 && o->c == 0) {
++        *rot = LV_DISPLAY_ROTATION_0;
++    } else if (o->a == -1 && o->d == -1 && o->b == 0 && o->c == 0) {
++        *rot = LV_DISPLAY_ROTATION_180;
++    } else if (o->a == 0 && o->d == 0 && o->b == 1 && o->c == -1) {
++        *rot = LV_DISPLAY_ROTATION_90;
++    } else if (o->a == 0 && o->d == 0 && o->b == -1 && o->c == 1) {
++        *rot = LV_DISPLAY_ROTATION_270;
++    } else {
++        return false;
++    }
++    return true;
++}
++
++static lv_display_rotation_t opposite(lv_display_rotation_t r)
++{
++    return r == LV_DISPLAY_ROTATION_90 ? LV_DISPLAY_ROTATION_270
++           : r == LV_DISPLAY_ROTATION_270 ? LV_DISPLAY_ROTATION_90 : r;
++}
++
++/* move_turned's job, handed to the turner if there is one and it takes it;
++ * else done by the CPU, after everything queued has finished. Returns the
++ * turner's ticket, 0 when the CPU did it. */
++static uint32_t turn_or_cpu(const ortho_t * o, lv_color_format_t cf, int32_t px,
++                            uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
++                            uint8_t * up, int32_t up_stride, const lv_area_t * up_area,
++                            const lv_area_t * nat_rect, bool to_native)
++{
++    lv_display_rotation_t rot;
++    if (g_turn && ortho_rotation(o, &rot)) {
++        lv_area_t up_rect, blk;
++        ortho_unarea(o, nat_rect, &up_rect);
++        const lv_draw_ortho_pic_t np = {nat, (uint32_t)nat_stride, (uint32_t)(nat_stride / px),
++                                        (uint32_t)lv_area_get_height(nat_buf_area)
++                                       };
++        const lv_draw_ortho_pic_t upic = {up, (uint32_t)up_stride, (uint32_t)(up_stride / px),
++                                          (uint32_t)lv_area_get_height(up_area)
++                                         };
++        uint32_t t;
++        if (to_native) {
++            blk = up_rect;
++            lv_area_move(&blk, -up_area->x1, -up_area->y1);
++            t = g_turn(&upic, &blk, &np, nat_rect->x1 - nat_buf_area->x1, nat_rect->y1 - nat_buf_area->y1, rot, cf);
++        } else {
++            blk = *nat_rect;
++            lv_area_move(&blk, -nat_buf_area->x1, -nat_buf_area->y1);
++            t = g_turn(&np, &blk, &upic, up_rect.x1 - up_area->x1, up_rect.y1 - up_area->y1, opposite(rot), cf);
++        }
++        if (t) {
++            const uint64_t bytes = (uint64_t)lv_area_get_size(nat_rect) * (uint64_t)px;
++            g_stats.bytes_turned += bytes;
++            g_stats.bytes_handed += bytes;
++            g_last = t;
++            return t;
++        }
++    }
++    fence();
++    move_turned(o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, nat_rect, to_native);
++    return 0;
++}
++
++static bool wait_ticket(uint32_t * t)
++{
++    const bool ok = wait_for(*t);
++    *t = 0;
++    return ok;
++}
++
++/* ------------------------------------------------------------------------ */
++/* The software renderer, run on a copy of the task                         */
++/* ------------------------------------------------------------------------ */
++
++#if LVGL_VERSION_MAJOR >= 10
++/* LVGL 10 draws a descriptor onto a layer within a clip area: no task. */
++static void sw_execute_on(const lv_draw_task_t * t, lv_layer_t * layer, const lv_area_t * area,
++                          const lv_area_t * clip)
++{
++    void * d = t->draw_dsc;
++    switch (t->type) {
++    case LV_DRAW_DSC_TYPE_FILL:
++        lv_draw_sw_fill(layer, clip, d, area);
++        break;
++    case LV_DRAW_DSC_TYPE_BORDER:
++        lv_draw_sw_border(layer, clip, d, area);
++        break;
++    case LV_DRAW_DSC_TYPE_BOX_SHADOW:
++        lv_draw_sw_box_shadow(layer, clip, d, area);
++        break;
++    case LV_DRAW_DSC_TYPE_LETTER:
++        lv_draw_sw_letter(layer, clip, d, area);
++        break;
++    case LV_DRAW_DSC_TYPE_LABEL:
++        lv_draw_sw_label(layer, clip, d, area);
++        break;
++    case LV_DRAW_DSC_TYPE_IMAGE:
++        lv_draw_sw_image(layer, clip, d, area);
++        break;
++    case LV_DRAW_DSC_TYPE_ARC:
++        lv_draw_sw_arc(layer, clip, d, area);
++        break;
++    case LV_DRAW_DSC_TYPE_LINE:
++        lv_draw_line_iterate(layer, clip, d, lv_draw_sw_line, NULL);
++        break;
++    case LV_DRAW_DSC_TYPE_BLUR:
++        lv_draw_sw_blur(layer, clip, d, area);
++        break;
++    case LV_DRAW_DSC_TYPE_TRIANGLE:
++        lv_draw_sw_triangle(layer, clip, d);
++        break;
++    case LV_DRAW_DSC_TYPE_LAYER:
++        lv_draw_sw_layer(layer, clip, d, area);
++        break;
++    case LV_DRAW_DSC_TYPE_MASK_RECTANGLE:
++        lv_draw_sw_mask_rect(layer, clip, d);
++        break;
++#if LV_USE_VECTOR_GRAPHIC && LV_USE_THORVG
++    case LV_DRAW_DSC_TYPE_VECTOR:
++        lv_draw_sw_vector(layer, clip, d);
++        break;
++#endif
++    default:
++        break;
++    }
++}
++#else
++/* LVGL 9 draws a task: a copy of it, pointed at the layer and the clip. */
++static void sw_execute(lv_draw_task_t * t)
++{
++    switch (t->type) {
++    case LV_DRAW_TASK_TYPE_FILL:
++        lv_draw_sw_fill(t, t->draw_dsc, &t->area);
++        break;
++    case LV_DRAW_TASK_TYPE_BORDER:
++        lv_draw_sw_border(t, t->draw_dsc, &t->area);
++        break;
++    case LV_DRAW_TASK_TYPE_BOX_SHADOW:
++        lv_draw_sw_box_shadow(t, t->draw_dsc, &t->area);
++        break;
++    case LV_DRAW_TASK_TYPE_LETTER:
++        lv_draw_sw_letter(t, t->draw_dsc, &t->area);
++        break;
++    case LV_DRAW_TASK_TYPE_LABEL:
++        lv_draw_sw_label(t, t->draw_dsc, &t->area);
++        break;
++    case LV_DRAW_TASK_TYPE_IMAGE:
++        lv_draw_sw_image(t, t->draw_dsc, &t->area);
++        break;
++    case LV_DRAW_TASK_TYPE_ARC:
++        lv_draw_sw_arc(t, t->draw_dsc, &t->area);
++        break;
++    case LV_DRAW_TASK_TYPE_LINE:
++        lv_draw_line_iterate(t, t->draw_dsc, lv_draw_sw_line);
++        break;
++    case LV_DRAW_TASK_TYPE_BLUR:
++        lv_draw_sw_blur(t, t->draw_dsc, &t->area);
++        break;
++    case LV_DRAW_TASK_TYPE_TRIANGLE:
++        lv_draw_sw_triangle(t, t->draw_dsc);
++        break;
++    case LV_DRAW_TASK_TYPE_LAYER:
++        lv_draw_sw_layer(t, t->draw_dsc, &t->area);
++        break;
++    case LV_DRAW_TASK_TYPE_MASK_RECTANGLE:
++        lv_draw_sw_mask_rect(t, t->draw_dsc);
++        break;
++#if LV_USE_VECTOR_GRAPHIC && LV_USE_THORVG
++    case LV_DRAW_TASK_TYPE_VECTOR:
++        lv_draw_sw_vector(t, t->draw_dsc);
++        break;
++#endif
++    default:
++        break;
++    }
++}
++
++static void sw_execute_on(const lv_draw_task_t * t, lv_layer_t * layer, const lv_area_t * area,
++                          const lv_area_t * clip)
++{
++    lv_draw_task_t copy = *t;
++    copy.next = NULL;
++    copy.target_layer = layer;
++    copy.area = *area;
++    copy.clip_area = *clip;
++    lv_matrix_identity(&copy.matrix);
++    sw_execute(&copy);
++}
++#endif
++
++static void tile_layer(lv_layer_t * tl, lv_draw_buf_t * tb, const lv_area_t * area,
++                       const lv_layer_t * target)
++{
++    lv_memzero(tl, sizeof(*tl));
++    tl->draw_buf = tb;
++    tl->buf_area = *area;
++    tl->phy_clip_area = *area;
++    tl->_clip_area = *area;
++    tl->color_format = target->color_format;
++    tl->opa = LV_OPA_COVER;
++    tl->recolor = target->recolor;
++    lv_matrix_identity(&tl->matrix);
++}
++
++/* ------------------------------------------------------------------------ */
++/* The general path: draw upright into a tile, put it back turned           */
++/* ------------------------------------------------------------------------ */
++
++/* Up to this many consecutive tasks are drawn through one set of tiles, so a
++ * screen's worth of widgets costs one turn rather than one per widget. */
++#ifndef LV_DRAW_ORTHO_MAX_BATCH
++#define LV_DRAW_ORTHO_MAX_BATCH 64
++#endif
++
++struct _job_t {
++    lv_draw_task_t * t;
++    lv_area_t todo;   /* upright: what the task may change */
++    lv_area_t hole;   /* upright: inside `todo` but certainly not changed, or x2 < x1 */
++};
++
++/* Whether a fill paints every pixel of `tile` opaquely, so what was under the
++ * tile never shows and need not be read back. */
++static bool covers(const job_t * j, const lv_area_t * tile)
++{
++    const lv_draw_task_t * t = j->t;
++    if (t->type != LV_DRAW_DSC_TYPE_FILL || t->opa < LV_OPA_MAX) {
++        return false;
++    }
++    const lv_draw_fill_dsc_t * d = t->draw_dsc;
++    if (d->opa < LV_OPA_MAX) {
++        return false;
++    }
++    if (d->grad.dir != LV_GRAD_DIR_NONE) {
++        if (d->grad.dir != LV_GRAD_DIR_HOR && d->grad.dir != LV_GRAD_DIR_VER) {
++            return false;
++        }
++        for (uint32_t i = 0; i < d->grad.stops_count; i++) if (d->grad.stops[i].opa < LV_OPA_MAX) {
++                return false;
++            }
++    }
++    if (!lv_area_is_in(tile, &t->clip_area, 0)) {
++        return false;
++    }
++    if (!lv_area_is_in(tile, &t->area, 0)) {
++        return false;
++    }
++    if (d->radius == 0) {
++        return true;
++    }
++    /* Clear of the four corner squares is enough. */
++    const int32_t r = LV_MIN(d->radius, LV_MIN(lv_area_get_width(&t->area), lv_area_get_height(&t->area)) / 2);
++    lv_area_t a = t->area;
++    a.x1 += r;
++    a.x2 -= r;
++    if (lv_area_is_in(tile, &a, 0)) {
++        return true;
++    }
++    a = t->area;
++    a.y1 += r;
++    a.y2 -= r;
++    return lv_area_is_in(tile, &a, 0);
++}
++
++/* The part of a task's area it is certain not to change. A border never
++ * touches the middle of its rectangle; a shadow under an opaque background
++ * is painted over by that background, which is the next task. Leaving these
++ * out keeps a large panel from turning all its pixels for its outline. */
++static void find_hole(job_t * j)
++{
++    const lv_draw_task_t * t = j->t;
++    lv_area_t h = {0, 0, -1, -1};
++    if (t->type == LV_DRAW_DSC_TYPE_BORDER) {
++        const lv_draw_border_dsc_t * d = t->draw_dsc;
++        int32_t in = LV_MAX(d->width, d->radius);
++        h = t->area;
++        lv_area_increase(&h, -in, -in);
++    } else if (t->type == LV_DRAW_DSC_TYPE_BOX_SHADOW) {
++        const lv_draw_box_shadow_dsc_t * d = t->draw_dsc;
++        if (d->bg_cover && t->next && t->next->type == LV_DRAW_DSC_TYPE_FILL) {
++            const lv_draw_fill_dsc_t * f = t->next->draw_dsc;
++            if (f->opa >= LV_OPA_MAX && t->next->opa >= LV_OPA_MAX &&
++                    lv_area_is_in(&t->area, &t->next->area, 0) && lv_area_is_in(&t->next->area, &t->area, 0)) {
++                h = t->area;
++                lv_area_increase(&h, -d->radius, -d->radius);
++            }
++        }
++    }
++    if (lv_area_get_width(&h) <= 0 || lv_area_get_height(&h) <= 0) {
++        lv_area_set(&j->hole, 0, 0, -1, -1);
++        return;
++    }
++    j->hole = h;
++}
++
++static bool job_touches(const job_t * j, const lv_area_t * tile)
++{
++    lv_area_t a;
++    if (!lv_area_intersect(&a, &j->todo, tile)) {
++        return false;
++    }
++    /* Wholly inside the hole: nothing to do here. */
++    if (j->hole.x2 >= j->hole.x1 && lv_area_is_in(&a, &j->hole, 0)) {
++        return false;
++    }
++    return true;
++}
++
++/* One tile on its way: prepared and read back by the first core, painted by
++ * either, put back turned by the first. Painting touches nothing but the tile
++ * and LVGL's own drawing state, so the other core can do it. */
++typedef struct {
++    const job_t * jobs;
++    int32_t n, first;
++    lv_area_t tile;      /* upright: the part the jobs reach */
++    lv_area_t nat;
++    lv_draw_buf_t tb;
++    lv_layer_t * target;
++    int32_t px;
++    uint64_t drawn;      /* bytes the renderer wrote, for the stats */
++} tile_work_t;
++
++static bool prep_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t * whole_tile,
++                      uint8_t * mem, size_t mem_size, tile_work_t * w)
++{
++    /* Only the part of the tile the jobs reach: a run of a scroll bar down
++     * the right edge and another along the bottom spans the whole screen, and
++     * turning the empty middle of it is all cost and no picture. */
++    int32_t first = -1;
++    lv_area_t reach = {0, 0, -1, -1};
++    for (int32_t i = 0; i < n; i++) {
++        lv_area_t a;
++        if (!job_touches(&jobs[i], whole_tile)) {
++            continue;
++        }
++        lv_area_intersect(&a, &jobs[i].todo, whole_tile);
++        if (first < 0) {
++            first = i;
++            reach = a;
++        } else {
++            lv_area_join(&reach, &reach, &a);
++        }
++    }
++    if (first < 0) {
++        return false;
++    }
++    const lv_area_t * tile = &reach;
++
++    lv_layer_t * target = jobs[first].t->target_layer;
++    lv_draw_buf_t * nb = target->draw_buf;
++    const lv_color_format_t cf = nb->header.cf;
++    const int32_t px = lv_color_format_get_size(cf);
++    const int32_t wd = lv_area_get_width(tile);
++    const int32_t h = lv_area_get_height(tile);
++    const uint32_t stride = lv_draw_buf_width_to_stride(wd, cf);
++
++    if (lv_draw_buf_init(&w->tb, wd, h, cf, stride, mem, mem_size) != LV_RESULT_OK) {
++        LV_LOG_WARN("ortho: tile %dx%d does not fit", (int)wd, (int)h);
++        return false;
++    }
++    w->jobs = jobs;
++    w->n = n;
++    w->first = first;
++    w->tile = reach;
++    w->target = target;
++    w->px = px;
++    w->drawn = 0;
++    ortho_area(o, tile, &w->nat);
++
++    /* The tile starts as what is already under it, so blending is right --
++     * unless the first thing drawn paints all of it anyway. */
++    if (!covers(&jobs[first], tile)) {
++        uint32_t t = turn_or_cpu(o, cf, px, nb->data, nb->header.stride, &target->buf_area,
++                                 w->tb.data, stride, tile, &w->nat, false);
++        if (!wait_ticket(&t))  /* it is drawn on next */
++            move_turned(o, px, nb->data, nb->header.stride, &target->buf_area, w->tb.data, stride, tile, &w->nat,
++                        false);
++    } else {
++        g_stats.tiles_unread++;
++    }
++    return true;
++}
++
++/* No globals of this file in here: it may run on the other core. */
++static void paint_tile(tile_work_t * w)
++{
++    lv_layer_t tl;
++    tile_layer(&tl, &w->tb, &w->tile, w->target);
++    for (int32_t i = w->first; i < w->n; i++) {
++        lv_area_t clip, drawn;
++        const job_t * j = &w->jobs[i];
++        if (!job_touches(j, &w->tile)) {
++            continue;
++        }
++        if (lv_area_intersect(&clip, &j->t->clip_area, &w->tile)) {
++            sw_execute_on(j->t, &tl, &j->t->area, &clip);
++            if (lv_area_intersect(&drawn, &j->todo, &clip)) {
++                w->drawn += (uint64_t)lv_area_get_size(&drawn) * (uint64_t)w->px;
++            }
++        }
++    }
++}
++
++static void finish_tile(const ortho_t * o, tile_work_t * w, uint32_t * ticket)
++{
++    lv_draw_buf_t * nb = w->target->draw_buf;
++    const lv_color_format_t cf = nb->header.cf;
++    g_stats.bytes_drawn += w->drawn;
++    lv_area_t parts[4];
++    const int32_t np = outside_window(w->target, &w->nat, parts);
++    for (int32_t i = 0; i < np; i++) {
++        const uint32_t t = turn_or_cpu(o, cf, w->px, nb->data, nb->header.stride, &w->target->buf_area,
++                                       w->tb.data, w->tb.header.stride, &w->tile, &parts[i], true);
++        if (t) {
++            *ticket = t;
++        }
++    }
++    g_stats.tiles++;
++}
++
++static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t * whole_tile,
++                      uint8_t * mem, size_t mem_size, uint32_t * ticket)
++{
++    tile_work_t w;
++    if (!prep_tile(jobs, n, o, whole_tile, mem, mem_size, &w)) {
++        return;
++    }
++    paint_tile(&w);
++    finish_tile(o, &w, ticket);
++}
++
++/* ------------------------------------------------------------------------ */
++/* The other core                                                           */
++/* ------------------------------------------------------------------------ */
++
++/* A second core paints every other tile: LVGL's software renderer, into a
++ * tile of its own, and nothing else. Reading the frame buffer back, turning
++ * and handing work to the PPA stay on the first core, so the frame buffer
++ * and the turner have one user as before.
++ *
++ * Two of LVGL's renderers at once is what LVGL itself does with
++ * LV_DRAW_SW_DRAW_UNIT_CNT > 1, and it is safe for the same reason: its
++ * shared caches (the circle cache of rounded corners, the image decoders and
++ * their cache) are behind LVGL's own mutexes -- which are real only with an
++ * OS. With LV_OS_NONE they compile to nothing, so then there is no second
++ * core. youkorr/lvgl_9.5 runs LV_OS_FREERTOS on an ESP32. */
++#if defined(LV_DRAW_ORTHO_SIM_CORES)
++#define ORTHO_HELPER 1   /* the P4 simulation: run where it is joined, counted apart */
++#elif LV_USE_OS == LV_OS_FREERTOS && defined(ESP_PLATFORM)
++#include "freertos/FreeRTOS.h"
++#include "freertos/task.h"
++#include "freertos/semphr.h"
++#if CONFIG_FREERTOS_NUMBER_OF_CORES > 1
++#define ORTHO_HELPER 2
++#endif
++#elif LV_USE_OS == LV_OS_PTHREAD
++#include <pthread.h>
++#define ORTHO_HELPER 3
++#endif
++#ifndef ORTHO_HELPER
++#define ORTHO_HELPER 0
++#endif
++
++typedef struct {
++    bool on;
++    tile_work_t * volatile work;
++    volatile bool quit;
++#if ORTHO_HELPER == 2
++    TaskHandle_t task;
++    SemaphoreHandle_t go, done;
++#elif ORTHO_HELPER == 3
++    pthread_t thread;
++    pthread_mutex_t m;
++    pthread_cond_t c;
++    int state;   /* 0 idle, 1 work handed over, 2 painted */
++#endif
++} helper_t;
++
++static helper_t g_helper;
++
++#if ORTHO_HELPER == 2
++static void helper_main(void * arg)
++{
++    LV_UNUSED(arg);
++    for (;;) {
++        xSemaphoreTake(g_helper.go, portMAX_DELAY);
++        if (g_helper.quit) {
++            break;
++        }
++        paint_tile(g_helper.work);
++        xSemaphoreGive(g_helper.done);
++    }
++    xSemaphoreGive(g_helper.done);
++    vTaskDelete(NULL);
++}
++#elif ORTHO_HELPER == 3
++static void * helper_main(void * arg)
++{
++    LV_UNUSED(arg);
++    pthread_mutex_lock(&g_helper.m);
++    for (;;) {
++        while (g_helper.state != 1 && !g_helper.quit) {
++            pthread_cond_wait(&g_helper.c, &g_helper.m);
++        }
++        if (g_helper.quit) {
++            break;
++        }
++        pthread_mutex_unlock(&g_helper.m);
++        paint_tile(g_helper.work);
++        pthread_mutex_lock(&g_helper.m);
++        g_helper.state = 2;
++        pthread_cond_broadcast(&g_helper.c);
++    }
++    pthread_mutex_unlock(&g_helper.m);
++    return NULL;
++}
++#endif
++
++static bool helper_start_thread(void)
++{
++#if ORTHO_HELPER == 1
++    return true;
++#elif ORTHO_HELPER == 2
++    g_helper.go = xSemaphoreCreateBinary();
++    g_helper.done = xSemaphoreCreateBinary();
++    if (g_helper.go && g_helper.done) {
++        /* On the core LVGL is not on, at LVGL's priority: it is LVGL's work. */
++        const BaseType_t core = xPortGetCoreID() ^ 1;
++        const uint32_t stack = LV_MAX(LV_DRAW_THREAD_STACK_SIZE, 12 * 1024);
++        if (xTaskCreatePinnedToCore(helper_main, "lv_ortho2", stack, NULL, uxTaskPriorityGet(NULL),
++                                    &g_helper.task, core) == pdPASS) {
++            return true;
++        }
++    }
++    if (g_helper.go) {
++        vSemaphoreDelete(g_helper.go);
++    }
++    if (g_helper.done) {
++        vSemaphoreDelete(g_helper.done);
++    }
++    g_helper.go = g_helper.done = NULL;
++    return false;
++#elif ORTHO_HELPER == 3
++    pthread_mutex_init(&g_helper.m, NULL);
++    pthread_cond_init(&g_helper.c, NULL);
++    g_helper.state = 0;
++    if (pthread_create(&g_helper.thread, NULL, helper_main, NULL) == 0) {
++        return true;
++    }
++    pthread_cond_destroy(&g_helper.c);
++    pthread_mutex_destroy(&g_helper.m);
++    return false;
++#else
++    return false;
++#endif
++}
++
++static void helper_stop_thread(void)
++{
++#if ORTHO_HELPER == 2
++    g_helper.quit = true;   /* the semaphore orders it before the task reads it */
++    xSemaphoreGive(g_helper.go);
++    xSemaphoreTake(g_helper.done, portMAX_DELAY);
++    vSemaphoreDelete(g_helper.go);
++    vSemaphoreDelete(g_helper.done);
++    g_helper.go = g_helper.done = NULL;
++#elif ORTHO_HELPER == 3
++    pthread_mutex_lock(&g_helper.m);
++    g_helper.quit = true;
++    pthread_cond_broadcast(&g_helper.c);
++    pthread_mutex_unlock(&g_helper.m);
++    pthread_join(g_helper.thread, NULL);
++    pthread_cond_destroy(&g_helper.c);
++    pthread_mutex_destroy(&g_helper.m);
++#endif
++    g_helper.quit = false;
++}
++
++#if ORTHO_HELPER == 1
++/* The simulation runs one core: the other core's painting runs at the join,
++ * between markers, and p4cache.c counts it apart. Markers: 2042 the other
++ * core is handed its tile, 2044..2043 its painting, 2041 the join. */
++#define SIM_MARK(n) __asm__ volatile("addi x0, x0, %0" :: "i"(n) : "memory")
++#endif
++
++static void helper_paint(tile_work_t * w)
++{
++    g_helper.work = w;
++#if ORTHO_HELPER == 1
++    SIM_MARK(2042);
++#elif ORTHO_HELPER == 2
++    xSemaphoreGive(g_helper.go);
++#elif ORTHO_HELPER == 3
++    pthread_mutex_lock(&g_helper.m);
++    g_helper.state = 1;
++    pthread_cond_broadcast(&g_helper.c);
++    pthread_mutex_unlock(&g_helper.m);
++#endif
++}
++
++static void helper_join(void)
++{
++#if ORTHO_HELPER == 1
++    SIM_MARK(2044);
++    paint_tile(g_helper.work);
++    SIM_MARK(2043);
++    SIM_MARK(2041);
++#elif ORTHO_HELPER == 2
++    xSemaphoreTake(g_helper.done, portMAX_DELAY);
++#elif ORTHO_HELPER == 3
++    pthread_mutex_lock(&g_helper.m);
++    while (g_helper.state != 2) {
++        pthread_cond_wait(&g_helper.c, &g_helper.m);
++    }
++    g_helper.state = 0;
++    pthread_mutex_unlock(&g_helper.m);
++#endif
++    g_helper.work = NULL;
++}
++
++/* Two tiles at once: the second painted by the other core while this one
++ * reads back and paints the first. Its read-back goes first so the other
++ * core starts as early as it can; the first's read-back then runs while the
++ * other core paints. Both are turned out after the join, in order. With four
++ * tiles the pairs alternate, so a pair is painted while the PPA turns out
++ * the last one. */
++static void draw_pair(ortho_unit_t * u, const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t rect[2])
++{
++    int32_t base = 0;
++    if (u->tile[2] && u->tile[3]) {
++        base = 2 * u->pair;
++        u->pair ^= 1;
++    }
++    tile_work_t w[2];
++    bool ok[2];
++    wait_ticket(&u->ticket[base + 1]);
++    ok[1] = prep_tile(jobs, n, o, &rect[1], u->tile[base + 1], u->tile_bytes, &w[1]);
++    if (ok[1]) {
++        helper_paint(&w[1]);
++    }
++    wait_ticket(&u->ticket[base]);
++    ok[0] = prep_tile(jobs, n, o, &rect[0], u->tile[base], u->tile_bytes, &w[0]);
++    if (ok[0]) {
++        paint_tile(&w[0]);
++    }
++    if (ok[1]) {
++        helper_join();
++        g_stats.tiles_other_core++;
++    }
++    if (ok[0]) {
++        finish_tile(o, &w[0], &u->ticket[base]);
++    }
++    if (ok[1]) {
++        finish_tile(o, &w[1], &u->ticket[base + 1]);
++    }
++}
++
++static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ortho_t * o)
++{
++    const lv_color_format_t cf = jobs[0].t->target_layer->draw_buf->header.cf;
++    lv_area_t box = jobs[0].todo;
++    for (int32_t i = 1; i < n; i++) {
++        lv_area_join(&box, &box, &jobs[i].todo);
++    }
++    g_stats.tasks_general += n;
++
++    /* A blur reads its neighbours, so it is never cut into tiles. */
++    if (n == 1 && jobs[0].t->type == LV_DRAW_DSC_TYPE_BLUR) {
++        const uint32_t stride = lv_draw_buf_width_to_stride(lv_area_get_width(&box), cf);
++        size_t size = (size_t)stride * lv_area_get_height(&box) + LV_DRAW_BUF_ALIGN;
++        void * raw = lv_malloc(size);
++        if (raw == NULL) {
++            LV_LOG_WARN("ortho: no memory for a blur");
++            return;
++        }
++        uint32_t t = 0;
++        draw_tile(jobs, 1, o, &box, lv_draw_buf_align(raw, cf), size - LV_DRAW_BUF_ALIGN, &t);
++        fence();   /* a turner may still be reading it */
++        lv_free(raw);
++        return;
++    }
++
++    /* As wide as the area allows, then as many rows as fit. */
++    const int32_t w = lv_area_get_width(&box);
++    int32_t tw = w;
++    while (tw > 1 && lv_draw_buf_width_to_stride(tw, cf) > u->tile_bytes) {
++        tw = (tw + 1) / 2;
++    }
++    const uint32_t tstride = lv_draw_buf_width_to_stride(tw, cf);
++    int32_t th = (int32_t)(u->tile_bytes / tstride);
++    if (th < 1) {
++        th = 1;
++    }
++
++    const bool two = g_helper.on && u->tile[1];
++    lv_area_t held[2];
++    int32_t nheld = 0;
++    for (int32_t y = box.y1; y <= box.y2; y += th) {
++        for (int32_t x = box.x1; x <= box.x2; x += tw) {
++            lv_area_t tile = {x, y, LV_MIN(x + tw - 1, box.x2), LV_MIN(y + th - 1, box.y2)};
++            if (two) {
++                held[nheld++] = tile;
++                if (nheld == 2) {
++                    draw_pair(u, jobs, n, o, held);
++                    nheld = 0;
++                }
++                continue;
++            }
++            /* With two tiles, this one is drawn while the turner still has
++             * the other: it waits only for the turns reading THIS one. */
++            const int32_t k = u->next;
++            if (u->tile[1]) {
++                u->next ^= 1;
++            }
++            wait_ticket(&u->ticket[k]);
++            draw_tile(jobs, n, o, &tile, u->tile[k], u->tile_bytes, &u->ticket[k]);
++        }
++    }
++    if (nheld) {  /* an odd one out, drawn here */
++        wait_ticket(&u->ticket[0]);
++        draw_tile(jobs, n, o, &held[0], u->tile[0], u->tile_bytes, &u->ticket[0]);
++    }
++    fence();
++    for (int i = 0; i < 4; i++) {
++        u->ticket[i] = 0;
++    }
++}
++
++/* ------------------------------------------------------------------------ */
++/* Fast paths                                                               */
++/* ------------------------------------------------------------------------ */
++
++static bool plain_image(const lv_draw_task_t * t, const lv_image_dsc_t ** src_out);
++
++/* Whether a task later in the same layer is an opaque picture that will cover
++ * all of `todo`: then nothing drawn there before it can show, and a screen's
++ * background under a full-screen picture -- a wallpaper, a camera frame drawn
++ * by LVGL -- is a whole frame buffer written for nothing. Only tasks already
++ * in the list are looked at; one not added yet, and the fill is drawn. */
++static bool hidden_later(const lv_draw_task_t * t, const lv_area_t * todo)
++{
++    for (const lv_draw_task_t * c = t->next; c; c = c->next) {
++        const lv_image_dsc_t * img;
++        if (c->target_layer != t->target_layer || !plain_image(c, &img)) {
++            continue;
++        }
++        if (lv_color_format_has_alpha(img->header.cf)) {
++            continue;
++        }
++        lv_area_t covered;
++        if (!lv_area_intersect(&covered, &c->area, &c->clip_area)) {
++            continue;
++        }
++        if (lv_area_is_in(todo, &covered, 0)) {
++            return true;
++        }
++    }
++    return false;
++}
++
++/* A solid fill turned is the fill of the turned rectangle: a corner radius is
++ * the same on every side, so nothing about it changes. */
++static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * todo)
++{
++    if (t->type != LV_DRAW_DSC_TYPE_FILL) {
++        return false;
++    }
++    lv_draw_fill_dsc_t * dsc = t->draw_dsc;
++    if (dsc->grad.dir != LV_GRAD_DIR_NONE) {
++        return false;
++    }
++    if (hidden_later(t, todo)) {
++        g_stats.fills_direct++;
++        g_stats.fills_hidden++;
++        return true;
++    }
++
++    lv_area_t area, clip, parts[4];
++    ortho_area(o, &t->area, &area);
++    ortho_area(o, todo, &clip);
++    const int32_t np = outside_window(t->target_layer, &clip, parts);
++    /* A plain rectangle, opaque, straight into the frame buffer: the filler's
++     * (the PPA's) when there is one -- a screen's background is 1.8 MB the CPU
++     * would otherwise write through its cache into PSRAM. */
++    lv_layer_t * target = t->target_layer;
++    lv_draw_buf_t * nb = target->draw_buf;
++    const lv_color_format_t cf = nb->header.cf;
++    const bool plain = g_fill && dsc->radius == 0 && dsc->opa >= LV_OPA_MAX && t->opa >= LV_OPA_MAX &&
++                       target->recolor.alpha == 0 &&
++                       (cf == LV_COLOR_FORMAT_RGB565 || cf == LV_COLOR_FORMAT_RGB888);
++    const int32_t px = lv_color_format_get_size(cf);
++    const lv_draw_ortho_pic_t dst = {nb->data, nb->header.stride, nb->header.stride / (uint32_t)px,
++                                     (uint32_t)lv_area_get_height(&target->buf_area)
++                                    };
++    for (int32_t i = 0; i < np; i++) {
++        lv_area_t clipped;
++        if (plain && lv_area_intersect(&clipped, &parts[i], &area)) {
++            lv_area_t rect = clipped;
++            lv_area_move(&rect, -target->buf_area.x1, -target->buf_area.y1);
++            if (g_fill(&dst, &rect, dsc->color, cf)) {
++                g_stats.fills_handed++;
++                continue;
++            }
++        }
++        sw_execute_on(t, target, &area, &parts[i]);
++    }
++    g_stats.fills_direct++;
++    return true;
++}
++
++static bool plain_image(const lv_draw_task_t * t, const lv_image_dsc_t ** src_out)
++{
++    if (t->type != LV_DRAW_DSC_TYPE_IMAGE) {
++        return false;
++    }
++    const lv_draw_image_dsc_t * d = t->draw_dsc;
++    if (lv_image_src_get_type(d->src) != LV_IMAGE_SRC_VARIABLE) {
++        return false;
++    }
++    if (d->rotation != 0 || d->scale_x != LV_SCALE_NONE || d->scale_y != LV_SCALE_NONE) {
++        return false;
++    }
++    if (d->skew_x != 0 || d->skew_y != 0 || d->tile || d->clip_radius != 0) {
++        return false;
++    }
++    if (d->recolor_opa > LV_OPA_MIN || d->opa < LV_OPA_MAX || t->opa < LV_OPA_MAX) {
++        return false;
++    }
++    if (d->colorkey || d->bitmap_mask_src || d->blend_mode != LV_BLEND_MODE_NORMAL) {
++        return false;
++    }
++
++    const lv_image_dsc_t * img = d->src;
++    const lv_color_format_t layer_cf = t->target_layer->draw_buf->header.cf;
++    if (img->header.cf != layer_cf) {
++        return false;
++    }
++    if (layer_cf != LV_COLOR_FORMAT_RGB565 && layer_cf != LV_COLOR_FORMAT_RGB888 &&
++            layer_cf != LV_COLOR_FORMAT_XRGB8888) {
++        return false;
++    }
++    if (lv_area_get_width(&t->area) != (int32_t)img->header.w ||
++            lv_area_get_height(&t->area) != (int32_t)img->header.h) {
++        return false;
++    }
++    if (img->data == NULL) {
++        return false;
++    }
++    *src_out = img;
++    return true;
++}
++
++static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * todo)
++{
++    const lv_image_dsc_t * img;
++    if (!plain_image(t, &img)) {
++        return false;
++    }
++
++    lv_layer_t * target = t->target_layer;
++    lv_draw_buf_t * nb = target->draw_buf;
++    const int32_t px = lv_color_format_get_size(nb->header.cf);
++    lv_area_t all, parts[4];
++    ortho_area(o, todo, &all);
++    const int32_t np = outside_window(target, &all, parts);
++
++    if (img->header.flags & LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE) {
++        /* Already in the panel's orientation: its rows ARE native rows. */
++        lv_area_t whole;
++        ortho_area(o, &t->area, &whole);
++        const int32_t sstride = img->header.stride ? (int32_t)img->header.stride
++                                : lv_area_get_width(&whole) * px;
++        for (int32_t i = 0; i < np; i++) {
++            const lv_area_t * nat = &parts[i];
++            const uint8_t * s = img->data + (intptr_t)(nat->y1 - whole.y1) * sstride +
++                                (intptr_t)(nat->x1 - whole.x1) * px;
++            uint8_t * dst = nb->data + (intptr_t)(nat->y1 - target->buf_area.y1) * nb->header.stride +
++                            (intptr_t)(nat->x1 - target->buf_area.x1) * px;
++            copy_straight(dst, nb->header.stride, s, sstride, lv_area_get_width(nat) * px,
++                          lv_area_get_height(nat));
++        }
++        g_stats.images_native++;
++        return true;
++    }
++
++    const int32_t sstride = img->header.stride ? (int32_t)img->header.stride
++                            : (int32_t)img->header.w * px;
++    for (int32_t i = 0; i < np; i++) {
++        turn_or_cpu(o, nb->header.cf, px, nb->data, nb->header.stride, &target->buf_area,
++                    (uint8_t *)img->data, sstride, &t->area, &parts[i], true);
++    }
++    fence();   /* the picture is the application's again when the task is finished */
++    g_stats.images_turned++;
++    return true;
++}
++
++/* ------------------------------------------------------------------------ */
++/* The draw unit                                                            */
++/* ------------------------------------------------------------------------ */
++
++/* A label's area is the size of its text, and a glyph may still reach past
++ * it -- a bearing, an accent, a letter's anti-aliased edge. The software
++ * renderer is held back only by the clip area, and drawing tiles over the
++ * whole clip area would turn every pixel of a screen for one word. A glyph
++ * cannot reach further than a line height from the text it belongs to, so
++ * that is the margin. */
++static void widen_for_glyphs(const lv_draw_task_t * t, lv_area_t * area)
++{
++    const lv_font_t * font = NULL;
++    if (t->type == LV_DRAW_DSC_TYPE_LABEL) {
++        font = ((const lv_draw_label_dsc_t *)t->draw_dsc)->font;
++    } else if (t->type == LV_DRAW_DSC_TYPE_LETTER) {
++        font = ((const lv_draw_letter_dsc_t *)t->draw_dsc)->font;
++    } else {
++        return;
++    }
++    int32_t m = font ? lv_font_get_line_height(font) : 32;
++    lv_area_increase(area, m, m);
++}
++
++/* What a task may change, upright, inside the buffer; false if nothing. */
++static bool task_todo(const lv_draw_task_t * t, const ortho_t * o, lv_area_t * todo)
++{
++    lv_area_t buf_up, real = t->_real_area;
++    widen_for_glyphs(t, &real);
++    if (!lv_area_intersect(todo, &real, &t->clip_area)) {
++        return false;
++    }
++    ortho_unarea(o, &t->target_layer->buf_area, &buf_up);
++    return lv_area_intersect(todo, todo, &buf_up);
++}
++
++/* A task that goes faster on its own than in a batch.
++ *
++ * A plain image turned straight into the frame buffer saves its pixels one
++ * upright copy -- but leaving the batch splits the run around it, and every
++ * tile the second half of the run shares with the first is read back out of
++ * the frame buffer and turned again. For an icon that costs far more than it
++ * saves: a 97x61 picture in the middle of a UI split one run in two and
++ * turned 16% of the screen twice. So an icon stays in the run, and only a
++ * picture of LV_DRAW_ORTHO_ALONE_BYTES or more (a camera frame, a wallpaper)
++ * goes alone -- and always one stored native, which only the fast path can
++ * draw. */
++#ifndef LV_DRAW_ORTHO_ALONE_BYTES
++#define LV_DRAW_ORTHO_ALONE_BYTES (32 * 1024)
++#endif
++static bool fast_alone(const lv_draw_task_t * t)
++{
++    const lv_image_dsc_t * img;
++    if (!g_fast) {
++        return false;
++    }
++    if (t->type == LV_DRAW_DSC_TYPE_BLUR) {
++        return true;
++    }
++    if (!plain_image(t, &img)) {
++        return false;
++    }
++    if (img->header.flags & LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE) {
++        return true;
++    }
++    return (int64_t)img->header.w * img->header.h * lv_color_format_get_size(img->header.cf) >=
++           LV_DRAW_ORTHO_ALONE_BYTES;
++}
++
++static void execute_alone(ortho_unit_t * u, lv_draw_task_t * t)
++{
++    ortho_t o;
++    if (!ortho_from_matrix(&t->matrix, &o)) {
++        g_stats.tasks_refused++;
++        return;
++    }
++    job_t j;
++    j.t = t;
++    if (!task_todo(t, &o, &j.todo)) {
++        return;
++    }
++    if (g_fast) {
++        if (try_fill(t, &o, &j.todo)) {
++            return;
++        }
++        if (try_image(t, &o, &j.todo)) {
++            return;
++        }
++    }
++    find_hole(&j);
++    draw_jobs(u, &j, 1, &o);
++}
++
++static bool same_matrix(const lv_draw_task_t * a, const lv_draw_task_t * b)
++{
++    return lv_memcmp(&a->matrix, &b->matrix, sizeof(lv_matrix_t)) == 0;
++}
++
++static int32_t evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * task)
++{
++    LV_UNUSED(draw_unit);
++    ortho_t o;
++    if (!ortho_from_matrix(&task->matrix, &o)) {
++        return 0;
++    }
++    /* An identity matrix is the software renderer's own case -- unless a
++     * window has to be kept clear, which only this unit knows about. */
++    if (ortho_is_identity(&o) && !has_window(task->target_layer)) {
++        return 0;
++    }
++    switch (task->type) {
++    case LV_DRAW_DSC_TYPE_FILL:
++    case LV_DRAW_DSC_TYPE_BORDER:
++    case LV_DRAW_DSC_TYPE_BOX_SHADOW:
++    case LV_DRAW_DSC_TYPE_LETTER:
++    case LV_DRAW_DSC_TYPE_LABEL:
++    case LV_DRAW_DSC_TYPE_IMAGE:
++    case LV_DRAW_DSC_TYPE_ARC:
++    case LV_DRAW_DSC_TYPE_LINE:
++    case LV_DRAW_DSC_TYPE_BLUR:
++    case LV_DRAW_DSC_TYPE_TRIANGLE:
++    case LV_DRAW_DSC_TYPE_LAYER:
++    case LV_DRAW_DSC_TYPE_MASK_RECTANGLE:
++#if LV_USE_VECTOR_GRAPHIC && LV_USE_THORVG
++    case LV_DRAW_DSC_TYPE_VECTOR:
++#endif
++        break;
++    default:
++        return 0;
++    }
++    /* Nothing else can draw a turned task, so take it whatever was offered. */
++    task->preference_score = 0;
++    task->preferred_draw_unit_id = DRAW_UNIT_ID_ORTHO;
++    return 1;
++}
++
++static int32_t dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
++{
++    ortho_unit_t * u = (ortho_unit_t *)draw_unit;
++    if (u->task_act) {
++        return 0;
++    }
++
++    lv_draw_task_t * t = lv_draw_get_available_task(layer, NULL, DRAW_UNIT_ID_ORTHO);
++    if (t == NULL) {
++        return LV_DRAW_UNIT_IDLE;
++    }
++
++    /* LVGL offers each task the moment it is created. Taking them one by one
++     * would turn every widget's pixels separately; waiting until the layer is
++     * complete (or a batch is full) turns them once. */
++    if (!layer->all_tasks_added && g_batch) {
++        int32_t waiting = 0;
++        for (lv_draw_task_t * c = t; c; c = c->next) {
++            if (c->state == LV_DRAW_TASK_STATE_WAITING && c->preferred_draw_unit_id == DRAW_UNIT_ID_ORTHO) {
++                waiting++;
++            }
++        }
++        if (waiting < LV_DRAW_ORTHO_MAX_BATCH) {
++            return LV_DRAW_UNIT_IDLE;
++        }
++    }
++    if (lv_draw_layer_alloc_buf(layer) == NULL) {
++        return LV_DRAW_UNIT_IDLE;
++    }
++
++    /* A batch is a run of tasks with nothing unfinished before it, so drawing
++     * them in list order is the order LVGL itself would have drawn them. */
++    lv_draw_task_t * head = layer->draw_task_head;
++    while (head && head->state == LV_DRAW_TASK_STATE_FINISHED) {
++        head = head->next;
++    }
++
++    ortho_t o;
++    int32_t n = 0;
++    if (g_batch && head == t && !fast_alone(t) && ortho_from_matrix(&t->matrix, &o)) {
++        for (lv_draw_task_t * c = t; c && n < LV_DRAW_ORTHO_MAX_BATCH; c = c->next) {
++            if (c->state != LV_DRAW_TASK_STATE_WAITING || c->preferred_draw_unit_id != DRAW_UNIT_ID_ORTHO) {
++                break;
++            }
++            if (fast_alone(c) || !same_matrix(c, t)) {
++                break;
++            }
++            u->jobs[n].t = c;
++            if (!task_todo(c, &o, &u->jobs[n].todo)) {
++                /* Nothing to draw: still part of the run, and finished with it. */
++                lv_area_set(&u->jobs[n].todo, 0, 0, -1, -1);
++            }
++            n++;
++        }
++    }
++
++    if (n <= 1) {
++        t->state = LV_DRAW_TASK_STATE_IN_PROGRESS;
++        t->draw_unit = draw_unit;
++        u->task_act = t;
++        execute_alone(u, t);
++        t->state = LV_DRAW_TASK_STATE_FINISHED;
++        u->task_act = NULL;
++        lv_draw_dispatch_request();
++        return 1;
++    }
++
++    /* Drop the tasks with nothing to draw from the jobs, keep them finished. */
++    int32_t m = 0;
++    for (int32_t i = 0; i < n; i++) {
++        lv_draw_task_t * c = u->jobs[i].t;
++        c->state = LV_DRAW_TASK_STATE_IN_PROGRESS;
++        c->draw_unit = draw_unit;
++        if (u->jobs[i].todo.x2 < u->jobs[i].todo.x1) {
++            continue;
++        }
++        u->jobs[m] = u->jobs[i];
++        find_hole(&u->jobs[m]);
++        m++;
++    }
++    u->task_act = t;
++    if (m > 0) {
++        draw_jobs(u, u->jobs, m, &o);
++    }
++    g_stats.batches++;
++    /* jobs[] was compacted, so walk the list again for the states. */
++    lv_draw_task_t * c = t;
++    for (int32_t i = 0; i < n; i++, c = c->next) {
++        c->state = LV_DRAW_TASK_STATE_FINISHED;
++    }
++    u->task_act = NULL;
++    lv_draw_dispatch_request();
++    return n;
++}
++
++/* The tile is where every widget is drawn and every pixel of it is turned
++ * out of, so it has to be the fastest memory there is. On an ESP32-P4 that is
++ * internal RAM: LVGL's own allocator there (ESPHome's lv_malloc_core) asks
++ * PSRAM first, which would send all of the drawing through the same bus the
++ * frame buffer and the panel's scan-out already share -- the very traffic
++ * this unit exists to avoid. PSRAM only if internal RAM cannot hold it. */
++#if defined(ESP_PLATFORM)
++#include "esp_heap_caps.h"
++static void * tile_alloc(size_t size, bool * internal)
++{
++    void * p = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
++    *internal = p != NULL;
++    return p ? p : heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
++}
++static void tile_free(void * p)
++{
++    heap_caps_free(p);
++}
++#else
++/* LV_DRAW_ORTHO_TEST_TILES: at most that many tiles at once, so a test can
++ * see what a board with little internal RAM does. */
++#ifdef LV_DRAW_ORTHO_TEST_TILES
++static int g_test_tiles;
++#endif
++static void * tile_alloc(size_t size, bool * internal)
++{
++    *internal = false;
++#ifdef LV_DRAW_ORTHO_TEST_TILES
++    if (g_test_tiles >= LV_DRAW_ORTHO_TEST_TILES) {
++        return NULL;
++    }
++    g_test_tiles++;
++#endif
++    return lv_malloc(size);
++}
++static void tile_free(void * p)
++{
++#ifdef LV_DRAW_ORTHO_TEST_TILES
++    g_test_tiles--;
++#endif
++    lv_free(p);
++}
++#endif
++
++static uint8_t * tile_aligned(void * p)
++{
++    return (uint8_t *)(((uintptr_t)p + TILE_ALIGN - 1) & ~(uintptr_t)(TILE_ALIGN - 1));
++}
++
++/* The tiles past the first: internal RAM or nothing, since a tile in PSRAM
++ * would put all the drawing on the bus the turn is meant to keep it off. The
++ * second when a turner or a second core can use it, the third and fourth
++ * when both can. */
++static bool more_tiles(ortho_unit_t * u)
++{
++    const int want = g_turn && g_helper.on ? 4 : g_turn || g_helper.on ? 2 : 1;
++    for (int i = 1; i < want; i++) {
++        if (u->tile[i]) {
++            continue;
++        }
++        bool internal = false;
++        void * p = tile_alloc(LV_DRAW_ORTHO_TILE_BYTES + TILE_ALIGN, &internal);
++#if !defined(ESP_PLATFORM)
++        internal = true;   /* a PC has one kind of memory */
++#endif
++        if (p && !internal) {
++            tile_free(p);
++            p = NULL;
++        }
++        if (p == NULL && i >= 2) {
++            /* No room for two more: the first two cut in half make four,
++             * which is what lets a pair be painted while the last is turned
++             * -- smaller tiles, but no RAM more than one core needs. */
++            if (i == 3) {
++                tile_free(u->tile_alloc[2]);
++                u->tile_alloc[2] = NULL;
++            }
++            const size_t half = (LV_DRAW_ORTHO_TILE_BYTES / 2) & ~(size_t)(TILE_ALIGN - 1);
++            u->tile[2] = u->tile[0] + half;
++            u->tile[3] = u->tile[1] + half;
++            u->tile_bytes = half;
++            LV_LOG_WARN("ortho: no internal RAM for two more tiles; four of %u KiB from the two there are",
++                        (unsigned)(half / 1024));
++            return true;
++        }
++        if (p == NULL) {
++            LV_LOG_WARN("ortho: no internal RAM for tile %d of %d", i + 1, want);
++            return false;
++        }
++        u->tile_alloc[i] = p;
++        u->tile[i] = tile_aligned(p);
++    }
++    return true;
++}
++
++static int32_t delete_cb(lv_draw_unit_t * draw_unit)
++{
++    ortho_unit_t * u = (ortho_unit_t *)draw_unit;
++    fence();
++    if (g_helper.on) {
++        helper_stop_thread();
++        g_helper.on = false;
++    }
++    for (int i = 0; i < 4; i++) {
++        if (u->tile_alloc[i]) {
++            tile_free(u->tile_alloc[i]);
++        }
++        u->tile_alloc[i] = NULL;
++        u->tile[i] = NULL;
++    }
++    lv_free(u->jobs);
++    u->jobs = NULL;
++    g_unit = NULL;
++    return 0;
++}
++
++void lv_draw_ortho_init(void)
++{
++    if (g_unit) {
++        return;
++    }
++    ortho_unit_t * u = lv_draw_create_unit(sizeof(ortho_unit_t));
++    u->base.name = "ORTHO";
++    u->base.evaluate_cb = evaluate;
++    u->base.dispatch_cb = dispatch;
++    u->base.delete_cb = delete_cb;
++    bool internal = false;
++    u->tile_alloc[0] = tile_alloc(LV_DRAW_ORTHO_TILE_BYTES + TILE_ALIGN, &internal);
++    LV_ASSERT_MALLOC(u->tile_alloc[0]);
++    g_tile_internal = internal;
++    u->tile[0] = tile_aligned(u->tile_alloc[0]);
++    u->tile_bytes = LV_DRAW_ORTHO_TILE_BYTES;
++    u->jobs = lv_malloc(sizeof(job_t) * LV_DRAW_ORTHO_MAX_BATCH);
++    LV_ASSERT_MALLOC(u->jobs);
++    g_unit = u;
++    more_tiles(u);
++}
++
++void lv_draw_ortho_set_filler(lv_draw_ortho_fill_cb_t fill)
++{
++    g_fill = fill;
++}
++
++void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait)
++{
++    fence();
++    g_turner_failed = false;
++    g_turn = wait ? turn : NULL;
++    g_wait = g_turn ? wait : NULL;
++    if (g_unit) {
++        for (int i = 0; i < 4; i++) {
++            g_unit->ticket[i] = 0;
++        }
++        g_unit->next = 0;
++        g_unit->pair = 0;
++        more_tiles(g_unit);
++    }
++}
++
++/* The halves go back to being whole tiles. */
++static void whole_tiles(ortho_unit_t * u)
++{
++    fence();
++    for (int i = 2; i < 4; i++) {
++        if (u->tile_alloc[i] == NULL) {
++            u->tile[i] = NULL;
++        }
++        u->ticket[i] = 0;
++    }
++    u->tile_bytes = LV_DRAW_ORTHO_TILE_BYTES;
++}
++
++bool lv_draw_ortho_set_cores(uint32_t cores)
++{
++    if (g_unit == NULL) {
++        return false;
++    }
++    if (cores < 2) {
++        if (g_helper.on) {
++            helper_stop_thread();
++        }
++        g_helper.on = false;
++        if (g_unit->tile_bytes != LV_DRAW_ORTHO_TILE_BYTES) {
++            whole_tiles(g_unit);
++        }
++        return true;
++    }
++    if (g_helper.on) {
++        return true;
++    }
++    if (ORTHO_HELPER == 0) {
++        LV_LOG_WARN("ortho: no second core without an OS (LV_USE_OS), which LVGL's own locks need");
++        return false;
++    }
++    g_helper.on = true;   /* more_tiles asks */
++    if (!more_tiles(g_unit) || g_unit->tile[1] == NULL) {
++        g_helper.on = false;
++        LV_LOG_WARN("ortho: no internal RAM for the second core's tile");
++        return false;
++    }
++    g_helper.on = false;
++    if (!helper_start_thread()) {
++        LV_LOG_WARN("ortho: the second core's task could not be started");
++        return false;
++    }
++    g_unit->pair = 0;
++    g_helper.on = true;
++    return true;
++}
++
++void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb)
++{
++    g_copy_cb = cb;
++}
++
++void lv_draw_ortho_set_fast_paths(bool enable)
++{
++    g_fast = enable;
++}
++
++void lv_draw_ortho_set_batching(bool enable)
++{
++    g_batch = enable;
++}
++
++const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void)
++{
++    g_stats.tile_internal = g_tile_internal;
++    g_stats.tiles_in_turn = g_unit && g_unit->tile[1] && g_turn ? (g_helper.on && g_unit->tile[3] ? 4 : 2) : 1;
++    g_stats.cores = g_helper.on ? 2 : 1;
++    g_stats.turner_failed = g_turner_failed;
++    return &g_stats;
++}
++
++void lv_draw_ortho_set_window(lv_display_t * disp, const lv_area_t * native_area)
++{
++    if (disp == NULL || native_area == NULL) {
++        g_win_disp = NULL;
++        return;
++    }
++    if (lv_display_get_render_mode(disp) != LV_DISPLAY_RENDER_MODE_DIRECT) {
++        LV_LOG_WARN("ortho: a video window needs LV_DISPLAY_RENDER_MODE_DIRECT; ignored");
++        g_win_disp = NULL;
++        return;
++    }
++    g_win = *native_area;
++    g_win_disp = disp;
++}
++
++void lv_draw_ortho_native_area(lv_display_t * disp, const lv_area_t * area, lv_area_t * native_area)
++{
++    *native_area = *area;
++    lv_display_rotate_area(disp, native_area);
++}
++
++void lv_draw_ortho_reset_stats(void)
++{
++    lv_memzero(&g_stats, sizeof(g_stats));
++}
++
++#endif /* LV_USE_DRAW_ORTHO */
+diff --git a/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.h b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.h
+new file mode 100644
+index 0000000..146acee
+--- /dev/null
++++ b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.h
+@@ -0,0 +1,200 @@
++/*
++ * SPDX-FileCopyrightText: 2026 youkorr
++ *
++ * SPDX-License-Identifier: MIT
++ *
++ * From https://github.com/youkorr/ppa-alternative- (components/lvgl_ortho).
++ */
++
++/**
++ * @file lv_draw_ortho.h
++ *
++ * A draw unit that renders straight into a display's NATIVE orientation when
++ * the display is turned by 90, 180 or 270 degrees.
++ *
++ * LVGL normally renders a turned display upright and turns the finished
++ * buffer in the flush callback: every changed pixel is written twice, and the
++ * second write is a transpose, which is the slowest thing a memory bus can be
++ * asked to do. LVGL 9 already has the other half of the answer:
++ * `lv_display_set_matrix_rotation(disp, true)` hands every draw task a matrix
++ * and lets a draw unit render through it -- but only the vector GPU units read
++ * that matrix, so on a plain software renderer the option draws nothing.
++ *
++ * This unit reads it. A matrix that only turns by quarter turns is a
++ * permutation of pixels, so:
++ *  - a solid fill is drawn as the native rectangle it becomes, at the cost of
++ *    an unturned fill;
++ *  - an opaque image is copied with its turn in ONE pass from its source to
++ *    the frame buffer, instead of a copy and then a turn;
++ *  - an image whose pixels are already stored in the panel's orientation
++ *    (`LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE`) is copied row by row with no turn at
++ *    all -- which is what a video source can produce for free;
++ *  - everything else (text, borders, shadows, arcs, masks, layers...) is drawn
++ *    by LVGL's own software renderer into a small upright tile and put back
++ *    turned, so its pixels are exactly the software renderer's.
++ */
++
++#ifndef LV_DRAW_ORTHO_H
++#define LV_DRAW_ORTHO_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#include "lvgl.h"
++
++#ifndef LV_USE_DRAW_ORTHO
++#define LV_USE_DRAW_ORTHO 1
++#endif
++
++#if LV_USE_DRAW_ORTHO
++
++#if !LV_DRAW_TRANSFORM_USE_MATRIX
++#error "lv_draw_ortho needs LV_DRAW_TRANSFORM_USE_MATRIX 1 (and so LV_USE_MATRIX and LV_USE_FLOAT)"
++#endif
++
++/** Bytes of the upright tile the general path draws into. Every tile costs
++ *  each task touching it a call into the software renderer (a label lays its
++ *  text out again), so a tile too small is slower than LVGL's own way. On a
++ *  PC with the test UI at 720x1280: 32 KiB 2.6 ms, 64 KiB 1.8, 128 KiB 1.45,
++ *  256 KiB 1.3, against 1.7 for drawing upright and turning in flush. */
++#ifndef LV_DRAW_ORTHO_TILE_BYTES
++#define LV_DRAW_ORTHO_TILE_BYTES (128 * 1024)
++#endif
++
++/** An image carrying this flag stores its pixels in the panel's native
++ *  orientation: `header.w` x `header.h` is still its size as the UI sees it,
++ *  but row r of the data is native row r of what it will become on the glass.
++ *  Drawn on a turned display, unscaled and opaque, it is a plain row copy. */
++#define LV_DRAW_ORTHO_IMAGE_FLAG_NATIVE LV_IMAGE_FLAGS_USER1
++
++/** Counters, so a board can say where its time goes. */
++typedef struct {
++    uint32_t fills_direct;     /**< solid fills drawn as native rectangles */
++    uint32_t fills_handed;     /**< of those, filled by a filler (the PPA) rather than the CPU */
++    uint32_t fills_hidden;     /**< of those, not drawn at all: an opaque picture drawn later covers them */
++    uint32_t images_turned;    /**< images copied with their turn in one pass */
++    uint32_t images_native;    /**< pre-turned images copied row by row */
++    uint32_t tiles;            /**< upright tiles drawn by the software renderer */
++    uint32_t tiles_unread;     /**< of which, painted over wholly so never read back */
++    uint32_t batches;          /**< runs of tasks drawn through one set of tiles */
++    uint32_t tasks_general;    /**< tasks drawn through tiles */
++    uint32_t tasks_refused;    /**< tasks whose matrix was not a quarter turn */
++    uint32_t window_skips;     /**< writes cut around the video window */
++    uint64_t bytes_turned;     /**< bytes moved through a turn */
++    uint64_t bytes_straight;   /**< bytes moved without one */
++    uint64_t bytes_drawn;      /**< bytes LVGL's renderer wrote into tiles, overdraw included */
++    uint64_t bytes_handed;     /**< of bytes_turned, those a turner (the PPA) moved rather than the CPU */
++    uint32_t waits;            /**< times the CPU waited for a turner */
++    uint8_t tile_internal;     /**< 1 when the tile is in internal RAM rather than PSRAM */
++    uint8_t tiles_in_turn;     /**< 2 when one tile is drawn while the other is turned, 4 when a
++                                    pair is drawn on two cores while the last pair is turned */
++    uint8_t cores;             /**< 2 when a second core paints every other tile */
++    uint32_t tiles_other_core; /**< of `tiles`, those the second core painted */
++    uint8_t turner_failed;     /**< 1, for good, once a turner stopped answering: the CPU turns
++                                    from then on, and the screen must be drawn again once */
++} lv_draw_ortho_stats_t;
++
++/** Called with a straight (unturned) copy so a platform can hand it to DMA.
++ *  Must copy `h` rows of `row_bytes` and return true, or return false to let
++ *  the CPU do it. */
++typedef bool (*lv_draw_ortho_copy_cb_t)(void * dest, int32_t dest_stride,
++                                        const void * src, int32_t src_stride,
++                                        int32_t row_bytes, int32_t h);
++
++/** A picture in memory, for a turner: `w` x `h` pixels, `stride` bytes a row. */
++typedef struct {
++    void * buf;
++    uint32_t stride;
++    uint32_t w, h;
++} lv_draw_ortho_pic_t;
++
++/**
++ * Hand a turn to something other than the CPU -- the ESP32-P4's PPA, see
++ * lv_draw_ortho_ppa.h. Turn `block` of `src` by `rot` (the display's rotation
++ * when going onto the panel, its opposite when coming back) and put it in
++ * `dst` with its top-left corner at (dx, dy). Return a ticket, counting up
++ * from 1, once it is QUEUED -- or 0 to decline, and the CPU does it.
++ */
++typedef uint32_t (*lv_draw_ortho_turn_cb_t)(const lv_draw_ortho_pic_t * src, const lv_area_t * block,
++                                            const lv_draw_ortho_pic_t * dst, int32_t dx, int32_t dy,
++                                            lv_display_rotation_t rot, lv_color_format_t cf);
++
++/** Return true once the turn with this ticket, and every one queued before
++ *  it, has finished and its pixels are in memory -- or false if they never
++ *  will (a turner that has stopped answering). On false, lv_draw_ortho turns
++ *  on the CPU from then on and reports it in `turner_failed`: what was
++ *  queued is lost, and the screen has to be drawn again. */
++typedef bool (*lv_draw_ortho_wait_cb_t)(uint32_t ticket);
++
++/**
++ * Turn tiles with `turn` instead of the CPU, NULL for the CPU again. With a
++ * turner, lv_draw_ortho draws one tile while the last one is being turned, so
++ * it takes a second tile (internal RAM only; without room for one it waits
++ * instead). Nothing it queued is left running when it hands a layer back.
++ */
++void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait);
++
++/**
++ * Fill a rectangle of `dst` with one opaque colour, by DMA -- the ESP32-P4's
++ * PPA. Asked only for what LVGL would fill solid straight into the frame
++ * buffer (no gradient, no rounded corner, fully opaque); returns once it is
++ * in memory, or false to let the CPU do it.
++ */
++typedef bool (*lv_draw_ortho_fill_cb_t)(const lv_draw_ortho_pic_t * dst, const lv_area_t * rect, lv_color_t color,
++                                        lv_color_format_t cf);
++void lv_draw_ortho_set_filler(lv_draw_ortho_fill_cb_t fill);
++
++/**
++ * Paint every other tile on a second core: 2 to start it, 1 to stop it.
++ * Only LVGL's software renderer runs there, into a tile of its own; the
++ * frame buffer and the turner stay with the core LVGL runs on. Needs an OS
++ * (LV_USE_OS: FreeRTOS on an ESP32 with two cores, pthreads elsewhere),
++ * because two renderers at once are safe only behind LVGL's own locks, and
++ * a tile of internal RAM more (three more with a turner). Returns false and
++ * stays on one core when either is missing.
++ */
++bool lv_draw_ortho_set_cores(uint32_t cores);
++
++/** Create the draw unit. Call after `lv_init()`. */
++void lv_draw_ortho_init(void);
++
++void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb);
++
++/** Turn the fast paths off, so every task goes through tiles. For tests. */
++void lv_draw_ortho_set_fast_paths(bool enable);
++
++/** Draw every task on its own instead of in runs. For tests. */
++void lv_draw_ortho_set_batching(bool enable);
++
++/**
++ * Keep LVGL out of one rectangle of a display's frame buffer, so a video
++ * source -- a camera through the ESP32-P4's PPA, a JPEG decoder -- can write
++ * its frames straight into the frame buffer, the way Espressif's own camera
++ * examples reach the sensor's frame rate, while LVGL draws everything else.
++ *
++ * `native_area` is in the PANEL's coordinates (see lv_draw_ortho_native_area).
++ * Works only in LV_DISPLAY_RENDER_MODE_DIRECT, where LVGL renders into the
++ * frame buffer itself. One window; NULL clears it.
++ *
++ * The source and LVGL must not both be writing at once, and on a chip with a
++ * data cache the source's frames must be made visible to the CPU (and LVGL's
++ * written back) before the other side runs -- a cache line shared across the
++ * window's edge would otherwise put stale pixels back. That is the caller's,
++ * and the README says how on an ESP32-P4.
++ */
++void lv_draw_ortho_set_window(lv_display_t * disp, const lv_area_t * native_area);
++
++/** Where an area of the UI (an object's coordinates) lands on the panel. */
++void lv_draw_ortho_native_area(lv_display_t * disp, const lv_area_t * area, lv_area_t * native_area);
++
++const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void);
++void lv_draw_ortho_reset_stats(void);
++
++#endif /* LV_USE_DRAW_ORTHO */
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* LV_DRAW_ORTHO_H */
+diff --git a/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.c b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.c
+new file mode 100644
+index 0000000..0de77f6
+--- /dev/null
++++ b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.c
+@@ -0,0 +1,494 @@
++/*
++ * SPDX-FileCopyrightText: 2026 youkorr
++ *
++ * SPDX-License-Identifier: MIT
++ *
++ * From https://github.com/youkorr/ppa-alternative- (components/lvgl_ortho).
++ */
++
++#include "lv_draw_ortho_ppa.h"
++#include "driver/ppa.h"
++#include "esp_cache.h"
++#include "esp_rom_sys.h"
++
++/* The PPA's output must start on, and its size be a multiple of, the L2
++ * cache line (ESP-IDF's ppa.rst, "Buffer Alignment"). */
++#ifdef CONFIG_CACHE_L2_CACHE_LINE_SIZE
++#define LINE CONFIG_CACHE_L2_CACHE_LINE_SIZE
++#else
++#define LINE 128
++#endif
++
++/* Two tiles of up to four parts each, every part possibly cut in pieces for
++ * DIG-734, and a read-back: what can be queued at once. A full queue is
++ * declined and the CPU does that turn. */
++#define PENDING 32
++#define MAX_PIECES 24
++
++static ppa_client_handle_t g_client;
++static uint32_t g_queued;            /* tickets handed out */
++static volatile uint32_t g_done;     /* counted by the PPA's interrupt */
++/* Fills run on the PPA's other engine (blend), with a client and a count of
++ * their own: the two engines finish in no order relative to each other. */
++static ppa_client_handle_t g_fill_client;
++static uint32_t g_fill_queued;
++static volatile uint32_t g_fill_done;
++static bool g_stuck;
++
++bool lv_draw_ortho_ppa_stuck(void)
++{
++    return g_stuck;
++}
++
++void lv_draw_ortho_ppa_mark_stuck(void)
++{
++    g_stuck = true;
++}
++
++/* ------------------------------------------------------------------------ */
++/* DIG-734                                                                  */
++/* ------------------------------------------------------------------------ */
++
++/* The driver's test (ppa_srm.c), for a block it reads as w_in x h_in: whether
++ * it bypasses the macro-block order, which is what keeps a small last block
++ * from leaving the DMA short of its FIFO and never finishing. */
++static bool bypass(uint32_t w_in, uint32_t h_in, uint32_t bits, uint32_t mb, uint32_t sx_int, uint32_t sx_frag,
++                   uint32_t sy_int, uint32_t sy_frag)
++{
++    const uint32_t FRAG = 16;            /* PPA_LL_SRM_SCALING_FRAG_MAX: 4 bits */
++    const uint32_t FIFO = 12 * 128;      /* dma2d_fifo_depth_bits */
++    const uint32_t w_out = w_in * sx_int + w_in * sx_frag / FRAG;
++    const uint32_t wdiv = bits >= 24 ? 32 : 64;
++    uint32_t w_left = w_out % wdiv;
++    if (w_left == 0) {
++        w_left = wdiv;
++    }
++    uint32_t h_in_left = h_in % mb;
++    if (h_in_left == 0) {
++        h_in_left = mb;
++    }
++    const uint32_t h_left = h_in_left * sy_int + h_in_left * sy_frag / FRAG;
++    return (w_out > wdiv || h_in > mb) && w_left * h_left * bits < FIFO;
++}
++
++bool lv_draw_ortho_ppa_dig734(uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits,
++                              float scale_x, float scale_y)
++{
++    if (rot != LV_DISPLAY_ROTATION_90 && rot != LV_DISPLAY_ROTATION_270) {
++        return false;
++    }
++    /* As the driver quantizes them. */
++    const uint32_t xi = (uint32_t)scale_x, xf = (uint32_t)(scale_x * 16) & 15;
++    const uint32_t yi = (uint32_t)scale_y, yf = (uint32_t)(scale_y * 16) & 15;
++    /* 16x16 macro blocks below silicon v3.0, 32x32 selectable on it: both. */
++    for (uint32_t mb = 16; mb <= 32; mb += 16) {
++        /* What the block needs (master: sized after the turn) against what
++         * v5.5.6 gives it (sized before). Asking for the bypass when it is not
++         * needed is harmless; withholding it when it is, is the hang. */
++        const bool needed = bypass(h, w, bits, mb, yi, yf, xi, xf);
++        const bool given = bypass(w, h, bits, mb, xi, xf, yi, yf);
++        if (needed && !given) {
++            return true;
++        }
++    }
++    return false;
++}
++
++typedef struct {
++    uint32_t x, y, w, h;
++} piece_t;
++
++/* Cut a block into pieces each safe from DIG-734: first where the macro
++ * blocks fall, then anywhere. Every size up to 1300 x 1300 was checked to cut
++ * into at most 24. False if it will not (the CPU turns that block). */
++static bool cut(uint32_t x, uint32_t y, uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits,
++                piece_t * out, int * n, int depth)
++{
++    if (!lv_draw_ortho_ppa_dig734(w, h, rot, bits, 1.0f, 1.0f)) {
++        if (*n == MAX_PIECES) {
++            return false;
++        }
++        out[(*n)++] = (piece_t) {
++            x, y, w, h
++        };
++        return true;
++    }
++    if (depth > 6) {
++        return false;
++    }
++    for (int dim = 0; dim < 2; dim++) {
++        const uint32_t size = dim == 0 ? w : h;
++        const uint32_t units[3] = {64, 16, 2};
++        uint32_t cuts[6];
++        int nc = 0;
++        for (int u = 0; u < 3; u++) {
++            cuts[nc++] = size % units[u] ? size - size % units[u] : size - units[u];
++        }
++        cuts[nc++] = size / 2;
++        cuts[nc++] = 1;
++        cuts[nc++] = size - 1;
++        for (int i = 0; i < nc; i++) {
++            const uint32_t c = cuts[i];
++            if (c == 0 || c >= size) {
++                continue;
++            }
++            const int mark = *n;
++            const bool ok = dim == 0
++                            ? cut(x, y, c, h, rot, bits, out, n, depth + 1) && cut(x + c, y, w - c, h, rot, bits, out, n, depth + 1)
++                            : cut(x, y, w, c, rot, bits, out, n, depth + 1) && cut(x, y + c, w, h - c, rot, bits, out, n, depth + 1);
++            if (ok) {
++                return true;
++            }
++            *n = mark;
++        }
++    }
++    return false;
++}
++
++static bool on_done(ppa_client_handle_t client, ppa_event_data_t * event, void * user)
++{
++    (void)event;
++    (void)user;
++    if (client == g_fill_client) {
++        g_fill_done++;
++    } else {
++        g_done++;
++    }
++    return false;
++}
++
++/* Until `*done` reaches `ticket`, bounded the same way for both engines. */
++static bool wait_on(volatile uint32_t * done, uint32_t ticket)
++{
++    uint32_t seen = *done, idle_us = 0;
++    while ((int32_t)(*done - ticket) < 0) {
++        if (g_stuck) {
++            return false;
++        }
++        esp_rom_delay_us(10);
++        if (*done != seen) {
++            seen = *done;
++            idle_us = 0;
++        } else if ((idle_us += 10) >= LV_DRAW_ORTHO_PPA_TIMEOUT_MS * 1000u) {
++            g_stuck = true;
++            return false;
++        }
++    }
++    return true;
++}
++
++/* As in lv_draw_ortho_video.c: LVGL's 90 and the PPA's 90 are the same turn. */
++static ppa_srm_rotation_angle_t ppa_angle(lv_display_rotation_t r)
++{
++    switch (r) {
++    case LV_DISPLAY_ROTATION_90:
++        return PPA_SRM_ROTATION_ANGLE_90;
++    case LV_DISPLAY_ROTATION_180:
++        return PPA_SRM_ROTATION_ANGLE_180;
++    case LV_DISPLAY_ROTATION_270:
++        return PPA_SRM_ROTATION_ANGLE_270;
++    default:
++        return PPA_SRM_ROTATION_ANGLE_0;
++    }
++}
++
++static uint32_t turn(const lv_draw_ortho_pic_t * src, const lv_area_t * block, const lv_draw_ortho_pic_t * dst,
++                     int32_t dx, int32_t dy, lv_display_rotation_t rot, lv_color_format_t cf)
++{
++    const ppa_srm_color_mode_t cm = cf == LV_COLOR_FORMAT_RGB565 ? PPA_SRM_COLOR_MODE_RGB565
++                                    : cf == LV_COLOR_FORMAT_RGB888 ? PPA_SRM_COLOR_MODE_RGB888
++                                    : (ppa_srm_color_mode_t) - 1;
++    if ((int)cm == -1 || g_client == NULL || g_stuck) {
++        return 0;
++    }
++    const uint32_t px = lv_color_format_get_size(cf);
++    /* The PPA counts a row as pic_w pixels: no padding in a stride. */
++    if (src->stride != src->w * px || dst->stride != dst->w * px) {
++        return 0;
++    }
++    if (((uintptr_t)dst->buf % LINE) != 0) {
++        return 0;
++    }
++
++    const bool across = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
++    const uint32_t bw = (uint32_t)lv_area_get_width(block), bh = (uint32_t)lv_area_get_height(block);
++    const uint32_t rows = across ? bw : bh;
++    /* The driver invalidates whole rows of the output from dy, rounded to the
++     * line: they have to lie inside the buffer it is told about. */
++    const uint32_t size = (dst->stride * dst->h) & ~(uint32_t)(LINE - 1);
++    uintptr_t a = (uintptr_t)dst->buf + (uintptr_t)dy * dst->stride;
++    uintptr_t b = a + (uintptr_t)rows * dst->stride;
++    if (b > (uintptr_t)dst->buf + size) {
++        return 0;
++    }
++
++    /* Write back and drop the output rows first. The CPU has drawn right up to
++     * this block's edges, and a cache line it shares with the block holds its
++     * pixels too: the driver's invalidate would throw those away, and a later
++     * write-back would put stale ones over the PPA's. lv_draw_ortho_video.c
++     * does the same for the same reason. */
++    a &= ~(uintptr_t)(LINE - 1);
++    b = (b + LINE - 1) & ~(uintptr_t)(LINE - 1);
++    if (esp_cache_msync((void *)a, b - a, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE) != ESP_OK) {
++        return 0;
++    }
++
++    piece_t pieces[MAX_PIECES];
++    int n = 0;
++    if (!cut(0, 0, bw, bh, rot, px * 8, pieces, &n, 0)) {
++        return 0;
++    }
++    if (g_queued - g_done + (uint32_t)n > PENDING) {
++        return 0;
++    }
++
++    ppa_srm_oper_config_t op;
++    lv_memzero(&op, sizeof(op));
++    op.in.buffer = src->buf;
++    op.in.pic_w = src->w;
++    op.in.pic_h = src->h;
++    op.in.srm_cm = cm;
++    op.out.buffer = dst->buf;
++    op.out.buffer_size = size;
++    op.out.pic_w = dst->w;
++    op.out.pic_h = dst->h;
++    op.out.srm_cm = cm;
++    op.rotation_angle = ppa_angle(rot);
++    op.scale_x = 1.0f;
++    op.scale_y = 1.0f;
++    op.mode = PPA_TRANS_MODE_NON_BLOCKING;
++    for (int i = 0; i < n; i++) {
++        const piece_t * p = &pieces[i];
++        /* Where the piece lands inside the block's output: the PPA turns
++         * counter-clockwise on the screen (see p4fake.c and
++         * lv_draw_ortho_video.c), so its 90 sends input column x to output
++         * row bw - 1 - x. */
++        uint32_t ox, oy;
++        switch (rot) {
++        case LV_DISPLAY_ROTATION_90:
++            ox = p->y;
++            oy = bw - p->x - p->w;
++            break;
++        case LV_DISPLAY_ROTATION_180:
++            ox = bw - p->x - p->w;
++            oy = bh - p->y - p->h;
++            break;
++        case LV_DISPLAY_ROTATION_270:
++            ox = bh - p->y - p->h;
++            oy = p->x;
++            break;
++        default:
++            ox = p->x;
++            oy = p->y;
++            break;
++        }
++        op.in.block_w = p->w;
++        op.in.block_h = p->h;
++        op.in.block_offset_x = (uint32_t)block->x1 + p->x;
++        op.in.block_offset_y = (uint32_t)block->y1 + p->y;
++        op.out.block_offset_x = (uint32_t)dx + ox;
++        op.out.block_offset_y = (uint32_t)dy + oy;
++        /* A piece refused after others were queued: those finish, and the
++         * CPU then turns the whole block over them -- the same pixels. */
++        if (ppa_do_scale_rotate_mirror(g_client, &op) != ESP_OK) {
++            return 0;
++        }
++        ++g_queued;
++    }
++    return g_queued;
++}
++
++/* The PPA finishes its transactions in the order they were queued, so a
++ * ticket is done once that many have finished. Bounded: a transaction that
++ * makes no progress for LV_DRAW_ORTHO_PPA_TIMEOUT_MS is a stuck PPA. */
++static bool wait(uint32_t ticket)
++{
++    return wait_on(&g_done, ticket);
++}
++
++/* A plain opaque rectangle into the frame buffer, by the PPA's fill. The
++ * driver writes back and invalidates the rows itself (ppa_fill.c). The colour
++ * is given with its low bits already cleared to RGB565's (or RGB888's)
++ * precision, so whether the PPA truncates or rounds when it narrows it, the
++ * pixel is the one LVGL's lv_color_to_u16() would have written. Waited for
++ * before returning: what follows in the frame buffer is drawn over it. */
++static bool fill(const lv_draw_ortho_pic_t * dst, const lv_area_t * rect, lv_color_t color, lv_color_format_t cf)
++{
++    if (g_fill_client == NULL || g_stuck) {
++        return false;
++    }
++    const uint32_t px = lv_color_format_get_size(cf);
++    const ppa_fill_color_mode_t cm = cf == LV_COLOR_FORMAT_RGB565 ? PPA_FILL_COLOR_MODE_RGB565
++                                     : cf == LV_COLOR_FORMAT_RGB888 ? PPA_FILL_COLOR_MODE_RGB888
++                                     : (ppa_fill_color_mode_t) - 1;
++    if ((int)cm == -1 || dst->stride != dst->w * px || ((uintptr_t)dst->buf % LINE) != 0) {
++        return false;
++    }
++    const uint32_t size = (dst->stride * dst->h) & ~(uint32_t)(LINE - 1);
++    if (dst->stride * dst->h > size) {
++        return false;    /* the driver wants the whole picture in buffer_size */
++    }
++
++    ppa_fill_oper_config_t op;
++    lv_memzero(&op, sizeof(op));
++    op.out.buffer = dst->buf;
++    op.out.buffer_size = size;
++    op.out.pic_w = dst->w;
++    op.out.pic_h = dst->h;
++    op.out.block_offset_x = (uint32_t)rect->x1;
++    op.out.block_offset_y = (uint32_t)rect->y1;
++    op.out.fill_cm = cm;
++    op.fill_block_w = (uint32_t)lv_area_get_width(rect);
++    op.fill_block_h = (uint32_t)lv_area_get_height(rect);
++    const uint32_t r = cf == LV_COLOR_FORMAT_RGB565 ? (color.red & 0xF8u) : color.red;
++    const uint32_t g = cf == LV_COLOR_FORMAT_RGB565 ? (color.green & 0xFCu) : color.green;
++    const uint32_t b = cf == LV_COLOR_FORMAT_RGB565 ? (color.blue & 0xF8u) : color.blue;
++    op.fill_argb_color.val = 0xFF000000u | (r << 16) | (g << 8) | b;
++    op.mode = PPA_TRANS_MODE_NON_BLOCKING;
++    if (ppa_do_fill(g_fill_client, &op) != ESP_OK) {
++        return false;
++    }
++    return wait_on(&g_fill_done, ++g_fill_queued);
++}
++
++static esp_err_t ensure_client(void)
++{
++    if (g_client) {
++        return ESP_OK;
++    }
++    ppa_client_config_t cfg;
++    lv_memzero(&cfg, sizeof(cfg));
++    cfg.oper_type = PPA_OPERATION_SRM;
++    cfg.max_pending_trans_num = PENDING;
++    esp_err_t err = ppa_register_client(&cfg, &g_client);
++    if (err != ESP_OK) {
++        return err;
++    }
++    ppa_event_callbacks_t cbs = {.on_trans_done = on_done};
++    err = ppa_client_register_event_callbacks(g_client, &cbs);
++    if (err != ESP_OK) {
++        ppa_unregister_client(g_client);
++        g_client = NULL;
++        return err;
++    }
++    g_queued = g_done = 0;
++    /* The fill client: optional, the turns work without it. */
++    lv_memzero(&cfg, sizeof(cfg));
++    cfg.oper_type = PPA_OPERATION_FILL;
++    cfg.max_pending_trans_num = 1;
++    if (ppa_register_client(&cfg, &g_fill_client) == ESP_OK) {
++        ppa_event_callbacks_t fcbs = {.on_trans_done = on_done};
++        if (ppa_client_register_event_callbacks(g_fill_client, &fcbs) != ESP_OK) {
++            ppa_unregister_client(g_fill_client);
++            g_fill_client = NULL;
++        }
++    }
++    g_fill_queued = g_fill_done = 0;
++    return ESP_OK;
++}
++
++esp_err_t lv_draw_ortho_ppa_init(void)
++{
++    const esp_err_t err = ensure_client();
++    if (err != ESP_OK) {
++        return err;
++    }
++    if (!g_stuck) {
++        lv_draw_ortho_set_turner(turn, wait);
++        lv_draw_ortho_set_filler(fill);
++    }
++    return ESP_OK;
++}
++
++esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * in)
++{
++    if (g_stuck) {
++        return ESP_ERR_INVALID_STATE;
++    }
++    esp_err_t err = ensure_client();
++    if (err != ESP_OK) {
++        return err;
++    }
++    ppa_srm_oper_config_t op = *in;
++    op.mode = PPA_TRANS_MODE_NON_BLOCKING;
++    const bool quarter = op.rotation_angle == PPA_SRM_ROTATION_ANGLE_90 ||
++                         op.rotation_angle == PPA_SRM_ROTATION_ANGLE_270;
++    const lv_display_rotation_t rot = op.rotation_angle == PPA_SRM_ROTATION_ANGLE_90 ? LV_DISPLAY_ROTATION_90
++                                      : op.rotation_angle == PPA_SRM_ROTATION_ANGLE_270 ? LV_DISPLAY_ROTATION_270
++                                      : LV_DISPLAY_ROTATION_0;
++    const uint32_t bits = op.out.srm_cm == PPA_SRM_COLOR_MODE_RGB565 ? 16 : op.out.srm_cm == PPA_SRM_COLOR_MODE_RGB888 ? 24 : 32;
++    piece_t pieces[MAX_PIECES];
++    int n = 0;
++    if (quarter && lv_draw_ortho_ppa_dig734(op.in.block_w, op.in.block_h, rot, bits, op.scale_x, op.scale_y)) {
++        if (op.scale_x == 1.0f && op.scale_y == 1.0f && !op.mirror_x && !op.mirror_y &&
++                cut(0, 0, op.in.block_w, op.in.block_h, rot, bits, pieces, &n, 0)) {
++            /* pieces placed below */
++        } else {
++            /* Scaled or mirrored: a row or column off the frame's edge is
++             * cheaper than placing pieces through a scale. */
++            n = 0;
++            bool safe = false;
++            for (uint32_t k = 1; k <= 3 && !safe; k++) {
++                if (op.in.block_h > k && !lv_draw_ortho_ppa_dig734(op.in.block_w, op.in.block_h - k, rot, bits,
++                                                                   op.scale_x, op.scale_y)) {
++                    op.in.block_h -= k;
++                    safe = true;
++                } else if (op.in.block_w > k && !lv_draw_ortho_ppa_dig734(op.in.block_w - k, op.in.block_h, rot, bits,
++                                                                          op.scale_x, op.scale_y)) {
++                    op.in.block_w -= k;
++                    safe = true;
++                }
++            }
++            if (!safe) {
++                return ESP_ERR_NOT_SUPPORTED;
++            }
++        }
++    }
++    if (n == 0) pieces[n++] = (piece_t) {
++        0, 0, op.in.block_w, op.in.block_h
++    };
++    const uint32_t bw = op.in.block_w, bh = op.in.block_h, bx = op.in.block_offset_x, by = op.in.block_offset_y;
++    const uint32_t dx = op.out.block_offset_x, dy = op.out.block_offset_y;
++    for (int i = 0; i < n; i++) {
++        const piece_t * p = &pieces[i];
++        uint32_t ox = p->x, oy = p->y;
++        if (rot == LV_DISPLAY_ROTATION_90) {
++            ox = p->y;
++            oy = bw - p->x - p->w;
++        } else if (rot == LV_DISPLAY_ROTATION_270) {
++            ox = bh - p->y - p->h;
++            oy = p->x;
++        }
++        op.in.block_w = p->w;
++        op.in.block_h = p->h;
++        op.in.block_offset_x = bx + p->x;
++        op.in.block_offset_y = by + p->y;
++        if (n > 1) {
++            op.out.block_offset_x = dx + ox;
++            op.out.block_offset_y = dy + oy;
++        }
++        err = ppa_do_scale_rotate_mirror(g_client, &op);
++        if (err != ESP_OK) {
++            /* What was queued still has to finish before the caller's buffer
++             * is touched again. */
++            wait(g_queued);
++            return err;
++        }
++        ++g_queued;
++    }
++    return wait(g_queued) ? ESP_OK : ESP_ERR_TIMEOUT;
++}
++
++void lv_draw_ortho_ppa_deinit(void)
++{
++    lv_draw_ortho_set_turner(NULL, NULL);
++    lv_draw_ortho_set_filler(NULL);
++    if (g_fill_client && wait_on(&g_fill_done, g_fill_queued)) {
++        ppa_unregister_client(g_fill_client);
++        g_fill_client = NULL;
++    }
++    if (g_client && wait(g_queued)) {
++        ppa_unregister_client(g_client);
++        g_client = NULL;
++    }
++}
+diff --git a/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.h b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.h
+new file mode 100644
+index 0000000..f5bf15a
+--- /dev/null
++++ b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.h
+@@ -0,0 +1,83 @@
++/*
++ * SPDX-FileCopyrightText: 2026 youkorr
++ *
++ * SPDX-License-Identifier: MIT
++ *
++ * From https://github.com/youkorr/ppa-alternative- (components/lvgl_ortho).
++ */
++
++/**
++ * @file lv_draw_ortho_ppa.h
++ *
++ * lv_draw_ortho's turns done by the ESP32-P4's PPA instead of its CPU.
++ *
++ * lv_draw_ortho draws every widget upright into a tile in internal RAM and
++ * puts the tile into the frame buffer turned. Simulated on a P4
++ * (test/p4sim), the drawing reads and writes no PSRAM at all; the turn, done
++ * by the CPU, is what costs -- five instructions a pixel and every frame-buffer
++ * line through the cache. The PPA turns a block by DMA while the CPU goes on:
++ * with this, the CPU draws the next tile while the PPA turns the last one.
++ *
++ * RGB565 and RGB888 only; anything else, a buffer the PPA cannot write, or a
++ * full queue, and that turn is the CPU's as before.
++ *
++ * Two faults of the P4's PPA are kept away from, both found in ESP-IDF's
++ * issues and neither handled by LVGL's own PPA unit nor by Espressif's ports:
++ *
++ *  - DIG-734 (esp-idf #19023, #19096, #18768): at 90 and 270, a block whose
++ *    last macro block leaves the DMA fewer bits than its FIFO holds never
++ *    finishes. The driver works around it, but up to v5.5.6 -- what ESPHome
++ *    builds with -- it sizes that last block before the turn instead of after,
++ *    so a sixth of all block sizes hang for ever (fixed on master by 469aa16).
++ *    Such a block is cut here into pieces that are safe either way.
++ *  - No wait is unbounded: a transaction that has not finished in
++ *    LV_DRAW_ORTHO_PPA_TIMEOUT_MS marks the PPA stuck, and lv_draw_ortho and
++ *    the video window go on without it. The driver's own blocking mode waits
++ *    with portMAX_DELAY, which is a frozen screen.
++ */
++#ifndef LV_DRAW_ORTHO_PPA_H
++#define LV_DRAW_ORTHO_PPA_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#include "lv_draw_ortho.h"
++#include "esp_err.h"
++#include "driver/ppa.h"
++
++/** Register a PPA client and hand lv_draw_ortho's turns to it. */
++esp_err_t lv_draw_ortho_ppa_init(void);
++
++/** Hand the turns back to the CPU and release the PPA. */
++void lv_draw_ortho_ppa_deinit(void);
++
++/** One scale-rotate-mirror through the same client and the same guards: cut
++ *  for DIG-734 when it is 1:1 and unmirrored, trimmed by up to three source
++ *  rows or columns otherwise (the frame's edge, never its middle), and waited
++ *  for with a bound. ESP_ERR_TIMEOUT marks the PPA stuck. `op->mode` is
++ *  ignored. For lv_draw_ortho_video.c. */
++esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * op);
++
++/** How long a PPA transaction may take before the PPA is taken for stuck. A
++ *  whole 1280x720 turn takes 15 to 45 ms on a P4. */
++#ifndef LV_DRAW_ORTHO_PPA_TIMEOUT_MS
++#define LV_DRAW_ORTHO_PPA_TIMEOUT_MS 250
++#endif
++
++/** True once a PPA transaction has not finished in time: it is not used again
++ *  until a reset, since nothing public can unstick it. */
++bool lv_draw_ortho_ppa_stuck(void);
++void lv_draw_ortho_ppa_mark_stuck(void);
++
++/** Whether the PPA driver of ESP-IDF v5.5.6 and earlier can hang on this
++ *  scale-rotate-mirror: `w` x `h` the INPUT block, `rot` LVGL's rotation, `bits`
++ *  the output's bits a pixel, scales as given to the driver. DIG-734. */
++bool lv_draw_ortho_ppa_dig734(uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits,
++                              float scale_x, float scale_y);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* LV_DRAW_ORTHO_PPA_H */
+diff --git a/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/test_esp_lvgl_adapter_features.c b/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/test_esp_lvgl_adapter_features.c
+index 483731f..adfa787 100644
+--- a/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/test_esp_lvgl_adapter_features.c
++++ b/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/test_esp_lvgl_adapter_features.c
+@@ -76,7 +76,10 @@ static size_t s_before_free_32bit;
+ 
+ static esp_lv_adapter_rotation_t get_configured_rotation(void)
+ {
+-#if CONFIG_EXAMPLE_DISPLAY_ROTATION_0
++#if CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW && CONFIG_EXAMPLE_LCD_INTERFACE_MIPI_DSI
++    /* The option only changes a rotated DOUBLE_DIRECT display: test one. */
++    return ESP_LV_ADAPTER_ROTATE_90;
++#elif CONFIG_EXAMPLE_DISPLAY_ROTATION_0
+     return ESP_LV_ADAPTER_ROTATE_0;
+ #elif CONFIG_EXAMPLE_DISPLAY_ROTATION_90
+     return ESP_LV_ADAPTER_ROTATE_90;
+@@ -101,7 +104,9 @@ static esp_lv_adapter_tear_avoid_mode_t select_tear_avoid_mode(void)
+     if (s_force_pipeline_tear_mode) {
+         return ESP_LV_ADAPTER_TEAR_AVOID_MODE_TRIPLE_PARTIAL;
+     }
+-#if CONFIG_EXAMPLE_LCD_INTERFACE_MIPI_DSI
++#if CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW && CONFIG_EXAMPLE_LCD_INTERFACE_MIPI_DSI
++    return ESP_LV_ADAPTER_TEAR_AVOID_MODE_DOUBLE_DIRECT;
++#elif CONFIG_EXAMPLE_LCD_INTERFACE_MIPI_DSI
+     /* eco4 / P4 defaults: DEFAULT_MIPI_DSI expands to TRIPLE_PARTIAL. */
+     return ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_MIPI_DSI;
+ #elif CONFIG_EXAMPLE_LCD_INTERFACE_RGB
+diff --git a/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/sdkconfig.ci.rotate_in_draw b/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/sdkconfig.ci.rotate_in_draw
+new file mode 100644
+index 0000000..592764f
+--- /dev/null
++++ b/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/sdkconfig.ci.rotate_in_draw
+@@ -0,0 +1,9 @@
++# ESP32-P4, rev >= 3: a rotated DOUBLE_DIRECT display drawn in the panel's
++# orientation (CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW)
++CONFIG_IDF_TARGET="esp32p4"
++
++CONFIG_ESP32P4_SELECTS_REV_LESS_V3=n
++
++CONFIG_LV_USE_MATRIX=y
++CONFIG_LV_DRAW_TRANSFORM_USE_MATRIX=y
++CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW=y
+-- 
+2.43.0
+
