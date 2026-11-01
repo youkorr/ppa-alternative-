@@ -4,7 +4,7 @@ Copyright (c) 2026 youkorr
 Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
 
 The text to paste into the pull request on espressif/esp-iot-solution.
-Fill in the [brackets] once the boards have been tested.
+Hardware measurements go in "Testing" before the draft is marked ready.
 -->
 
 **Title:** feat(esp_lvgl_adapter): draw rotated DOUBLE_DIRECT displays in the panel's orientation
@@ -43,7 +43,10 @@ What changes for a user who enables it:
 The PPA's known faults are handled: every PPA wait is bounded (250 ms) and a PPA
 that stops answering falls back to the CPU; blocks the ESP-IDF v5.5 driver would
 hang on at 90/270 (DIG-734, esp-idf #19023 / #19096) are split before they are
-sent, using the driver's own test both ways.
+sent, using the driver's own test both ways. That matters because the
+driver's fix is on master and release/v6.0 but not on release/v6.1 or
+release/v5.5 (checked 2026-11-01), so this needs neither the IDF patch shipped
+beside this component nor a particular IDF version.
 
 `lv_draw_ortho` comes from https://github.com/youkorr/ppa-alternative-
 (MIT, same author), where it is checked pixel for pixel against LVGL 9.5, 9.6
@@ -61,9 +64,16 @@ transfer until it is waited for.
 
 - Host: the draw unit's test suite (pixel-exact against LVGL), see the repository above.
 - Build: `test_apps/lvgl9` for esp32p4 with `sdkconfig.ci.rotate_in_draw` and `sdkconfig.ci.p4rev3`, ESP-IDF v5.5.5, release-v6.0, release-v6.1 and latest (the images this test app is built with).
-- Hardware: [M5Stack Tab5, 720x1280, ROTATE_270: ... ms per frame before / after]
-- Hardware: [Waveshare ESP32-P4 7B, 1024x600, ROTATE_180: ... ms per frame before / after]
-- Test app: [`[adapter]` tests on the P4 with `sdkconfig.ci.rotate_in_draw`: pass / fail]
+- Hardware: **not yet run on a board** — opened as a draft for that reason.
+  Measurements on an M5Stack Tab5 (720x1280, ROTATE_270) and a Waveshare
+  ESP32-P4 7B (1024x600, ROTATE_180) will be added here before it is marked
+  ready for review.
+- Timing estimate: the same code built for the P4's RISC-V core and run in
+  QEMU under a cache model of the P4, with the PPA and display timed at rates
+  measured on these boards. A full redraw of a dashboard-like UI: 88.4 ms with
+  today's rotated path, 44.8 ms with this option (34.7 ms with the draw unit's
+  optional second core, not part of this PR); a full-screen image: 86.7 ms
+  against 22.4 ms. These are simulated figures, to be confirmed on hardware.
 
 ---
 
@@ -73,5 +83,5 @@ transfer until it is waited for.
 - [x] CHANGELOG and version (0.8.0)
 - [x] README and README_CN
 - [x] Formatted with the repository's astyle rules, codespell clean
-- [ ] Tested on hardware
+- [ ] Tested on hardware (draft until then)
 - [ ] Contributor agreement signed (asked for when the PR is opened)
