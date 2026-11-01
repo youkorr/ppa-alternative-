@@ -60,7 +60,7 @@ transfer until it is waited for.
 ## Testing
 
 - Host: the draw unit's test suite (pixel-exact against LVGL), see the repository above.
-- Build: `test_apps/lvgl9` for esp32p4 with `sdkconfig.ci.rotate_in_draw`, ESP-IDF v5.5.5.
+- Build: `test_apps/lvgl9` for esp32p4 with `sdkconfig.ci.rotate_in_draw` and `sdkconfig.ci.p4rev3`, ESP-IDF v5.5.5, release-v6.0, release-v6.1 and latest (the images this test app is built with).
 - Hardware: [M5Stack Tab5, 720x1280, ROTATE_270: ... ms per frame before / after]
 - Hardware: [Waveshare ESP32-P4 7B, 1024x600, ROTATE_180: ... ms per frame before / after]
 - Test app: [`[adapter]` tests on the P4 with `sdkconfig.ci.rotate_in_draw`: pass / fail]

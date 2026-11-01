@@ -17,8 +17,9 @@ ci-dessous n'est pas faite.
 | `esp-iot-solution/PR.md` | le titre et le texte à coller dans la PR (en anglais) |
 
 La CI de ce dépôt (*Espressif pull request*) applique le patch sur leur code et
-compile leur application de test pour l'ESP32-P4 avec ESP-IDF 5.5.5, avec et
-sans l'option. Si elle est verte, la PR compile chez eux.
+compile leur application de test pour l'ESP32-P4 avec les quatre versions
+d'ESP-IDF que leur propre CI utilise (5.5.5, 6.0, 6.1 et la branche de
+développement), avec et sans l'option. Si elle est verte, la PR compile chez eux.
 
 ## Ce que fait la PR
 
