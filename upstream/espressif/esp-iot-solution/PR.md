@@ -79,9 +79,14 @@ transfer until it is waited for.
 
 ## Checklist
 
-- [x] Off by default, other modes unchanged
-- [x] CHANGELOG and version (0.8.0)
-- [x] README and README_CN
-- [x] Formatted with the repository's astyle rules, codespell clean
-- [ ] Tested on hardware (draft until then)
-- [ ] Contributor agreement signed (asked for when the PR is opened)
+Before submitting a Pull Request, please ensure the following:
+
+- [x] 🚨 This PR does not introduce breaking changes. (The option is off by default; nothing changes unless it is enabled.)
+- [ ] All CI checks (GH Actions) pass. (Builds with ESP-IDF v5.5.5, release-v6.0, release-v6.1 and latest in the author's CI; waiting for this repository's.)
+- [x] Documentation is updated as needed. (README, README_CN, Kconfig help, CHANGELOG, version 0.8.0.)
+- [x] Tests are updated or added as necessary. (lvgl9 test app runs on a rotated DOUBLE_DIRECT display with the option; `sdkconfig.ci.rotate_in_draw`.)
+- [x] Code is well-commented, especially in complex areas.
+- [x] Git history is clean — commits are squashed to the minimum necessary. (One commit.)
+- [ ] Tested on hardware (draft until then).
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
