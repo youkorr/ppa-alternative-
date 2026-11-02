@@ -49,6 +49,8 @@ class LvglOrtho : public Component {
   // turns them on the CPU, which is what to compare the PPA against.
   void set_ppa(bool ppa) { this->ppa_ = ppa; }
   void set_cores(int cores) { this->cores_ = cores; }
+  // Bytes of PSRAM for pictures turned once (lv_draw_ortho_set_image_cache).
+  void set_image_cache(size_t bytes) { this->image_cache_ = bytes; }
 
   void setup() override;
   void loop() override;
@@ -81,6 +83,7 @@ class LvglOrtho : public Component {
   bool ppa_{true};
   int cores_{1};
   bool cores_on_{false};
+  size_t image_cache_{0};
   bool ppa_on_{false};
   bool ppa_lost_{false};  // said once, and the screen drawn again
   lv_display_t *disp_{nullptr};

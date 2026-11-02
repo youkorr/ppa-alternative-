@@ -60,6 +60,12 @@ DISPLAY_NS_PX = (18964 - 14865) * 1e3 / (1024 * 600)   # its copy to the panel
 # A fill only writes, where a turn reads and writes the same bus: half the
 # time a pixel. An estimate, not a measurement -- no fill was timed on a board.
 FILL_NS_PX = PPA_NS_PX / 2
+# A straight copy (the PPA at angle 0, a picture out of
+# lv_draw_ortho_set_image_cache): rows read and written in order, as the 7B's
+# DMA2D copy to the panel does, so timed at that copy's measured rate. The
+# PPA at angle 0 itself was never timed on a board; the report gives the
+# same redraw with it as slow as a turn beside it.
+STRAIGHT_NS_PX = DISPLAY_NS_PX
 
 BOARDS = [  # name, panel, phase of the UI, phase of the picture
     ("Tab5, 720x1280 at 270", 720 * 1280, 20, 50),
@@ -177,7 +183,7 @@ def timelines(log):
     return out
 
 
-def replay(p, ph, events, cpi, c_int, c_l2, c_line):
+def replay(p, ph, events, cpi, c_int, c_l2, c_line, straight_ns=None):
     """A redraw as it runs on the board: this core's time from its counts,
     the PPA working through its queue at the measured rates while the CPU
     goes on, the CPU stopping where it needed a transaction finished, and a
@@ -200,7 +206,8 @@ def replay(p, ph, events, cpi, c_int, c_l2, c_line):
             e = next(ev)
             if e[0] == "Q":
                 start = max(t, dma_free)
-                dma_free = start + e[2] * (FILL_NS_PX if e[3] else PPA_NS_PX) / 1e6
+                rate = FILL_NS_PX if e[3] == 1 else (straight_ns or STRAIGHT_NS_PX) if e[3] == 2 else PPA_NS_PX
+                dma_free = start + e[2] * rate / 1e6
                 done[e[1]] = dma_free
             else:
                 t = max(t, done.get(e[1], t))
@@ -351,6 +358,19 @@ def report(p, ppa_px, tl=None):
                       "".join(f"{win + px * DISPLAY_NS_PX / 1e6:14.1f}" for r in rows) +
                       "   (ESPHome's mipi_dsi)")
                 print(f"  {'':40s}" + "".join(f"{win:14.1f}" for r in rows) + "   (panel frame buffers)")
+            if ph == pic and ph + 4 in tl:
+                # The same picture drawn again with lv_draw_ortho_set_image_cache:
+                # copied straight out of the copy turned the time before.
+                fast = [replay(p, ph + 4, tl[ph + 4], *c[:3], model(p, *c[:3], c[3])) for c in cases]
+                slow = [replay(p, ph + 4, tl[ph + 4], *c[:3], model(p, *c[:3], c[3]), straight_ns=PPA_NS_PX)
+                        for c in cases]
+                if None in fast or None in slow:
+                    print(f"  (timeline of phase {ph + 4} does not line up with the counts)")
+                else:
+                    print(f"  {'picture turned once, then copied (panel)':40s}" + "".join(f"{x:14.1f}" for x in fast))
+                    print(f"  {'    against the adapter':40s}" +
+                          "".join(f"{r[1] / x:13.2f}x" for r, x in zip(rows, fast)))
+                    print(f"  {'  if a copy were as slow as a turn':40s}" + "".join(f"{x:14.1f}" for x in slow))
             print(f"  CPU part: upright {up['insns'] / 1e6:.1f} M instructions, "
                   f"{(up['psram_fill'] + up['psram_writeback']) * 64 / 1024:.0f} KiB through the PSRAM; "
                   f"lv_draw_ortho {nat['insns'] / 1e6:.1f} M, "

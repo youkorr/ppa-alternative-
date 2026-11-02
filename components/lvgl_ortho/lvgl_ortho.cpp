@@ -101,6 +101,7 @@ void LvglOrtho::setup() {
     if (!this->ppa_on_)
       ESP_LOGW(TAG, "No PPA client (error 0x%x): the CPU turns the tiles", (unsigned) err);
   }
+  lv_draw_ortho_set_image_cache(this->image_cache_);
   // After the PPA, so the second core gets tiles to alternate with its turns.
   if (this->cores_ > 1) {
     this->cores_on_ = lv_draw_ortho_set_cores(2);
@@ -207,6 +208,12 @@ void LvglOrtho::dump_config() {
                   : "the CPU waiting for each (no internal RAM for a second tile)");
   } else {
     ESP_LOGCONFIG(TAG, "  Turns: the CPU%s", this->ppa_ ? " (no PPA client)" : " (ppa: false)");
+  }
+  if (this->image_cache_ > 0) {
+    ESP_LOGCONFIG(TAG, "  Pictures: turned once, up to %u KiB of PSRAM, then copied%s",
+                  (unsigned) (this->image_cache_ / 1024), this->ppa_on_ ? " by the PPA" : "");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Pictures: turned every time they are drawn (image_cache: 0)");
   }
   if (this->cores_on_) {
     ESP_LOGCONFIG(TAG, "  Drawing: two cores, every other tile on the second%s",
@@ -425,6 +432,12 @@ void LvglOrtho::loop() {
       if (st->bytes_turned > 0) {
         ESP_LOGI(TAG, "  turned %.0f KiB/s, %.0f%% of it by the PPA, the CPU waited %.1f times/s for it",
                  st->bytes_turned / 1024.0f / s, 100.0f * st->bytes_handed / st->bytes_turned, st->waits / s);
+      }
+      // Pictures copied out of the cache instead of turned again, and how
+      // much it holds: a wallpaper redrawn shows up here.
+      if (st->images_cached > 0 || st->image_cache_builds > 0) {
+        ESP_LOGI(TAG, "  %u pictures copied from %u KiB turned once (%u turned into it)", (unsigned) st->images_cached,
+                 (unsigned) (st->image_cache_bytes / 1024), (unsigned) st->image_cache_builds);
       }
       if (this->cores_on_ && st->tiles > 0) {
         ESP_LOGI(TAG, "  %u of %u tiles painted on the second core", (unsigned) st->tiles_other_core,

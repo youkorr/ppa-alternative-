@@ -46,6 +46,7 @@ typedef struct {
     uint32_t stride;
     int32_t w, h;      /* the frame's own size */
     uint8_t * render;  /* partial mode: LVGL's small buffer, else NULL */
+    uint8_t * alloc;   /* what `buf` was carved out of */
 } screen_t;
 
 /* Direct mode draws into the frame itself. Partial mode hands over a small
@@ -81,6 +82,9 @@ static double now_ms(void)
 
 /* Partial mode's band height in rows; 0 for an eighth of the screen. */
 static int32_t g_partial_rows;
+/* Bytes the frame buffer starts past a cache line: 0, or not a multiple of
+ * 128 to keep the PPA out of it and make the CPU write it. */
+static int32_t g_fb_offset;
 
 static screen_t * make_screen(int32_t w, int32_t h, lv_color_format_t cf, lv_display_rotation_t rot, bool matrix,
                               bool partial)
@@ -94,12 +98,15 @@ static screen_t * make_screen(int32_t w, int32_t h, lv_color_format_t cf, lv_dis
     s.stride = lv_draw_buf_width_to_stride(w, cf);
     size_t size = (size_t)s.stride * h;
     /* 128: the ESP32-P4's L2 cache line, which the PPA needs its output on. */
-    s.buf = aligned_alloc(128, (size + 127) / 128 * 128);
+    s.alloc = aligned_alloc(128, (size + 127 + 128) / 128 * 128);
+    s.buf = s.alloc + g_fb_offset;
     memset(s.buf, 0x5a, size);
     if(partial) {
         /* An eighth of the screen, odd on purpose so bands split unevenly. */
         size_t rsize = g_partial_rows ? (size_t)s.stride * g_partial_rows : size / 8 + 1234;
-        s.render = aligned_alloc(LV_DRAW_BUF_ALIGN, (rsize + LV_DRAW_BUF_ALIGN - 1) / LV_DRAW_BUF_ALIGN * LV_DRAW_BUF_ALIGN);
+        /* On a cache line too, as a board's would be, so the PPA writes
+         * partial bands -- whatever alignment malloc happens to give. */
+        s.render = aligned_alloc(128, (rsize + 127) / 128 * 128);
         lv_display_set_buffers(s.disp, s.render, NULL, rsize, LV_DISPLAY_RENDER_MODE_PARTIAL);
     }
     else {
@@ -116,7 +123,7 @@ static screen_t * make_screen(int32_t w, int32_t h, lv_color_format_t cf, lv_dis
 static void drop_screen(screen_t * s)
 {
     lv_display_delete(s->disp);
-    free(s->buf);
+    free(s->alloc);
     free(s->render);
     free(s);
 }
@@ -694,6 +701,221 @@ static void check_native(int32_t nw, int32_t nh, lv_color_format_t cf, lv_displa
     }
     drop_screen(nat);
     free(want);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Pictures turned once (lv_draw_ortho_set_image_cache)                     */
+/* ------------------------------------------------------------------------ */
+
+/* A wallpaper-sized picture under a label, over a box, off the screen's
+ * corner: big enough to be drawn on its own (LV_DRAW_ORTHO_ALONE_BYTES). */
+static lv_image_dsc_t * g_wall;
+static bool g_wall_constant;
+static bool wall_constant(const lv_image_dsc_t * img)
+{
+    return g_wall_constant && g_wall && img->data == g_wall->data;
+}
+
+static void scene_wall(lv_obj_t * scr)
+{
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x203040), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_t * box = lv_obj_create(scr);
+    lv_obj_set_pos(box, 20, 25);
+    lv_obj_set_size(box, 120, 90);
+    lv_obj_set_style_bg_color(box, lv_color_hex(0xC04020), 0);
+    lv_obj_t * img = lv_image_create(scr);
+    lv_image_set_src(img, g_wall);
+    lv_obj_set_pos(img, 37, 41);
+    lv_obj_t * l = lv_label_create(scr);
+    lv_label_set_text(l, "over the picture");
+    lv_obj_set_pos(l, 60, 90);
+}
+
+static void repaint(lv_image_dsc_t * d, uint32_t seed)
+{
+    uint32_t stride;
+    uint8_t * p = pattern(d->header.w, d->header.h, d->header.cf, seed, &stride);
+    memcpy((void *)d->data, p, (size_t)stride * d->header.h);
+    free(p);
+}
+
+static void cache_fail(const char * what)
+{
+    g_failures++;
+    printf("  FAIL  %s\n", what);
+}
+
+/* Drawn three times: turned the first (seen once), turned into the cache the
+ * second, copied straight out of it the third -- the same pixels every time
+ * as LVGL's own. Then the picture is changed in place and dropped, and the
+ * new one is drawn. */
+static void check_image_cache(int32_t nw, int32_t nh, lv_color_format_t cf, lv_display_rotation_t rot, bool ppa,
+                              bool partial)
+{
+    char what[220];
+    uint8_t * want = reference(nw, nh, cf, rot, scene_wall);
+    if(ppa) lv_draw_ortho_ppa_init();
+    screen_t * nat = make_screen(nw, nh, cf, rot, true, partial);
+    lv_display_set_default(nat->disp);
+    lv_obj_t * scr = lv_display_get_screen_active(nat->disp);
+    scene_wall(scr);
+    const char * how = g_fb_offset ? "PPA, CPU copy" : ppa ? (partial ? "PPA, partial" : "PPA, direct ")
+                       : (partial ? "CPU, partial" : "CPU, direct ");
+    uint32_t builds = 0;
+    for(int pass = 0; pass < 3; pass++) {
+        lv_draw_ortho_reset_stats();
+        if(pass) lv_obj_invalidate(scr);
+        lv_refr_now(nat->disp);
+        const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+        snprintf(what, sizeof(what), "picture cache, %s, %s at %s, draw %d: %u turned, %u into the cache, %u from it "
+                 "(%.0f KiB copied by the PPA)", how, cf_name(cf), rot_name(rot), pass + 1, st->images_turned,
+                 st->image_cache_builds, st->images_cached, st->bytes_straight_handed / 1024.0);
+        expect_same(what, nat, want, cf);
+        /* Direct mode draws the picture once a refresh: seen, turned into the
+         * cache, then copied. Partial mode draws it once per band it crosses,
+         * so all three can happen in the first refresh. Either way: turned
+         * the first time, into the cache once, and from the cache alone at
+         * the end. */
+        builds += st->image_cache_builds;
+        const bool right = pass == 0 ? st->images_turned >= 1 && (partial || st->image_cache_builds == 0)
+                           : pass == 1 ? partial || (st->image_cache_builds == 1 && st->images_cached == 0)
+                           : st->images_cached >= 1 && st->images_turned == 0 && st->image_cache_builds == 0 &&
+                           builds == 1;
+        if(!right) cache_fail("...and the picture went the wrong way for this draw");
+        /* Direct mode with a frame buffer of whole cache lines: the PPA copies. */
+        const bool lines = (lv_draw_buf_width_to_stride(nw, cf) * (uint32_t)nh) % 128 == 0;
+        if(pass == 2 && ppa && !partial && !g_fb_offset && lines && cf == LV_COLOR_FORMAT_RGB565 &&
+           st->bytes_straight_handed == 0)
+            cache_fail("...and the copy out of the cache was not the PPA's");
+        if(pass == 1 && g_fb_offset && st->bytes_handed == 0)
+            cache_fail("...and the PPA did not turn the picture into the cache");
+    }
+
+    /* Changed in place, and said so: the next draws show the new pixels. */
+    repaint(g_wall, 23);
+    lv_draw_ortho_image_cache_drop(g_wall->data);
+    uint8_t * want2 = reference(nw, nh, cf, rot, scene_wall);
+    for(int pass = 0; pass < 3; pass++) {
+        lv_draw_ortho_reset_stats();
+        lv_obj_invalidate(scr);
+        lv_refr_now(nat->disp);
+        snprintf(what, sizeof(what), "picture cache, %s, %s at %s, changed and dropped, draw %d", how, cf_name(cf),
+                 rot_name(rot), pass + 1);
+        expect_same(what, nat, want2, cf);
+    }
+    repaint(g_wall, 7);
+    lv_draw_ortho_image_cache_drop(g_wall->data);
+    if(p4fake_pending()) cache_fail("...and PPA transactions were left queued");
+    p4fake_run_all();
+    drop_screen(nat);
+    if(ppa) lv_draw_ortho_ppa_deinit();
+    free(want);
+    free(want2);
+}
+
+/* What must never be kept, and a budget too small: drawn turned every time,
+ * and still right. */
+static void check_image_cache_refused(int32_t nw, int32_t nh, lv_display_rotation_t rot, const char * why,
+                                      bool modifiable, size_t budget, bool constant)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const uint8_t flags = g_wall->header.flags;
+    if(modifiable) g_wall->header.flags |= LV_IMAGE_FLAGS_MODIFIABLE;
+    g_wall_constant = constant;
+    lv_draw_ortho_set_image_cache(budget);
+    uint8_t * want = reference(nw, nh, cf, rot, scene_wall);
+    screen_t * nat = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(nat->disp);
+    lv_obj_t * scr = lv_display_get_screen_active(nat->disp);
+    scene_wall(scr);
+    uint32_t builds = 0, cached = 0;
+    for(int pass = 0; pass < 3; pass++) {
+        lv_draw_ortho_reset_stats();
+        if(pass) lv_obj_invalidate(scr);
+        lv_refr_now(nat->disp);
+        builds += lv_draw_ortho_get_stats()->image_cache_builds;
+        cached += lv_draw_ortho_get_stats()->images_cached;
+    }
+    char what[200];
+    snprintf(what, sizeof(what), "picture cache refused (%s) at %s: %u into the cache, %u from it", why,
+             rot_name(rot), builds, cached);
+    expect_same(what, nat, want, cf);
+    if(builds || cached) cache_fail("...and it was kept anyway");
+    drop_screen(nat);
+    free(want);
+    g_wall->header.flags = flags;
+    g_wall_constant = true;
+    lv_draw_ortho_set_image_cache(0);
+}
+
+/* One picture kept turned at one rotation, then shown at another without
+ * being dropped: each rotation is a copy of its own. */
+static void check_image_cache_rotations(lv_display_rotation_t first, lv_display_rotation_t then)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    lv_draw_ortho_set_image_cache(8 * 1024 * 1024);
+    const lv_display_rotation_t rots[2] = {first, then};
+    for(int k = 0; k < 2; k++) {
+        uint8_t * want = reference(320, 480, cf, rots[k], scene_wall);
+        screen_t * nat = make_screen(320, 480, cf, rots[k], true, false);
+        lv_display_set_default(nat->disp);
+        lv_obj_t * scr = lv_display_get_screen_active(nat->disp);
+        scene_wall(scr);
+        for(int pass = 0; pass < 3; pass++) {
+            if(pass) lv_obj_invalidate(scr);
+            lv_refr_now(nat->disp);
+        }
+        char what[160];
+        snprintf(what, sizeof(what), "picture cache: kept at %s, then drawn at %s (%u from the cache)",
+                 rot_name(first), rot_name(rots[k]), lv_draw_ortho_get_stats()->images_cached);
+        if(k == 1) expect_same(what, nat, want, cf);
+        drop_screen(nat);
+        free(want);
+    }
+    lv_draw_ortho_set_image_cache(0);
+}
+
+static void check_image_caches(void)
+{
+    const lv_display_rotation_t rots[] = {LV_DISPLAY_ROTATION_90, LV_DISPLAY_ROTATION_180, LV_DISPLAY_ROTATION_270};
+    const lv_color_format_t cfs[] = {LV_COLOR_FORMAT_RGB565, LV_COLOR_FORMAT_XRGB8888};
+    g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
+    g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
+    lv_draw_ortho_set_image_constant_cb(wall_constant);
+    g_wall_constant = true;
+    for(unsigned c = 0; c < 2; c++) {
+        g_wall = image_of(200, 150, cfs[c], 7);
+        lv_draw_ortho_set_image_cache(8 * 1024 * 1024);
+        /* The same picture at every rotation, without dropping it between:
+         * each rotation is a copy of its own. */
+        for(unsigned r = 0; r < 3; r++) {
+            for(int mode = 0; mode < 5; mode++) {
+                const bool ppa = mode & 1 || mode == 4, partial = mode & 2;
+                if(ppa && cfs[c] != LV_COLOR_FORMAT_RGB565) continue;   /* the PPA turns RGB565 and RGB888 */
+                /* The fifth: the PPA turns into the cache, and the CPU copies
+                 * out of it into a frame buffer the PPA may not write. */
+                g_fb_offset = mode == 4 ? 4 : 0;
+                check_image_cache(320, 480, cfs[c], rots[r], ppa, partial);
+                g_fb_offset = 0;
+            }
+        }
+        lv_draw_ortho_set_image_cache(0);
+        g_cases++;
+        if(lv_draw_ortho_get_stats()->image_cache_bytes == 0) printf("  ok    picture cache: emptied when switched off\n");
+        else cache_fail("picture cache: still holding pictures when switched off");
+        free((void *)g_wall->data);
+        free(g_wall);
+    }
+    g_wall = image_of(200, 150, LV_COLOR_FORMAT_RGB565, 7);
+    check_image_cache_rotations(LV_DISPLAY_ROTATION_90, LV_DISPLAY_ROTATION_270);
+    check_image_cache_rotations(LV_DISPLAY_ROTATION_270, LV_DISPLAY_ROTATION_180);
+    check_image_cache_refused(320, 480, LV_DISPLAY_ROTATION_90, "LVGL may change it", true, 8 * 1024 * 1024, true);
+    check_image_cache_refused(320, 480, LV_DISPLAY_ROTATION_90, "not said to be constant", false, 8 * 1024 * 1024,
+                              false);
+    check_image_cache_refused(320, 480, LV_DISPLAY_ROTATION_90, "bigger than the budget", false, 200 * 150, true);
+    check_image_cache_refused(320, 480, LV_DISPLAY_ROTATION_90, "the cache is off", false, 0, true);
+    lv_draw_ortho_set_image_constant_cb(NULL);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1494,6 +1716,7 @@ int main(int argc, char ** argv)
         }
     }
 
+    check_image_caches();
     check_fake_ppa_against_the_board();
     {
         g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
