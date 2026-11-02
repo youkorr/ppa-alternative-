@@ -77,6 +77,7 @@ static void redraw(lv_display_t * disp, lv_obj_t * obj, int phase_id)
 #define CASE(n) case n: PHASE(n); lv_refr_now(disp); PHASE(1999); break;
         CASE(20) CASE(21) CASE(22) CASE(23) CASE(30) CASE(31) CASE(32) CASE(33) CASE(40) CASE(41) CASE(42) CASE(43)
         CASE(50) CASE(51) CASE(52) CASE(53) CASE(60) CASE(61) CASE(62) CASE(63) CASE(70) CASE(71) CASE(72) CASE(73)
+        CASE(54) CASE(64) CASE(74)
 #undef CASE
     }
     report_ppa(phase_id, px, filled);
@@ -97,8 +98,16 @@ static void redraw(lv_display_t * disp, lv_obj_t * obj, int phase_id)
  * PPA): the UI, or a picture when one is given. The fake's copying is the
  * PPA's and not counted (P4SIM markers); its pixels are reported. With two
  * cores, the second paints every other tile (p4cache.c counts it apart). */
+static bool any_picture(const lv_image_dsc_t * img)
+{
+    (void)img;
+    return true;
+}
+
+/* `cache`: the picture is drawn once more first, so the measured redraw is
+ * the copy out of lv_draw_ortho_set_image_cache's turned copy. */
 static void ortho_with_ppa(int32_t nw, int32_t nh, lv_display_rotation_t rot, int phase,
-                           const lv_image_dsc_t * frame, int cores)
+                           const lv_image_dsc_t * frame, int cores, bool cache)
 {
     if(!lv_draw_ortho_set_cores(cores)) {
         printf("no second core\n");
@@ -117,8 +126,18 @@ static void ortho_with_ppa(int32_t nw, int32_t nh, lv_display_rotation_t rot, in
         lv_image_set_src(obj, frame);
     }
     else scene_ui(scr);
+    if(cache) {
+        lv_draw_ortho_set_image_constant_cb(any_picture);
+        lv_draw_ortho_set_image_cache(16 * 1024 * 1024);
+        lv_refr_now(nat->disp);   /* seen once; redraw's warm draw turns it into the cache */
+    }
     lv_draw_ortho_reset_stats();
     redraw(nat->disp, obj, phase);
+    if(cache) {
+        printf("cache %d: %u pictures from the cache\n", phase, lv_draw_ortho_get_stats()->images_cached);
+        lv_draw_ortho_set_image_cache(0);
+        lv_draw_ortho_set_image_constant_cb(NULL);
+    }
     const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
     printf("ortho+ppa %d: %u cores, %u tiles in turn, %.0f%% of the turning by the PPA, %u waits, "
            "%u of %u tiles on the second core\n", phase, st->cores,
@@ -156,8 +175,8 @@ static void ui(int32_t nw, int32_t nh, lv_display_rotation_t rot, int phase)
            st->tile_internal, (unsigned long long)st->bytes_turned / 2048,
            (unsigned long long)st->bytes_straight / 2048, st->tiles / 2);
     drop_screen(nat);
-    ortho_with_ppa(nw, nh, rot, phase + 2, NULL, 1);
-    ortho_with_ppa(nw, nh, rot, phase + 3, NULL, 2);
+    ortho_with_ppa(nw, nh, rot, phase + 2, NULL, 1, false);
+    ortho_with_ppa(nw, nh, rot, phase + 3, NULL, 2, false);
 }
 
 /* A full-screen picture (a video frame drawn by LVGL as an image). */
@@ -181,8 +200,9 @@ static void picture(int32_t nw, int32_t nh, lv_display_rotation_t rot, int phase
     lv_image_set_src(i2, frame);
     redraw(nat->disp, i2, phase + 1);
     drop_screen(nat);
-    ortho_with_ppa(nw, nh, rot, phase + 2, frame, 1);
-    ortho_with_ppa(nw, nh, rot, phase + 3, frame, 2);
+    ortho_with_ppa(nw, nh, rot, phase + 2, frame, 1, false);
+    ortho_with_ppa(nw, nh, rot, phase + 3, frame, 2, false);
+    ortho_with_ppa(nw, nh, rot, phase + 4, frame, 1, true);
 }
 
 /* The calibration: a memcpy of 1280x620 RGB565, PSRAM to PSRAM -- what the

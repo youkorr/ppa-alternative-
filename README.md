@@ -30,9 +30,18 @@ LVGL drawing into the panel's own frame buffers:
 | Tab5 full-screen picture | 92.9 | 86.7 | **22.4** (3.9x) | 22.4 |
 | Guition full-screen picture | 103.2 | 96.4 | **24.9** (3.9x) | 24.9 |
 | Waveshare full-screen picture | 62.0 | 57.9 | **15.0** (3.9x) | 15.0 |
+| Tab5 same picture drawn again (`image_cache`) | 92.9 | 86.7 | **6.3** (13.8x) | 6.3 |
+| Guition same picture drawn again | 103.2 | 96.4 | **7.0** (13.8x) | 7.0 |
+| Waveshare same picture drawn again | 62.0 | 57.9 | **4.2** (13.8x) | 4.2 |
 | Tab5 camera through `ortho_id` | 92.9 | 86.7 | **22.3** | 22.3 |
 
-(x: how many times faster than esp_lvgl_adapter.) With ESPHome's own
+(x: how many times faster than esp_lvgl_adapter.) "Drawn again" is a
+picture that does not change — a wallpaper, a background — redrawn under
+something that does: turned once, then copied (see
+[Pictures turned once](#pictures-turned-once)). The copy is timed at the
+DMA2D copy measured on the Waveshare 7B; the PPA copying at angle 0 has not
+been timed on a board, and were it as slow as a turn the row would read as
+the one above it, never worse. With ESPHome's own
 `mipi_dsi` instead of the panel's frame buffers, add the display's copy:
 6.2 ms on the Tab5. `docs/chart.py` draws the chart above from
 `docs/p4sim-resultats.csv`.
@@ -56,6 +65,7 @@ lvgl_ortho:
   rotation: 270           # what lvgl: had (ESPHome's degrees, clockwise)
   # ppa: true             # the default: the PPA turns while the CPU draws
   # cores: 2              # off by default: the second core draws every other tile
+  # image_cache: 4MB      # the default: pictures that do not change are turned once
 ```
 
 It takes LVGL's display over once ESPHome's lvgl has built it: one
@@ -72,6 +82,8 @@ rows that changed, and touches turned back to the screen's coordinates.
   youkorr/esphome_esp-video's `lvgl_camera_display` that is one line,
   `ortho_id: ortho`. `example/guition-lvgl-ortho.yaml` is a whole board.
 - **`ppa: false`** turns with the CPU instead, to compare.
+- **`image_cache:`** is the PSRAM kept for pictures turned once (see
+  [Pictures turned once](#pictures-turned-once)); `0` turns it off.
 - **`cores: 2`** draws every other tile on the second core (see
   [Two cores](#two-cores)). It needs LVGL built with an OS, which
   youkorr/lvgl_9.5 is, and is refused otherwise.
@@ -149,6 +161,30 @@ video back. ESPHome and LVGL count quarter turns opposite ways (ESPHome's
 `rotation: 90` is LVGL's `LV_DISPLAY_ROTATION_270`); the tests check the
 turn against youkorr/lvgl_9.5's own rotation loops, which show a correct
 picture on the Tab5.
+
+### Pictures turned once
+
+A picture that does not change is still turned every time it is drawn: a
+wallpaper under a clock is turned whole once a second, a background under a
+page that scrolls once a frame. With `image_cache:`, the second time an
+opaque, unscaled picture of 32 KiB or more is drawn it is turned once into a
+buffer of its own, and every draw after that is a straight copy out of it, by
+the PPA at angle 0. A straight copy reads and writes rows in order, which is
+what memory does fastest; a turn is the opposite.
+
+Only pictures that cannot change are kept: those in the flash (an ESPHome
+`image:`, anything compiled in), never a draw buffer LVGL marks modifiable (a
+canvas, a camera frame). Each rotation is a copy of its own, the least
+recently drawn go first when the budget is spent, and a picture bigger than
+the budget is never kept. The log's ten-second line says how many pictures
+came from the cache. Without ESPHome, `lv_draw_ortho_set_image_cache()`;
+`lv_draw_ortho_set_image_constant_cb()` says which other pictures never
+change, and `lv_draw_ortho_image_cache_drop()` forgets one changed in place.
+
+It also takes the doubt out of the PPA's calibration for these pictures (see
+[How it is measured](#how-it-is-measured)): a copy does not depend on how
+fast the PPA turns, so a picture drawn again costs the same however slow the
+Tab5's turn proves to be.
 
 ### Two cores
 
@@ -267,6 +303,7 @@ lv_init();
 lv_draw_ortho_init();                       /* after lv_init() */
 lv_draw_ortho_ppa_init();                   /* ESP32-P4: the PPA turns and fills */
 lv_draw_ortho_set_cores(2);                 /* optional, needs LV_USE_OS */
+lv_draw_ortho_set_image_cache(4 << 20);     /* optional: pictures that do not change turned once */
 
 lv_display_t * d = lv_display_create(720, 1280);   /* the PANEL's size */
 lv_display_set_buffers(d, buf, NULL, size, LV_DISPLAY_RENDER_MODE_DIRECT);

@@ -112,6 +112,17 @@ static int g_qid;
 int g_p4_fills;
 unsigned long long g_p4_fill_pixels;
 
+#ifdef P4SIM
+/* The timeline's kind of a transaction: 2 for a copy with nothing turned,
+ * mirrored or scaled (p4sim.py times it apart from a turn), else 0. Only the
+ * simulated P4 keeps a timeline. */
+static int straight(const ppa_srm_oper_config_t * op)
+{
+    return op->rotation_angle == PPA_SRM_ROTATION_ANGLE_0 && !op->mirror_x && !op->mirror_y &&
+           op->scale_x == 1.0f && op->scale_y == 1.0f ? 2 : 0;
+}
+#endif
+
 /* A fill, as the blend engine does it: the colour narrowed by TRUNCATING to
  * RGB565 -- an assumption, made harmless by lv_draw_ortho_ppa.c handing it a
  * colour already at RGB565's precision. */
@@ -296,7 +307,7 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t c, const ppa_srm_oper_c
         g_queue[(g_head + g_count) % QUEUE].stuck = stuck;
         g_queue[(g_head + g_count) % QUEUE].qid = ++g_qid;
         g_count++;
-        NOTE_QUEUED(g_qid, ow * oh, 0);
+        NOTE_QUEUED(g_qid, ow * oh, straight(op));
         return ESP_OK;
     }
     /* A blocking one waits for the queue ahead of it: the engine is FIFO. A
@@ -308,7 +319,7 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t c, const ppa_srm_oper_c
         fprintf(stderr, "p4fake: a blocking PPA transaction that would never return\n");
         return ESP_FAIL;
     }
-    NOTE_QUEUED(++g_qid, ow * oh, 0);
+    NOTE_QUEUED(++g_qid, ow * oh, straight(op));
     NOTE_WAITED(g_qid);
     run(op);
     return ESP_OK;

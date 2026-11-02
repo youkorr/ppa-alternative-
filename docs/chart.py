@@ -31,7 +31,7 @@ def main():
         for c in COLS:
             r[c] = float(r[c])
 
-    W, left, right = 920, 170, 175
+    W, left, right = 940, 190, 175
     top, legend_h, bar, gap, group_gap = 92, 34, 13, 3, 22
     group_h = 4 * bar + 3 * gap
     plot_top = top + legend_h

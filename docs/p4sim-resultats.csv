@@ -5,3 +5,6 @@ Waveshare interface,Waveshare 1024x600 (180),interface,68.2,64.1,32.9,25.1
 Tab5 image,Tab5 720x1280 (270),image plein ecran,92.9,86.7,22.4,22.4
 Guition image,Guition 800x1280 (90),image plein ecran,103.2,96.4,24.9,24.9
 Waveshare image,Waveshare 1024x600 (180),image plein ecran,62.0,57.9,15.0,15.0
+Tab5 image en cache,Tab5 720x1280 (270),image plein ecran deja tournee une fois,92.9,86.7,6.3,6.3
+Guition image en cache,Guition 800x1280 (90),image plein ecran deja tournee une fois,103.2,96.4,7.0,7.0
+Waveshare image en cache,Waveshare 1024x600 (180),image plein ecran deja tournee une fois,62.0,57.9,4.2,4.2

@@ -57,6 +57,25 @@ MUTANTS = {
     # A fill left undrawn because some later picture exists, covering it or not.
     "a fill skipped that a picture does not cover": ("        if(lv_area_is_in(todo, &covered, 0)) return true;",
                                                      "        return true;"),
+    # A picture turned once, found again at another rotation: the copy turned
+    # for 90 shown at 270.
+    "the picture cache blind to the rotation": (" && c->rot == rot) return c;", ") return c;"),
+    # A picture changed in place and dropped, still drawn from its old copy.
+    "a dropped picture kept": ("        if(data == NULL || g_cache[i].data == data) cache_forget(&g_cache[i]);",
+                               "        if(data == NULL) cache_forget(&g_cache[i]);"),
+    # The CPU copying out of the cache before the PPA has turned into it.
+    "a copy out of the cache before its turn finished": (
+        "    fence();\n    const uint8_t * sp = src", "    const uint8_t * sp = src"),
+    # The copy out of the cache placed by the upright area, not the native one.
+    "the cache copied from the upright place": (
+        "                        lv_area_get_width(&whole) * px, &whole, &parts[i]);",
+        "                        lv_area_get_width(&whole) * px, &t->area, &parts[i]);"),
+    # A partial band sent to the panel with the copy out of the cache still
+    # running.
+    "a band sent mid-copy": ("    /* Drawn alone, so nothing else waits for these before LVGL takes the\n"
+                             "     * buffer back -- in partial mode, to send it to the panel. */\n    fence();\n", ""),
+    # A canvas -- a draw buffer LVGL changes -- kept turned.
+    "a modifiable picture kept": ("    if(img->header.flags & LV_IMAGE_FLAGS_MODIFIABLE) return false;\n", ""),
     # The PPA's angle the wrong way round.
     "the PPA turning the other way": (
         "        case LV_DISPLAY_ROTATION_90:\n            return PPA_SRM_ROTATION_ANGLE_90;",
