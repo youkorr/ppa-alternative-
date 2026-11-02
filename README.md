@@ -217,6 +217,18 @@ figures measured on the household's boards: a PSRAM copy on the Tab5 (32 to
 miss, the cost of a line from the L2, a fill at half a turn's cost, and
 whether the P4's two cores share their L1 cache.
 
+**One anchor is in doubt.** `PPA_NS_PX` comes from a single rotation on a
+Waveshare 7B, 14.9 ms for 1024x600, and the model then applies it flat: 41.3
+Mpx/s whatever the block. Measured since on a Tab5, one image at a time at 90
+degrees with the per-frame cost subtracted, the same operation runs at about
+16.7 Mpx/s — 0.92 ms for 128x128 against 0.40 predicted, 4.33 against 1.59 for
+256x256, 15.35 against 6.34 for 512x512. The ratio holds across a 16x range in
+area, so it is neither noise nor a size effect. Different boards, different
+PSRAM, and a block written into a frame buffer rather than a whole panel turned
+in one pass may each explain part of it. Until a board says otherwise, read the
+Tab5 column as a best case: the full-screen picture would be about 55 ms rather
+than 22.4, and 1.6x rather than 3.9x.
+
 **On the board, still to do.** The `lvgl_ortho` lines in the log and
 `lvgl_bench`'s figure are what will say whether the simulation was right.
 
