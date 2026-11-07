@@ -160,6 +160,11 @@ esp32:
   cpu_frequency: 360MHz
   framework:
     type: esp-idf
+    # ESP-IDF 5.5.6, ESPHome dev's default, refuses the camera on a P4 below
+    # v3.0 (the Tab5 is v1.0): its CSI driver now asks for a format
+    # conversion those revisions cannot do, and esp_video's fix
+    # (esp-video-components 79ae611) is not in a release yet.
+    version: 5.5.5
     advanced:
       enable_idf_experimental_features: true
 
