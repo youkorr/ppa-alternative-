@@ -66,6 +66,7 @@ lvgl_ortho:
   # ppa: true             # the default: the PPA turns while the CPU draws
   # cores: 2              # off by default: the second core draws every other tile
   # image_cache: 4MB      # the default: pictures that do not change are turned once
+  # tile_width: 256       # off by default: narrower, taller tiles (being measured)
 ```
 
 It takes LVGL's display over once ESPHome's lvgl has built it: one
@@ -84,6 +85,11 @@ rows that changed, and touches turned back to the screen's coordinates.
 - **`ppa: false`** turns with the CPU instead, to compare.
 - **`image_cache:`** is the PSRAM kept for pictures turned once (see
   [Pictures turned once](#pictures-turned-once)); `0` turns it off.
+- **`tile_width:`** caps how wide a tile is drawn, so it is taller instead.
+  At 90 and 270 a tile's height is the length of each row the PPA writes:
+  a whole-width tile of 1280 is 51 rows high, so the turner writes rows of 51
+  pixels; at 256 it writes rows of 256. Whether that is faster on a board is
+  what it is there to measure; `0`, the default, keeps the widest tiles.
 - **`cores: 2`** draws every other tile on the second core (see
   [Two cores](#two-cores)). It needs LVGL built with an OS, which
   youkorr/lvgl_9.5 is, and is refused otherwise.
@@ -307,6 +313,7 @@ lv_draw_ortho_init();                       /* after lv_init() */
 lv_draw_ortho_ppa_init();                   /* ESP32-P4: the PPA turns and fills */
 lv_draw_ortho_set_cores(2);                 /* optional, needs LV_USE_OS */
 lv_draw_ortho_set_image_cache(4 << 20);     /* optional: pictures that do not change turned once */
+lv_draw_ortho_set_tile_width(256);          /* optional: narrower, taller tiles */
 
 lv_display_t * d = lv_display_create(720, 1280);   /* the PANEL's size */
 lv_display_set_buffers(d, buf, NULL, size, LV_DISPLAY_RENDER_MODE_DIRECT);

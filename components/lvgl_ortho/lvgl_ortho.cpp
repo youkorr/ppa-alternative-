@@ -103,6 +103,7 @@ void LvglOrtho::setup() {
       ESP_LOGW(TAG, "No PPA client (error 0x%x): the CPU turns the tiles", (unsigned) err);
   }
   lv_draw_ortho_set_image_cache(this->image_cache_);
+  lv_draw_ortho_set_tile_width(this->tile_width_);
   // After the PPA, so the second core gets tiles to alternate with its turns.
   if (this->cores_ > 1) {
     this->cores_on_ = lv_draw_ortho_set_cores(2);
@@ -203,6 +204,11 @@ void LvglOrtho::dump_config() {
   // drawing off the bus the frame buffer and the scan-out share.
   ESP_LOGCONFIG(TAG, "  Drawing tile: %u KiB in %s", (unsigned) (LV_DRAW_ORTHO_TILE_BYTES / 1024),
                 lv_draw_ortho_get_stats()->tile_internal ? "internal RAM" : "PSRAM (internal RAM was full)");
+  if (this->tile_width_ > 0) {
+    ESP_LOGCONFIG(TAG, "  Tile width: at most %d pixels (tile_width)", this->tile_width_);
+  } else {
+    ESP_LOGCONFIG(TAG, "  Tile width: the screen's");
+  }
   if (this->ppa_on_) {
     ESP_LOGCONFIG(TAG, "  Turns: the PPA, %s", lv_draw_ortho_get_stats()->tiles_in_turn >= 2
                   ? "the CPU drawing one tile while it turns the other"

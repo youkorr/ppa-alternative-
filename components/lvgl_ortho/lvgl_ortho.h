@@ -51,6 +51,8 @@ class LvglOrtho : public Component {
   void set_cores(int cores) { this->cores_ = cores; }
   // Bytes of PSRAM for pictures turned once (lv_draw_ortho_set_image_cache).
   void set_image_cache(size_t bytes) { this->image_cache_ = bytes; }
+  // At most this many pixels wide, a drawing tile; 0 for the screen's width.
+  void set_tile_width(int width) { this->tile_width_ = width; }
 
   void setup() override;
   void loop() override;
@@ -84,6 +86,7 @@ class LvglOrtho : public Component {
   int cores_{1};
   bool cores_on_{false};
   size_t image_cache_{0};
+  int tile_width_{0};
   bool ppa_on_{false};
   bool ppa_lost_{false};  // said once, and the screen drawn again
   lv_display_t *disp_{nullptr};

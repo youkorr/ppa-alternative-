@@ -163,6 +163,16 @@ void lv_draw_ortho_init(void);
 
 void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb);
 
+/**
+ * At most `px` pixels wide, a tile; 0 (the default) for as wide as the area
+ * being drawn. A tile holds LV_DRAW_ORTHO_TILE_BYTES, so a narrower one is
+ * taller: at 90 and 270 its height is the length of every row the turn writes
+ * into the frame buffer. As wide as a 1280-pixel screen, a 128 KiB tile is 51
+ * rows, and the turner writes 51 pixels a row; 256 wide, it is 256 by 256.
+ * The pixels are the same either way; which is faster is the board's to say.
+ */
+void lv_draw_ortho_set_tile_width(int32_t px);
+
 /** Turn the fast paths off, so every task goes through tiles. For tests. */
 void lv_draw_ortho_set_fast_paths(bool enable);
 

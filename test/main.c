@@ -1717,6 +1717,43 @@ int main(int argc, char ** argv)
     }
 
     check_image_caches();
+    {
+        /* Narrower, taller tiles (lv_draw_ortho_set_tile_width): the same
+         * pixels at every rotation, by the CPU and by the PPA, and with a
+         * width that leaves a narrow last column. */
+        g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
+        g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
+        const int32_t widths[] = {64, 100};
+        for(unsigned k = 0; k < 2; k++) {
+            lv_draw_ortho_set_tile_width(widths[k]);
+            for(unsigned r = 0; r < 3; r++) {
+                check_scene("ui", 320, 480, LV_COLOR_FORMAT_RGB565, rots[r], scene_ui);
+                check_scene_ppa("ui", 333, 517, rots[r], scene_ui);
+            }
+        }
+        lv_draw_ortho_set_tile_width(0);
+        /* ...and the narrower tiles really are used: the same refresh cut
+         * into more of them. Pixels alone cannot say, a setting ignored
+         * draws them right too. */
+        uint32_t tiles[2];
+        for(unsigned k = 0; k < 2; k++) {
+            lv_draw_ortho_set_tile_width(k ? 64 : 0);
+            screen_t * nat = make_screen(320, 480, LV_COLOR_FORMAT_RGB565, LV_DISPLAY_ROTATION_270, true, false);
+            lv_display_set_default(nat->disp);
+            scene_ui(lv_display_get_screen_active(nat->disp));
+            lv_draw_ortho_reset_stats();
+            lv_refr_now(nat->disp);
+            tiles[k] = lv_draw_ortho_get_stats()->tiles;
+            drop_screen(nat);
+        }
+        lv_draw_ortho_set_tile_width(0);
+        g_cases++;
+        if(tiles[1] > tiles[0]) printf("  ok    tile_width 64 cuts the refresh into %u tiles, %u without\n", tiles[1], tiles[0]);
+        else {
+            g_failures++;
+            printf("  FAIL  tile_width 64 drew %u tiles, %u without: the setting did nothing\n", tiles[1], tiles[0]);
+        }
+    }
     check_fake_ppa_against_the_board();
     {
         g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);

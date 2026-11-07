@@ -81,6 +81,7 @@ static lv_draw_ortho_stats_t g_stats;
 static lv_draw_ortho_copy_cb_t g_copy_cb;
 static bool g_fast = true;
 static bool g_batch = true;
+static int32_t g_tile_width;   /* 0: as wide as the area allows */
 static bool g_tile_internal;
 
 /* A turner (the PPA) and the last ticket it was handed that may still be
@@ -1001,9 +1002,11 @@ static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
         return;
     }
 
-    /* As wide as the area allows, then as many rows as fit. */
+    /* As wide as the area allows (or lv_draw_ortho_set_tile_width), then as
+     * many rows as fit. */
     const int32_t w = lv_area_get_width(&box);
     int32_t tw = w;
+    if(g_tile_width > 0 && tw > g_tile_width) tw = g_tile_width;
     while(tw > 1 && lv_draw_buf_width_to_stride(tw, cf) > u->tile_bytes) tw = (tw + 1) / 2;
     const uint32_t tstride = lv_draw_buf_width_to_stride(tw, cf);
     int32_t th = (int32_t)(u->tile_bytes / tstride);
@@ -1759,6 +1762,11 @@ bool lv_draw_ortho_set_cores(uint32_t cores)
 void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb)
 {
     g_copy_cb = cb;
+}
+
+void lv_draw_ortho_set_tile_width(int32_t px)
+{
+    g_tile_width = px > 0 ? px : 0;
 }
 
 void lv_draw_ortho_set_fast_paths(bool enable)

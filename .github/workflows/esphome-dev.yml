@@ -8,7 +8,10 @@
 # applied to it, so a fix for a newer ESPHome can be proved here before it
 # goes into that repository; once it is there, its patch is removed. Both
 # modes: lvgl_ortho, and lvgl's own rotation, which goes through the fork's
-# flush. A red run here is news about ESPHome dev, not a broken release.
+# flush. And panel_fbs: lvgl_ortho drawing straight into the panel's own
+# frame buffers through the fork's mipi_dsi (framebuffers: 3), with square
+# tiles -- the two things to try next on a Tab5. A red run here is news
+# about ESPHome dev, not a broken release.
 name: ESPHome dev
 on: [push, workflow_dispatch]
 jobs:
@@ -18,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [ortho, lvgl]
+        mode: [ortho, lvgl, panel_fbs]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -64,6 +67,17 @@ jobs:
               s = s[:a] + "".join("# " + l + "\n" for l in s[a:b].rstrip("\n").split("\n")) + s[b:]
               s = s.replace("  # rotation: 270        # mode lvgl only", "  rotation: 270          # mode lvgl only")
               assert "  rotation: 270          # mode lvgl only" in s
+          if "${{ matrix.mode }}" == "panel_fbs":
+              # The fork's mipi_dsi too, and the panel's three buffers.
+              s = s.replace("path: /tmp/lvgl_9.5/components\n    components: [lvgl]",
+                            "path: /tmp/lvgl_9.5/components\n    components: [lvgl, mipi_dsi]")
+              assert "components: [lvgl, mipi_dsi]" in s
+              a = s.index("  - platform: mipi_dsi\n")
+              b = s.index("    color_order: rgb\n", a)
+              s = s[:b] + "    framebuffers: 3\n" + s[b:]
+              s = s.replace("  ppa: true              # false: mode ortho_cpu",
+                            "  ppa: true              # false: mode ortho_cpu\n  tile_width: 256")
+              assert "tile_width: 256" in s and "framebuffers: 3" in s
           open(p, "w").write(s)
           EOF
           printf 'wifi_ssid: "test"\nwifi_password: "testtest"\napi_encryption_key: "kIuGSIsyjV6h5x0uC4ToRJKNJa6tRtjSFdbTB8PA36A="\n' > yaml/secrets.yaml
