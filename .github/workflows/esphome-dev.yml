@@ -82,12 +82,18 @@ jobs:
           printf 'wifi_ssid: "test"\nwifi_password: "testtest"\napi_encryption_key: "kIuGSIsyjV6h5x0uC4ToRJKNJa6tRtjSFdbTB8PA36A="\n' > yaml/secrets.yaml
       - name: esphome compile, mode ${{ matrix.mode }}
         run: esphome compile yaml/tab5-test-lvgl.yaml
-  # The Tab5's camera through lvgl_ortho's window, into the panel's own
-  # frame buffers: yaml/tab5-test-camera.yaml as it stands, with this
-  # repository's components and the fork's lvgl and mipi_dsi.
+  # The Tab5's camera into the panel's own frame buffers, both ways: through
+  # esphome_esp-video and lvgl_ortho's window (tab5-test-camera), and
+  # through youkorr/esphome's esp_video_camera drawn by LVGL as a picture
+  # (p4tab5-camera-ortho). Each file as it stands, with this repository's
+  # components and the fork's lvgl and mipi_dsi.
   camera:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        file: [tab5-test-camera, p4tab5-camera-ortho]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -98,7 +104,7 @@ jobs:
       - name: Local components, dummy secrets
         run: |
           python3 - <<'PY'
-          p = "yaml/tab5-test-camera.yaml"
+          p = "yaml/${{ matrix.file }}.yaml"
           s = open(p).read()
           for a, b in (("""  - source:
                 type: git
@@ -113,5 +119,5 @@ jobs:
           open(p, "w").write(s)
           PY
           printf 'wifi_ssid: "test"\nwifi_password: "testtest"\napi_encryption_key: "kIuGSIsyjV6h5x0uC4ToRJKNJa6tRtjSFdbTB8PA36A="\n' > yaml/secrets.yaml
-      - name: esphome compile, the camera test
-        run: esphome compile yaml/tab5-test-camera.yaml
+      - name: esphome compile, ${{ matrix.file }}
+        run: esphome compile yaml/${{ matrix.file }}.yaml
