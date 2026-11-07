@@ -57,8 +57,8 @@ external_components:
   - source:
       type: git
       url: https://github.com/youkorr/esphome_esp-video
-      # ESP-IDF 5.5.6 on a P4 below v3.0 needs esp_video's CSI input fixed
-      ref: claude/esp-video-idf-556
+      # main: its esp_video starts the camera on ESP-IDF 5.5.6 on a P4 below v3.0
+      ref: main
     components: [esp_video, esp_cam_sensor, lvgl_camera_display]
 
 logger:
