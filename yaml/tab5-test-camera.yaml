@@ -4,11 +4,15 @@
 #
 # The Tab5's camera on the whole screen through lvgl_ortho, and nothing else
 # running: no voice, no H.264, no dashboard, so the figure is the camera's
-# path alone. Each frame is turned once by the PPA straight into the panel's
-# own frame buffer (ortho_id + framebuffers: 3); LVGL draws nothing else.
+# path alone. lvgl_camera_display points the canvas at each frame and LVGL
+# draws it as a picture, which lvgl_ortho turns straight into the panel's own
+# frame buffer (framebuffers: 3) -- with split: true, the PPA and both cores
+# together. With ortho_id: instead, each frame goes into lvgl_ortho's video
+# window, turned by the PPA alone: split does not cover that window yet.
 #
 # The figures, every 10 s in the log:
-#   [I][lvgl_ortho]: Last 10s: N video frames/s (X ms each) ...
+#   [I][lvgl_ortho]: Last 10s: ... N screens/s shown ...
+#   [I][lvgl_ortho]:   N big pictures/s shared: X% by the PPA, Y% by the CPU
 #   [I][lvgl_camera_display]: === BENCHMARK (100 frames) === FPS: ...
 # The sensor sends 30 frames a second at most (SC2356 at 1280x720).
 #
@@ -25,6 +29,9 @@ lvgl_ortho:
   rotation: 270          # the Tab5 in landscape (ESPHome's degrees)
   ppa: true
   cores: 2
+  # Each camera frame's turn shared: the PPA turns part of its rows while
+  # both cores turn the rest. false: the PPA alone.
+  split: true
 
 esphome:
   name: camera-test
@@ -132,8 +139,10 @@ lvgl_camera_display:
   camera_id: tab5_cam
   canvas_id: camera_canvas
   update_interval: 16ms
-  # Each frame turned once by the PPA into lvgl_ortho's window
-  ortho_id: ortho
+  # Left out so LVGL draws each frame as a picture, which split shares
+  # between the PPA and the CPU. Put back to send frames into lvgl_ortho's
+  # video window instead: the PPA alone, 15 frames/s at 1280x720.
+  # ortho_id: ortho
 
 # The whole landscape screen is the camera's window.
 lvgl:
