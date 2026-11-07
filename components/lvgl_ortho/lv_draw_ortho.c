@@ -237,7 +237,7 @@ static void copy_straight(uint8_t * dest, int32_t dest_stride, const uint8_t * s
 static void move_turned_rows(const ortho_t * o, int32_t px,
                              uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
                              uint8_t * up, int32_t up_stride, const lv_area_t * up_area,
-                             const lv_area_t * nat_rect, bool to_native)
+                             const lv_area_t * nat_rect, bool to_native, int32_t block)
 {
     /* One step right in native space is (a, b) in upright space. */
     const intptr_t up_step = (intptr_t)o->a * px + (intptr_t)o->b * up_stride;
@@ -252,10 +252,10 @@ static void move_turned_rows(const ortho_t * o, int32_t px,
     const bool quad = px == 2 && (col_step == 2 || col_step == -2) &&
                       (up_step == up_stride || up_step == -up_stride);
 
-    for(int32_t by = nat_rect->y1; by <= nat_rect->y2; by += LV_DRAW_ORTHO_BLOCK) {
-        const int32_t ey = LV_MIN(by + LV_DRAW_ORTHO_BLOCK - 1, nat_rect->y2);
-        for(int32_t bx = nat_rect->x1; bx <= nat_rect->x2; bx += LV_DRAW_ORTHO_BLOCK) {
-            const int32_t w = LV_MIN(bx + LV_DRAW_ORTHO_BLOCK - 1, nat_rect->x2) - bx + 1;
+    for(int32_t by = nat_rect->y1; by <= nat_rect->y2; by += block) {
+        const int32_t ey = LV_MIN(by + block - 1, nat_rect->y2);
+        for(int32_t bx = nat_rect->x1; bx <= nat_rect->x2; bx += block) {
+            const int32_t w = LV_MIN(bx + block - 1, nat_rect->x2) - bx + 1;
             int32_t ny = by;
             if(quad) {
                 for(; ny + 1 <= ey; ny += 2) {
@@ -355,7 +355,8 @@ static void move_turned(const ortho_t * o, int32_t px,
 {
     g_stats.bytes_turned += (uint64_t)lv_area_get_width(nat_rect) *
                             (uint64_t)lv_area_get_height(nat_rect) * (uint64_t)px;
-    move_turned_rows(o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, nat_rect, to_native);
+    move_turned_rows(o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, nat_rect, to_native,
+                     LV_DRAW_ORTHO_BLOCK);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1414,6 +1415,17 @@ static bool try_cached(lv_draw_task_t * t, const ortho_t * o, const lv_image_dsc
 #endif
 /* How far from the share's row a cut may move to find one between lines. */
 #define SPLIT_SEARCH_ROWS 256
+/* The CPU's blocks in a split: out of PSRAM into PSRAM, a block of 64 uses
+ * the whole of each 128-byte line it reads before moving on, where one of 32
+ * uses half and comes back for the rest after it has been evicted. In the
+ * P4 simulation (test/p4sim, calibrated on a Tab5's PSRAM copy), a whole
+ * 1280x720 frame turned on one core: 76.9 ms at 16, 62.4 at 32, 55.3 at 64,
+ * 53.3 at 128 -- whose block fills the whole L1, with the other core, the PPA
+ * and the scan-out on the same memory on a board. Tiles keep
+ * LV_DRAW_ORTHO_BLOCK: they come out of internal RAM, which was not measured. */
+#ifndef LV_DRAW_ORTHO_SPLIT_BLOCK
+#define LV_DRAW_ORTHO_SPLIT_BLOCK 64
+#endif
 
 #if defined(LV_DRAW_ORTHO_SIM_CORES)
 /* The simulated P4 has no clock to ask: the starting share, unchanged. */
@@ -1439,11 +1451,13 @@ static int64_t split_now_us(void)
 
 static bool g_split;
 static uint32_t g_split_fixed;   /* permille to the turner; 0: follow the rates */
-/* Pixels a microsecond. The starting guesses are a Tab5's: the PPA's turn,
- * and move_turned out of PSRAM into PSRAM on one core. Corrected after every
- * split from what it took. */
+/* Pixels a microsecond, corrected after every split from what it took: the
+ * starting guesses only decide the first few frames. The PPA's is the Tab5's
+ * measured turn. The CPU's is a guess: the P4 simulation gives 15-17 for one
+ * core out of PSRAM into PSRAM, with nothing else using the memory, which on
+ * a board the PPA, the other core and the scan-out all are. */
 static float g_rate_turner = 15.0f;
-static float g_rate_cpu = 5.0f;
+static float g_rate_cpu = 10.0f;
 
 typedef struct {
     const ortho_t * o;
@@ -1461,7 +1475,7 @@ static void turn_band(void * arg)
 {
     const band_t * b = arg;
     move_turned_rows(b->o, b->px, b->nat, b->nat_stride, b->nat_buf_area, b->up, b->up_stride, b->up_area,
-                     &b->rect, true);
+                     &b->rect, true, LV_DRAW_ORTHO_SPLIT_BLOCK);
 }
 
 /* Whether native rows r - 1 and r, between columns x1 and x2, are in
@@ -1541,7 +1555,8 @@ static bool turn_split(const ortho_t * o, lv_color_format_t cf, int32_t px,
     if(helped) helper_run(turn_band, &other);
     lv_area_t mine = *rect;
     mine.y1 = helped ? r2 : r1;
-    move_turned_rows(o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, &mine, true);
+    move_turned_rows(o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, &mine, true,
+                     LV_DRAW_ORTHO_SPLIT_BLOCK);
     const int64_t t1 = split_now_us();
     if(helped) helper_join();
     const int64_t t2 = split_now_us();
