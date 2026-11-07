@@ -45,6 +45,10 @@ sub(lcd, "    ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel_handle));\n",
     "    ESP_ERROR_CHECK(gpio_config(&backlight));\n"
     "    gpio_set_level(32, 0);\n")
 
+# hw_init.c refuses a board with no input at all; this run has none on purpose.
+sub(app / "components/hw_init/hw_init.c",
+    '#if !HW_USE_TOUCH && !HW_USE_ENCODER\n#error "No input device configured!"\n#endif\n',
+    "/* Waveshare 7B run: no input on purpose (see prepare.py). */\n")
 sub(app / "components/hw_init/hw_init.h",
     "#define HW_LCD_V_RES    600\n#define HW_USE_TOUCH    1\n",
     "#define HW_LCD_V_RES    600\n#define HW_USE_TOUCH    0   /* Waveshare 7B: GT911 reset not driven */\n")
