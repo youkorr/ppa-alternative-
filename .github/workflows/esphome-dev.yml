@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# The Tab5 test built with ESPHome's development branch, which is ahead of
+# the release the main CI pins: a board updated to it meets what changed
+# first. youkorr/lvgl_9.5's lvgl is cloned and patches/lvgl_9.5-*.patch
+# applied to it, so a fix for a newer ESPHome can be proved here before it
+# goes into that repository. A red run here is news about ESPHome dev, not a
+# broken release.
+name: ESPHome dev
+on: [push, workflow_dispatch]
+jobs:
+  tab5:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        patched: [true, false]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install "git+https://github.com/esphome/esphome@dev"
+      - run: esphome version
+      - name: youkorr/lvgl_9.5, patched or as it is
+        run: |
+          git clone --depth 1 -b claude/jolly-lamport-ERZOC https://github.com/youkorr/lvgl_9.5 /tmp/lvgl_9.5
+          if [ "${{ matrix.patched }}" = true ]; then
+            for p in patches/lvgl_9.5-*.patch; do git -C /tmp/lvgl_9.5 apply "$PWD/$p"; done
+          fi
+      - name: Local components, dummy secrets
+        run: |
+          python3 - <<'EOF'
+          p = "yaml/tab5-test-lvgl.yaml"
+          s = open(p).read()
+          old = """  - source:
+                type: git
+                url: https://github.com/youkorr/lvgl_9.5
+                ref: claude/jolly-lamport-ERZOC
+              components: [lvgl]
+            - source: github://youkorr/ppa-alternative-@main
+              components: [lvgl_ortho, lvgl_bench]"""
+          assert s.count(old) == 1, "the external_components block moved"
+          new = """  - source:
+                type: local
+                path: /tmp/lvgl_9.5/components
+              components: [lvgl]
+            - source:
+                type: local
+                path: ../components
+              components: [lvgl_ortho, lvgl_bench]"""
+          s = s.replace(old, new).replace("  active_high: true\n", "")
+          open(p, "w").write(s)
+          EOF
+          printf 'wifi_ssid: "test"\nwifi_password: "testtest"\napi_encryption_key: "kIuGSIsyjV6h5x0uC4ToRJKNJa6tRtjSFdbTB8PA36A="\n' > yaml/secrets.yaml
+      - name: esphome compile, lvgl_9.5 patched ${{ matrix.patched }}
+        run: esphome compile yaml/tab5-test-lvgl.yaml

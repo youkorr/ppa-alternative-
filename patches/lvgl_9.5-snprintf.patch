@@ -1,0 +1,17 @@
+diff --git a/components/lvgl/lvgl_esphome.cpp b/components/lvgl/lvgl_esphome.cpp
+index f5a7caa..4940223 100644
+--- a/components/lvgl/lvgl_esphome.cpp
++++ b/components/lvgl/lvgl_esphome.cpp
+@@ -303,7 +303,11 @@ std::string lv_event_code_name_for(lv_event_t *event) {
+   if (event_code < sizeof(EVENT_NAMES) / sizeof(EVENT_NAMES[0])) {
+     return EVENT_NAMES[event_code];
+   }
+-  return str_sprintf("%2d", event_code);
++  // snprintf rather than str_sprintf: ESPHome moved str_sprintf into
++  // esphome/core/alloc_helpers.h, which this file does not include.
++  char buf[8];
++  snprintf(buf, sizeof(buf), "%2d", (int) event_code);
++  return buf;
+ }
+ 
+ static void rounder_cb(lv_event_t *event) {
