@@ -876,6 +876,178 @@ static void check_image_cache_rotations(lv_display_rotation_t first, lv_display_
     lv_draw_ortho_set_image_cache(0);
 }
 
+/* ------------------------------------------------------------------------ */
+/* A big turn split between the PPA and the CPU (lv_draw_ortho_set_split)   */
+/* ------------------------------------------------------------------------ */
+
+/* A camera frame: a picture the size of the screen, or most of it with a label
+ * over it. Modifiable, as a camera's frame is, so it is turned every time. */
+static lv_image_dsc_t * g_frame;
+static int32_t g_cam_x, g_cam_y;
+static bool g_cam_label;
+
+static void scene_cam(lv_obj_t * scr)
+{
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x102030), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_t * img = lv_image_create(scr);
+    lv_image_set_src(img, g_frame);
+    lv_obj_set_pos(img, g_cam_x, g_cam_y);
+    if(g_cam_label) {
+        lv_obj_t * l = lv_label_create(scr);
+        lv_label_set_text(l, "12.3 fps");
+        lv_obj_set_pos(l, g_cam_x + 30, g_cam_y + 20);
+    }
+}
+
+/* Whether native rows r - 1 and r, between columns x1 and x2, lie in
+ * different 128-byte lines of the frame buffer -- the test's own arithmetic,
+ * not lv_draw_ortho's. */
+static bool test_rows_apart(const screen_t * s, int32_t px, int32_t x1, int32_t x2, int32_t r)
+{
+    const uintptr_t last = (uintptr_t)(s->buf + (r - 1) * s->stride + x2 * px + px - 1);
+    const uintptr_t first = (uintptr_t)(s->buf + r * s->stride + x1 * px);
+    return last / 128 != first / 128;
+}
+
+static void check_split(int32_t nw, int32_t nh, lv_display_rotation_t rot, uint32_t share, bool inset)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const int32_t px = 2;
+    const int32_t uw = nh, uh = nw;   /* a quarter turn: the UI's size */
+    g_cam_x = inset ? 23 : 0;
+    g_cam_y = inset ? 17 : 0;
+    g_cam_label = inset;
+    g_frame = image_of(inset ? uw - 41 : uw, inset ? uh - 29 : uh, cf, 31);
+    g_frame->header.flags |= LV_IMAGE_FLAGS_MODIFIABLE;
+    uint8_t * want = reference(nw, nh, cf, rot, scene_cam);
+    lv_draw_ortho_ppa_init();
+    lv_draw_ortho_set_split(true);
+    lv_draw_ortho_set_split_share(share);
+    screen_t * nat = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(nat->disp);
+    scene_cam(lv_display_get_screen_active(nat->disp));
+    lv_draw_ortho_reset_stats();
+    const unsigned long long ppa0 = g_p4_pixels - g_p4_fill_pixels;
+    lv_refr_now(nat->disp);
+    const unsigned long long ppa = g_p4_pixels - g_p4_fill_pixels - ppa0;
+    const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+    char what[240];
+    snprintf(what, sizeof(what), "split %s, %s at %s, share %s: %u split(s), %.0f KiB by the PPA, %.0f by the CPU, "
+             "cut at rows %d and %d", inset ? "inset, a label over it" : "whole screen", "RGB565", rot_name(rot),
+             share ? (share == 300 ? "30%" : share == 600 ? "60%" : "90%") : "measured", st->splits,
+             st->bytes_split_turner / 1024.0, st->bytes_split_cpu / 1024.0, (int)st->split_cut, (int)st->split_cut2);
+    expect_same(what, nat, want, cf);
+
+    g_cases++;
+    if(st->splits >= 1 && st->bytes_split_turner > 0 && st->bytes_split_cpu > 0)
+        printf("  ok    ...and the frame was shared between the PPA and the CPU\n");
+    else {
+        g_failures++;
+        printf("  FAIL  ...and the frame was not shared\n");
+    }
+
+    /* Where the cuts fell: never a cache line written from both sides. */
+    lv_area_t ui = {g_cam_x, g_cam_y, g_cam_x + g_frame->header.w - 1, g_cam_y + g_frame->header.h - 1};
+    ui.x2 = LV_MIN(ui.x2, uw - 1);
+    ui.y2 = LV_MIN(ui.y2, uh - 1);
+    lv_area_t na;
+    lv_draw_ortho_native_area(nat->disp, &ui, &na);
+    bool apart = st->splits >= 1 && st->split_cut > na.y1 && st->split_cut <= na.y2 &&
+                 test_rows_apart(nat, px, na.x1, na.x2, st->split_cut);
+    if(st->split_cut2 != st->split_cut)
+        apart = apart && st->split_cut2 > st->split_cut && st->split_cut2 <= na.y2 &&
+                test_rows_apart(nat, px, na.x1, na.x2, st->split_cut2);
+    g_cases++;
+    if(apart) printf("  ok    ...and every cut is between rows in different cache lines\n");
+    else {
+        g_failures++;
+        printf("  FAIL  ...and a cut puts the two sides in one cache line (rows %d, %d of %d..%d)\n",
+               (int)st->split_cut, (int)st->split_cut2, (int)na.y1, (int)na.y2);
+    }
+
+    /* The bands cover the picture once: a row turned by both sides draws
+     * right here and shares lines on a board. */
+    const uint64_t whole = (uint64_t)lv_area_get_size(&na) * px;
+    g_cases++;
+    if(st->bytes_split_turner + st->bytes_split_cpu == whole)
+        printf("  ok    ...and the bands cover the picture once\n");
+    else {
+        g_failures++;
+        printf("  FAIL  ...and the bands turned %llu bytes of a %llu-byte picture\n",
+               (unsigned long long)(st->bytes_split_turner + st->bytes_split_cpu), (unsigned long long)whole);
+    }
+    /* A share asked for is the share given, but for the move to a row
+     * between lines: at most 64 rows here. */
+    if(share) {
+        const int32_t aim = na.y1 + (int32_t)(share / 1000.0f * lv_area_get_height(&na));
+        g_cases++;
+        if(LV_ABS(st->split_cut - aim) <= 64) printf("  ok    ...and the cut is where the share puts it (row %d for %d)\n",
+                                                         (int)st->split_cut, (int)aim);
+        else {
+            g_failures++;
+            printf("  FAIL  ...and the cut is at row %d where the share puts it at %d\n", (int)st->split_cut, (int)aim);
+        }
+    }
+
+    /* With nothing over the picture, every pixel the PPA turned is its band:
+     * no more, no fewer. A band handed to it and to the CPU both would still
+     * draw right, and would put the two in one line on a board. */
+    if(!inset) {
+        const unsigned long long band = (unsigned long long)(st->split_cut - na.y1) * lv_area_get_width(&na);
+        g_cases++;
+        if(ppa == band && st->bytes_split_turner == band * px)
+            printf("  ok    ...and the PPA turned its band exactly (%llu pixels)\n", band);
+        else {
+            g_failures++;
+            printf("  FAIL  ...and the PPA turned %llu pixels for a band of %llu\n", ppa, band);
+        }
+    }
+    drop_screen(nat);
+    free(want);
+    lv_draw_ortho_set_split(false);
+    lv_draw_ortho_set_split_share(0);
+    lv_draw_ortho_ppa_deinit();
+    free((void *)g_frame->data);
+    free(g_frame);
+    g_frame = NULL;
+}
+
+static void check_splits(void)
+{
+    /* 333 pixels: a row of 666 bytes, so only every 64th row starts a line
+     * and almost any share lands between two rows that share one. */
+    const lv_display_rotation_t rots[] = {LV_DISPLAY_ROTATION_90, LV_DISPLAY_ROTATION_270};
+    const uint32_t shares[] = {300, 600, 900, 0};
+    for(unsigned r = 0; r < 2; r++) {
+        for(unsigned k = 0; k < 4; k++) check_split(333, 517, rots[r], shares[k], false);
+        check_split(333, 517, rots[r], 600, true);
+        check_split(333, 517, rots[r], 0, true);
+    }
+    /* Off by default: the same picture turned by the PPA alone. */
+    g_cam_x = g_cam_y = 0;
+    g_cam_label = false;
+    g_frame = image_of(517, 333, LV_COLOR_FORMAT_RGB565, 31);
+    g_frame->header.flags |= LV_IMAGE_FLAGS_MODIFIABLE;
+    lv_draw_ortho_ppa_init();
+    screen_t * nat = make_screen(333, 517, LV_COLOR_FORMAT_RGB565, LV_DISPLAY_ROTATION_90, true, false);
+    lv_display_set_default(nat->disp);
+    scene_cam(lv_display_get_screen_active(nat->disp));
+    lv_draw_ortho_reset_stats();
+    lv_refr_now(nat->disp);
+    g_cases++;
+    if(lv_draw_ortho_get_stats()->splits == 0) printf("  ok    split: off unless asked for\n");
+    else {
+        g_failures++;
+        printf("  FAIL  split: a frame was split without being asked\n");
+    }
+    drop_screen(nat);
+    lv_draw_ortho_ppa_deinit();
+    free((void *)g_frame->data);
+    free(g_frame);
+    g_frame = NULL;
+}
+
 static void check_image_caches(void)
 {
     const lv_display_rotation_t rots[] = {LV_DISPLAY_ROTATION_90, LV_DISPLAY_ROTATION_180, LV_DISPLAY_ROTATION_270};
@@ -1717,6 +1889,7 @@ int main(int argc, char ** argv)
     }
 
     check_image_caches();
+    check_splits();
     {
         /* Narrower, taller tiles (lv_draw_ortho_set_tile_width): the same
          * pixels at every rotation, by the CPU and by the PPA, and with a

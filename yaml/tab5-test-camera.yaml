@@ -13,7 +13,10 @@
 # The sensor sends 30 frames a second at most (SC2356 at 1280x720).
 #
 # The camera's settings are those of yaml/habbit (1).yaml in
-# youkorr/esphome_esp-video, the Tab5 they already run on.
+# youkorr/esphome_esp-video, the Tab5 they already run on. Built with
+# ESPHome's own ESP-IDF, 5.5.6: esphome_esp-video's esp_video gives the CSI
+# bridge the ISP's output as its input, which 5.5.6 requires on a P4 below
+# v3.0 (the Tab5 is v1.0).
 #
 # Needs secrets.yaml with wifi_ssid, wifi_password and api_encryption_key.
 
@@ -54,7 +57,8 @@ external_components:
   - source:
       type: git
       url: https://github.com/youkorr/esphome_esp-video
-      ref: claude/usb-uvc-consumer-integration-gnbflf
+      # main: its esp_video starts the camera on ESP-IDF 5.5.6 on a P4 below v3.0
+      ref: main
     components: [esp_video, esp_cam_sensor, lvgl_camera_display]
 
 logger:
@@ -160,11 +164,6 @@ esp32:
   cpu_frequency: 360MHz
   framework:
     type: esp-idf
-    # ESP-IDF 5.5.6, ESPHome dev's default, refuses the camera on a P4 below
-    # v3.0 (the Tab5 is v1.0): its CSI driver now asks for a format
-    # conversion those revisions cannot do, and esp_video's fix
-    # (esp-video-components 79ae611) is not in a release yet.
-    version: 5.5.5
     advanced:
       enable_idf_experimental_features: true
 
