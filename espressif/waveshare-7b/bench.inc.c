@@ -156,7 +156,10 @@ static void bench_build_ui(lv_obj_t *scr)
 
 TEST_CASE("rotate bench: whole screen redrawn", "[bench]")
 {
-    ESP_LOGI(TAG, "BENCH start: %s, rotation 90", BENCH_MODE);
+    ESP_LOGI(TAG, "BENCH start: %s, rotation %d, LVGL draws %dx%d", BENCH_MODE,
+             (int)get_configured_rotation(),
+             (int)lv_display_get_horizontal_resolution(s_disp),
+             (int)lv_display_get_vertical_resolution(s_disp));
 
     TEST_ESP_OK(esp_lv_adapter_lock(pdMS_TO_TICKS(LVGL_LOCK_TIMEOUT_MS)));
     lv_obj_t *scr = lv_display_get_screen_active(s_disp);
