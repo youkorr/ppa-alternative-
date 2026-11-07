@@ -9,8 +9,13 @@
 #   mode ortho         as it is
 #   mode ortho_2cores  uncomment "cores: 2"
 #   mode ortho_cpu     ppa: false
+#   mode tiles         uncomment "tile_width: 256" (then try 128)
+#   mode panel_fbs     the panel's own frame buffers, nothing copied: uncomment
+#                      "framebuffers: 3" under display:, and make the first
+#                      external_components list "components: [lvgl, mipi_dsi]"
 #   mode lvgl          comment out the whole lvgl_ortho: block and uncomment
-#                      "rotation: 270" under lvgl: further down
+#                      "rotation: 270" under lvgl: further down; use_ppa and
+#                      use_ppa_img may be true there to compare the fork's PPA
 #
 # Needs secrets.yaml with wifi_ssid, wifi_password and api_encryption_key.
 
@@ -20,6 +25,7 @@ lvgl_ortho:
   rotation: 270          # the Tab5 in landscape (ESPHome's degrees)
   ppa: true              # false: mode ortho_cpu
   # cores: 2             # mode ortho_2cores
+  # tile_width: 256      # mode tiles
 # -------------------------------------------------------------------------
 
 esphome:
@@ -31,7 +37,7 @@ external_components:
       type: git
       url: https://github.com/youkorr/lvgl_9.5
       ref: claude/jolly-lamport-ERZOC
-    components: [lvgl]
+    components: [lvgl]   # mode panel_fbs: [lvgl, mipi_dsi]
   - source: github://youkorr/ppa-alternative-@main
     components: [lvgl_ortho, lvgl_bench]
 
@@ -79,8 +85,10 @@ lvgl:
   buffer_size: 100%
   color_depth: 16
   byte_order: little_endian
-  use_ppa: true
-  use_ppa_img: true
+  # false beside lvgl_ortho: the fork's PPA blending and lvgl_ortho's turns
+  # stalled the PPA on a Tab5. True only in mode lvgl, to compare.
+  use_ppa: false
+  use_ppa_img: false
   style_definitions:
     - id: card
       bg_color: 0x1E2633
@@ -253,6 +261,7 @@ display:
       pi4ioe5v6408: pi4ioe1
       number: 4
     pixel_mode: 24
+    # framebuffers: 3      # mode panel_fbs
     color_order: rgb
 
 output:
