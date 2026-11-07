@@ -69,10 +69,20 @@ measure the same. Narrower tiles were slower, see `tile_width:` below.
 
 The Tab5's camera (SC2356, 1280x720) on the whole screen, through the
 household's `esp_video_camera` and `lvgl_camera_display`
-(`yaml/p4tab5-camera-ortho.yaml`): **15.3 frames/s** with lvgl_ortho, each
-frame turned once by the PPA into the panel's own buffer, against 10-12
-through lvgl's rotation. 65 ms a frame is, again, the PPA's 270 turn alone,
-which is what `split:` (below) was built for -- and measured slower.
+(`yaml/p4tab5-camera-ortho.yaml`), each frame drawn by LVGL as a picture and
+turned once by the PPA:
+
+| | camera frames/s |
+|---|---|
+| lvgl's own rotation | 10-12 |
+| lvgl_ortho, ESPHome's `mipi_dsi` (a copy to the panel each frame) | 12.8 |
+| lvgl_ortho, the panel's own frame buffers (`framebuffers: 3`) | **15.6** |
+| the same, with `split: true` | 14.0 |
+
+The copy is 14.4 ms a frame (184 ms of copying a second at 12.8 frames),
+which is the whole difference between the two middle rows. At 64 ms a frame
+is the PPA's 270 turn alone, which is what `split:` (below) was built for --
+and measured slower.
 
 ## On an ESPHome board
 
