@@ -253,7 +253,7 @@ int main(int argc, char **argv) {
   size_t d = diffs(glass(), want);
   std::snprintf(what, sizeof what, "the glass equals LVGL's upright UI turned (%zu pixels differ, %d draws)", d,
                 panel.calls);
-  expect(d == 0 && panel.bad == 0, what);
+  expect(d == 0 && panel.bad == 0 && panel.lost == 0, what);
 
   // A change in one small square: only a few rows should go out.
   const int calls = panel.calls;
