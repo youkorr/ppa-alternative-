@@ -30,8 +30,17 @@ esphome:
     # After every component's setup: the canvas exists, the camera runs.
     priority: -100
     then:
+      # Black until the first frame: a canvas's buffer is never cleared, and
+      # left alone it shows whatever PSRAM held -- stripes, not a camera.
+      - lvgl.canvas.fill:
+          id: camera_canvas
+          color: 0x000000
       - lambda: |-
           id(camera_display).configure_canvas(id(camera_canvas));
+          // lvgl_camera_display draws nothing until the camera streams, and
+          // nothing starts the stream on its own.
+          if (!id(tab5_cam).start_streaming())
+            ESP_LOGE("camera_test", "The camera would not stream; see esp_cam_sensor above");
           id(camera_display).set_enabled(true);
 
 external_components:
@@ -76,9 +85,13 @@ switch:
     optimistic: true
     restore_mode: ALWAYS_ON
     turn_on_action:
-      - lambda: "id(camera_display)->set_enabled(true);"
+      - lambda: |-
+          id(tab5_cam).start_streaming();
+          id(camera_display)->set_enabled(true);
     turn_off_action:
-      - lambda: "id(camera_display)->set_enabled(false);"
+      - lambda: |-
+          id(camera_display)->set_enabled(false);
+          id(tab5_cam).stop_streaming();
   - platform: gpio
     id: cam_rst
     name: "Camera reset"
