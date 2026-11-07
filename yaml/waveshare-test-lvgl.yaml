@@ -28,6 +28,7 @@
 #                        PPA.
 #
 # For Espressif, three are enough: lvgl, panel_fbs and panel_fbs_2c.
+# Measured: 129.0, 57.0 and 47.7 ms per frame.
 #
 # Needs secrets.yaml with wifi_ssid, wifi_password and api_encryption_key.
 

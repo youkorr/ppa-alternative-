@@ -16,6 +16,7 @@
 # The figures, every 10 s in the log:
 #   [I][lvgl_ortho]: Last 10s: ... N screens/s shown ...
 #   [I][lvgl_camera_display]: === BENCHMARK (100 frames) === FPS: ...
+# Measured as it stands: 20.8 frames/s (15.6 on the Tab5 at 270).
 #
 # The camera's settings are those of youkorr/esphome_esp-video's
 # yaml/lvgl-kawaii.yaml, which runs on this board: 1280x960, of which the
