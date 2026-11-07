@@ -53,6 +53,8 @@ class LvglOrtho : public Component {
   void set_image_cache(size_t bytes) { this->image_cache_ = bytes; }
   // At most this many pixels wide, a drawing tile; 0 for the screen's width.
   void set_tile_width(int width) { this->tile_width_ = width; }
+  // A big picture's turn shared between the PPA and the CPU (lv_draw_ortho_set_split).
+  void set_split(bool split) { this->split_ = split; }
 
   void setup() override;
   void loop() override;
@@ -87,6 +89,7 @@ class LvglOrtho : public Component {
   bool cores_on_{false};
   size_t image_cache_{0};
   int tile_width_{0};
+  bool split_{false};
   bool ppa_on_{false};
   bool ppa_lost_{false};  // said once, and the screen drawn again
   lv_display_t *disp_{nullptr};

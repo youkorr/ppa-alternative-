@@ -67,6 +67,11 @@ CONFIG_SCHEMA = cv.All(
             # the screen). Narrower is taller, and at 90 and 270 a tile's
             # height is the length of the rows the PPA writes: try 256.
             cv.Optional("tile_width", default=0): cv.int_range(min=0, max=4096),
+            # A big picture's turn (a camera frame, a wallpaper) shared: the
+            # PPA turns part of its rows and the CPU the rest at the same
+            # time, this core and with cores: 2 the other one. The PPA alone
+            # turns a quarter at about 15 Mpx/s on a Tab5.
+            cv.Optional("split", default=False): cv.boolean,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     only_on_variant(supported=[VARIANT_ESP32P4]),
@@ -150,4 +155,5 @@ async def to_code(config):
     cg.add(var.set_cores(config["cores"]))
     cg.add(var.set_image_cache(config["image_cache"]))
     cg.add(var.set_tile_width(config["tile_width"]))
+    cg.add(var.set_split(config["split"]))
     cg.add_define("USE_LVGL_ORTHO")

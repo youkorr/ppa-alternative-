@@ -104,6 +104,7 @@ void LvglOrtho::setup() {
   }
   lv_draw_ortho_set_image_cache(this->image_cache_);
   lv_draw_ortho_set_tile_width(this->tile_width_);
+  lv_draw_ortho_set_split(this->split_);
   // After the PPA, so the second core gets tiles to alternate with its turns.
   if (this->cores_ > 1) {
     this->cores_on_ = lv_draw_ortho_set_cores(2);
@@ -208,6 +209,11 @@ void LvglOrtho::dump_config() {
     ESP_LOGCONFIG(TAG, "  Tile width: at most %d pixels (tile_width)", this->tile_width_);
   } else {
     ESP_LOGCONFIG(TAG, "  Tile width: the screen's");
+  }
+  if (this->split_) {
+    ESP_LOGCONFIG(TAG, "  Big pictures: %s", this->ppa_on_ ? (this->cores_on_ ? "shared between the PPA and both cores"
+                                                                                 : "shared between the PPA and this core")
+                                                         : "no PPA to share them with (split needs ppa: true)");
   }
   if (this->ppa_on_) {
     ESP_LOGCONFIG(TAG, "  Turns: the PPA, %s", lv_draw_ortho_get_stats()->tiles_in_turn >= 2
@@ -457,6 +463,14 @@ void LvglOrtho::loop() {
       if (st->images_cached > 0 || st->image_cache_builds > 0) {
         ESP_LOGI(TAG, "  %u pictures copied from %u KiB turned once (%u turned into it)", (unsigned) st->images_cached,
                  (unsigned) (st->image_cache_bytes / 1024), (unsigned) st->image_cache_builds);
+      }
+      // A big picture shared: how much each side turned, and the PPA's share
+      // the last time -- it follows what each was measured to do.
+      if (st->splits > 0) {
+        const float all = (float) (st->bytes_split_turner + st->bytes_split_cpu);
+        ESP_LOGI(TAG, "  %.1f big pictures/s shared: %.0f%% by the PPA, %.0f%% by the CPU%s (last share %u%%)",
+                 st->splits / s, 100.0f * st->bytes_split_turner / all, 100.0f * st->bytes_split_cpu / all,
+                 this->cores_on_ ? " on both cores" : "", (unsigned) (st->split_share / 10));
       }
       if (this->cores_on_ && st->tiles > 0) {
         ESP_LOGI(TAG, "  %u of %u tiles painted on the second core", (unsigned) st->tiles_other_core,

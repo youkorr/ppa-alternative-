@@ -67,6 +67,13 @@ about 15. At 61 ms a frame is the PPA turning 1280x720 and nothing else:
 the drawing on both cores is hidden behind it. `pixel_mode: 16` and `24`
 measure the same. Narrower tiles were slower, see `tile_width:` below.
 
+The Tab5's camera (SC2356, 1280x720) on the whole screen, through the
+household's `esp_video_camera` and `lvgl_camera_display`
+(`yaml/p4tab5-camera-ortho.yaml`): **15.3 frames/s** with lvgl_ortho, each
+frame turned once by the PPA into the panel's own buffer, against 10-12
+through lvgl's rotation. 65 ms a frame is, again, the PPA's 270 turn alone,
+which is what `split:` (below) is for.
+
 ## On an ESPHome board
 
 Two lines change in a board's YAML: `rotation:` leaves the `lvgl:` block and
@@ -88,6 +95,7 @@ lvgl_ortho:
   # cores: 2              # off by default: the second core draws every other tile
   # image_cache: 4MB      # the default: pictures that do not change are turned once
   # tile_width: 256       # off by default: narrower, taller tiles (slower on a Tab5)
+  # split: true           # off by default: a big picture's turn shared by the PPA and the CPU
 ```
 
 It takes LVGL's display over once ESPHome's lvgl has built it: one
@@ -114,6 +122,8 @@ rows that changed, and touches turned back to the screen's coordinates.
   one against 78.5. Part of the cost is per tile, not per pixel -- LVGL
   draws each task once per tile it touches, and each tile is one more PPA
   transaction and one more wait. `0`, the default, keeps the widest tiles.
+- **`split: true`** shares a big picture's quarter turn (a camera frame, a
+  wallpaper) between the PPA and the CPU, see [A big turn split](#a-big-turn-split).
 - **`cores: 2`** draws every other tile on the second core (see
   [Two cores](#two-cores)). It needs LVGL built with an OS, which
   youkorr/lvgl_9.5 is, and is refused otherwise.
@@ -245,6 +255,32 @@ drawing, still faster):
 It costs the second core's time and a 12 KiB stack, so it is off by default:
 compare `ortho` and `ortho_2cores` with `lvgl_bench` and keep the faster.
 
+### A big turn split
+
+A quarter turn is the slowest thing the PPA does, about 15 Mpx/s on a Tab5,
+and a camera frame drawn on the whole screen is nothing else: 61-65 ms a
+frame, with the CPU waiting for it. `split: true` cuts a big picture
+(128 Kpx or more) by native rows: the PPA is handed the first part, and the
+CPU turns the rest at the same time -- the core LVGL runs on, and with
+`cores: 2` the other one too, so a frame is three bands. Each side's share
+follows what it was measured to turn the time before, so they finish
+together; the log says the shares every ten seconds.
+
+Native rows, so each side writes whole rows of its own, and every cut is
+moved to a row where the two sides fall in different cache lines (128
+bytes): the CPU's copy of a shared line would hold the PPA's pixels as they
+were before the PPA wrote them, and put them back when the frame is shown.
+The tests check every cut against that with their own arithmetic, that the
+bands cover the picture exactly once, and that the PPA turned its band and
+nothing more; `test/ppa_mutants.py` breaks each of those and the tests catch
+it.
+
+What it covers: pictures LVGL draws, which is how a camera reaches the
+screen through `lvgl_camera_display` and a canvas. Not yet the video window
+(`show_video`, `ortho_id`), nor the tiles the interface is drawn in. **Not
+measured on a board yet**: how fast the CPU turns out of and into PSRAM next
+to the PPA and the panel's scan-out is what the board will say.
+
 ### The PPA's faults, and what is done about them
 
 Read in ESP-IDF's, LVGL's and ESPHome's own issues and pull requests (October
@@ -338,6 +374,7 @@ lv_draw_ortho_ppa_init();                   /* ESP32-P4: the PPA turns and fills
 lv_draw_ortho_set_cores(2);                 /* optional, needs LV_USE_OS */
 lv_draw_ortho_set_image_cache(4 << 20);     /* optional: pictures that do not change turned once */
 lv_draw_ortho_set_tile_width(256);          /* optional: narrower, taller tiles */
+lv_draw_ortho_set_split(true);              /* optional: big pictures turned by the PPA and the CPU together */
 
 lv_display_t * d = lv_display_create(720, 1280);   /* the PANEL's size */
 lv_display_set_buffers(d, buf, NULL, size, LV_DISPLAY_RENDER_MODE_DIRECT);

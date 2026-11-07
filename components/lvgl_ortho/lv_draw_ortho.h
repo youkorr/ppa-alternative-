@@ -95,6 +95,12 @@ typedef struct {
     uint32_t images_cached;    /**< pictures drawn from a copy turned once (lv_draw_ortho_set_image_cache) */
     uint32_t image_cache_builds; /**< pictures turned into the cache */
     uint32_t image_cache_bytes; /**< what the turned copies hold now */
+    uint32_t splits;           /**< big quarter turns split between the turner and the CPU (lv_draw_ortho_set_split) */
+    uint64_t bytes_split_turner; /**< of those, bytes the turner turned */
+    uint64_t bytes_split_cpu;  /**< and bytes the CPU turned meanwhile, on one core or two */
+    uint32_t split_share;      /**< the turner's share of the last split, in permille */
+    int32_t split_cut;         /**< the last split's first native row after the turner's band */
+    int32_t split_cut2;        /**< and the first row of this core's band (split_cut when no other core helped) */
 } lv_draw_ortho_stats_t;
 
 /** Called with a straight (unturned) copy so a platform can hand it to DMA.
@@ -172,6 +178,24 @@ void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb);
  * The pixels are the same either way; which is faster is the board's to say.
  */
 void lv_draw_ortho_set_tile_width(int32_t px);
+
+/**
+ * Split a big picture's quarter turn (a camera frame, a wallpaper) between the
+ * turner and the CPU: the turner is handed part of its native rows and the
+ * CPU turns the rest at the same time -- this core, and the second one when
+ * lv_draw_ortho_set_cores(2) started it. The PPA turns a quarter at about
+ * 15 Mpx/s on a Tab5, so a 1280x720 frame alone is about 61 ms of it; the
+ * shares follow what each side was measured to do, so they finish together.
+ * Every cut is on a row where the two sides share no cache line. Off by
+ * default; needs a turner (lv_draw_ortho_ppa_init).
+ */
+void lv_draw_ortho_set_split(bool enable);
+
+/**
+ * The turner's share of a split, fixed, in permille (1..999); 0, the default,
+ * follows the measured rates. For tests and for measuring.
+ */
+void lv_draw_ortho_set_split_share(uint32_t permille);
 
 /** Turn the fast paths off, so every task goes through tiles. For tests. */
 void lv_draw_ortho_set_fast_paths(bool enable);

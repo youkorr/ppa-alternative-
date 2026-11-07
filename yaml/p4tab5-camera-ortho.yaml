@@ -19,6 +19,8 @@
 # The figures: the perf monitor on the screen, and in the log
 #   [D][lvgl_camera_display]: 1280x720 to the canvas at N fps
 #   [I][lvgl_ortho]: Last 10s: ... N screens/s shown ...
+#   [I][lvgl_ortho]:   N big pictures/s shared: X% by the PPA, Y% by the CPU
+# The PPA alone (split: false) measured 15.3 frames/s at 1280x720.
 #
 # Needs secrets.yaml with wifi_ssid, wifi_password and api_encryption_key.
 
@@ -115,6 +117,9 @@ lvgl_ortho:
   rotation: 270          # was lvgl: rotation: 270
   ppa: true
   cores: 2
+  # Each camera frame's turn shared: the PPA turns part of its rows while
+  # both cores turn the rest. false: the PPA alone, 15.3 frames/s measured.
+  split: true
 # -------------------------------------------------------------------------
 
 esp32_hosted:
@@ -187,7 +192,8 @@ esp_video_camera:
   sensor_model: sc2356
   resolution: 1280x720
   jpeg_quality: 50
-  max_framerate: 20
+  # 30, the sensor's own: with the turn shared the screen may pass 20.
+  max_framerate: 30
 
 lvgl:
   displays:

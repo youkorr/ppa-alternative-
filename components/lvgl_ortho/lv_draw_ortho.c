@@ -234,15 +234,13 @@ static void copy_straight(uint8_t * dest, int32_t dest_stride, const uint8_t * s
  * upright one, in either direction. `up` addresses upright pixel (x, y) as
  * up + (y - up_area->y1) * up_stride + (x - up_area->x1) * px.
  */
-static void move_turned(const ortho_t * o, int32_t px,
-                        uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
-                        uint8_t * up, int32_t up_stride, const lv_area_t * up_area,
-                        const lv_area_t * nat_rect, bool to_native)
+static void move_turned_rows(const ortho_t * o, int32_t px,
+                             uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
+                             uint8_t * up, int32_t up_stride, const lv_area_t * up_area,
+                             const lv_area_t * nat_rect, bool to_native)
 {
     /* One step right in native space is (a, b) in upright space. */
     const intptr_t up_step = (intptr_t)o->a * px + (intptr_t)o->b * up_stride;
-    g_stats.bytes_turned += (uint64_t)lv_area_get_width(nat_rect) *
-                            (uint64_t)lv_area_get_height(nat_rect) * (uint64_t)px;
 
     /* Two native rows next to each other are two upright columns next to each
      * other, so in 16 bits one 32-bit read of the upright side carries a pixel
@@ -348,6 +346,18 @@ static void move_turned(const ortho_t * o, int32_t px,
     }
 }
 
+/* move_turned_rows, counted. Only the core LVGL runs on counts: the other
+ * core's share of a split is counted after the join (turn_split). */
+static void move_turned(const ortho_t * o, int32_t px,
+                        uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
+                        uint8_t * up, int32_t up_stride, const lv_area_t * up_area,
+                        const lv_area_t * nat_rect, bool to_native)
+{
+    g_stats.bytes_turned += (uint64_t)lv_area_get_width(nat_rect) *
+                            (uint64_t)lv_area_get_height(nat_rect) * (uint64_t)px;
+    move_turned_rows(o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, nat_rect, to_native);
+}
+
 /* ------------------------------------------------------------------------ */
 /* Turning with a turner                                                    */
 /* ------------------------------------------------------------------------ */
@@ -400,13 +410,12 @@ static lv_display_rotation_t opposite(lv_display_rotation_t r)
            : r == LV_DISPLAY_ROTATION_270 ? LV_DISPLAY_ROTATION_90 : r;
 }
 
-/* move_turned's job, handed to the turner if there is one and it takes it;
- * else done by the CPU, after everything queued has finished. Returns the
- * turner's ticket, 0 when the CPU did it. */
-static uint32_t turn_or_cpu(const ortho_t * o, lv_color_format_t cf, int32_t px,
-                            uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
-                            uint8_t * up, int32_t up_stride, const lv_area_t * up_area,
-                            const lv_area_t * nat_rect, bool to_native)
+/* move_turned's job handed to the turner. Returns its ticket, or 0 when there
+ * is no turner or it declined -- nothing was queued then. */
+static uint32_t hand_to_turner(const ortho_t * o, lv_color_format_t cf, int32_t px,
+                               uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
+                               uint8_t * up, int32_t up_stride, const lv_area_t * up_area,
+                               const lv_area_t * nat_rect, bool to_native)
 {
     lv_display_rotation_t rot;
     if(g_turn && ortho_rotation(o, &rot)) {
@@ -437,6 +446,20 @@ static uint32_t turn_or_cpu(const ortho_t * o, lv_color_format_t cf, int32_t px,
             return t;
         }
     }
+    return 0;
+}
+
+/* move_turned's job, handed to the turner if there is one and it takes it;
+ * else done by the CPU, after everything queued has finished. Returns the
+ * turner's ticket, 0 when the CPU did it. */
+static uint32_t turn_or_cpu(const ortho_t * o, lv_color_format_t cf, int32_t px,
+                            uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
+                            uint8_t * up, int32_t up_stride, const lv_area_t * up_area,
+                            const lv_area_t * nat_rect, bool to_native)
+{
+    const uint32_t t = hand_to_turner(o, cf, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, nat_rect,
+                                      to_native);
+    if(t) return t;
     fence();
     move_turned(o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, nat_rect, to_native);
     return 0;
@@ -809,9 +832,14 @@ static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
 #define ORTHO_HELPER 0
 #endif
 
+/* What the other core is handed: a tile to paint, or a band of a picture to
+ * turn (turn_split). */
+typedef void (*helper_fn_t)(void * arg);
+
 typedef struct {
     bool on;
-    tile_work_t * volatile work;
+    helper_fn_t volatile fn;
+    void * volatile arg;
     volatile bool quit;
 #if ORTHO_HELPER == 2
     TaskHandle_t task;
@@ -833,7 +861,7 @@ static void helper_main(void * arg)
     for(;;) {
         xSemaphoreTake(g_helper.go, portMAX_DELAY);
         if(g_helper.quit) break;
-        paint_tile(g_helper.work);
+        g_helper.fn(g_helper.arg);
         xSemaphoreGive(g_helper.done);
     }
     xSemaphoreGive(g_helper.done);
@@ -848,7 +876,7 @@ static void * helper_main(void * arg)
         while(g_helper.state != 1 && !g_helper.quit) pthread_cond_wait(&g_helper.c, &g_helper.m);
         if(g_helper.quit) break;
         pthread_mutex_unlock(&g_helper.m);
-        paint_tile(g_helper.work);
+        g_helper.fn(g_helper.arg);
         pthread_mutex_lock(&g_helper.m);
         g_helper.state = 2;
         pthread_cond_broadcast(&g_helper.c);
@@ -917,9 +945,10 @@ static void helper_stop_thread(void)
 #define SIM_MARK(n) __asm__ volatile("addi x0, x0, %0" :: "i"(n) : "memory")
 #endif
 
-static void helper_paint(tile_work_t * w)
+static void helper_run(helper_fn_t fn, void * arg)
 {
-    g_helper.work = w;
+    g_helper.fn = fn;
+    g_helper.arg = arg;
 #if ORTHO_HELPER == 1
     SIM_MARK(2042);
 #elif ORTHO_HELPER == 2
@@ -936,7 +965,7 @@ static void helper_join(void)
 {
 #if ORTHO_HELPER == 1
     SIM_MARK(2044);
-    paint_tile(g_helper.work);
+    g_helper.fn(g_helper.arg);
     SIM_MARK(2043);
     SIM_MARK(2041);
 #elif ORTHO_HELPER == 2
@@ -947,7 +976,18 @@ static void helper_join(void)
     g_helper.state = 0;
     pthread_mutex_unlock(&g_helper.m);
 #endif
-    g_helper.work = NULL;
+    g_helper.fn = NULL;
+    g_helper.arg = NULL;
+}
+
+static void paint_tile_job(void * arg)
+{
+    paint_tile((tile_work_t *)arg);
+}
+
+static void helper_paint(tile_work_t * w)
+{
+    helper_run(paint_tile_job, w);
 }
 
 /* Two tiles at once: the second painted by the other core while this one
@@ -1345,6 +1385,200 @@ static bool try_cached(lv_draw_task_t * t, const ortho_t * o, const lv_image_dsc
     return true;
 }
 
+/* ------------------------------------------------------------------------ */
+/* A big turn split between the turner and the CPU                          */
+/* ------------------------------------------------------------------------ */
+
+/* A quarter turn is the slowest thing the PPA does: about 60 ns a pixel on a
+ * Tab5, so a 1280x720 camera frame is 61 ms of it, and that is the frame rate
+ * however fast everything else is -- measured, 15.3 frames a second, with the
+ * CPU waiting for it doing nothing. So a picture big enough is cut by native
+ * rows: the turner is handed the first part, and the CPU turns the rest at the
+ * same time, on the core LVGL runs on and, with cores: 2, on the other one
+ * too. How much each gets follows what each was measured to do the last time,
+ * so they finish together.
+ *
+ * By native rows, because each side then writes whole rows of its own: the
+ * only memory two of them could share is the cache line where the last row of
+ * one meets the first row of the next. That line must belong to one side only.
+ * The CPU's copy of a shared line would also hold the PPA's pixels as they
+ * were before the PPA wrote them, and written back when the frame is shown,
+ * it would put those over the PPA's. So every cut is moved to a row where the
+ * two sides are in different lines -- the L2 line, 128 bytes at most on a P4. */
+#ifndef LV_DRAW_ORTHO_SPLIT_LINE
+#define LV_DRAW_ORTHO_SPLIT_LINE 128
+#endif
+/* Smaller than this is not worth the cut: the PPA alone. */
+#ifndef LV_DRAW_ORTHO_SPLIT_MIN_PIXELS
+#define LV_DRAW_ORTHO_SPLIT_MIN_PIXELS (128 * 1024)
+#endif
+/* How far from the share's row a cut may move to find one between lines. */
+#define SPLIT_SEARCH_ROWS 256
+
+#if defined(LV_DRAW_ORTHO_SIM_CORES)
+/* The simulated P4 has no clock to ask: the starting share, unchanged. */
+static int64_t split_now_us(void)
+{
+    return 0;
+}
+#elif defined(ESP_PLATFORM)
+#include "esp_timer.h"
+static int64_t split_now_us(void)
+{
+    return esp_timer_get_time();
+}
+#else
+#include <time.h>
+static int64_t split_now_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+#endif
+
+static bool g_split;
+static uint32_t g_split_fixed;   /* permille to the turner; 0: follow the rates */
+/* Pixels a microsecond. The starting guesses are a Tab5's: the PPA's turn,
+ * and move_turned out of PSRAM into PSRAM on one core. Corrected after every
+ * split from what it took. */
+static float g_rate_turner = 15.0f;
+static float g_rate_cpu = 5.0f;
+
+typedef struct {
+    const ortho_t * o;
+    int32_t px;
+    uint8_t * nat;
+    int32_t nat_stride;
+    const lv_area_t * nat_buf_area;
+    uint8_t * up;
+    int32_t up_stride;
+    const lv_area_t * up_area;
+    lv_area_t rect;
+} band_t;
+
+static void turn_band(void * arg)
+{
+    const band_t * b = arg;
+    move_turned_rows(b->o, b->px, b->nat, b->nat_stride, b->nat_buf_area, b->up, b->up_stride, b->up_area,
+                     &b->rect, true);
+}
+
+/* Whether native rows r - 1 and r, between columns x1 and x2, are in
+ * different cache lines -- so a cut between them shares nothing. */
+static bool rows_apart(const uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area, int32_t px,
+                       int32_t x1, int32_t x2, int32_t r)
+{
+    const uintptr_t last = (uintptr_t)(nat + (intptr_t)(r - 1 - nat_buf_area->y1) * nat_stride +
+                                       (intptr_t)(x2 - nat_buf_area->x1) * px + px - 1);
+    const uintptr_t first = (uintptr_t)(nat + (intptr_t)(r - nat_buf_area->y1) * nat_stride +
+                                        (intptr_t)(x1 - nat_buf_area->x1) * px);
+    return last / LV_DRAW_ORTHO_SPLIT_LINE != first / LV_DRAW_ORTHO_SPLIT_LINE;
+}
+
+/* The row nearest `want`, strictly inside (lo, hi], with the rows either side
+ * of it in different lines; -1 when there is none close enough. */
+static int32_t cut_row(const uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area, int32_t px,
+                       const lv_area_t * rect, int32_t want, int32_t lo, int32_t hi)
+{
+    for(int32_t d = 0; d <= SPLIT_SEARCH_ROWS; d++) {
+        for(int s = 0; s < 2; s++) {
+            const int32_t r = s ? want + d : want - d;
+            if(r <= lo || r > hi || (s && d == 0)) continue;
+            if(rows_apart(nat, nat_stride, nat_buf_area, px, rect->x1, rect->x2, r)) return r;
+        }
+    }
+    return -1;
+}
+
+static float clampf(float v, float lo, float hi)
+{
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+/* A picture's native rectangle turned in up to three bands at once: the
+ * turner's, the other core's when there is one, this core's. False when it
+ * is not worth it or cannot be cut, and nothing was done then. */
+static bool turn_split(const ortho_t * o, lv_color_format_t cf, int32_t px,
+                       uint8_t * nat, int32_t nat_stride, const lv_area_t * nat_buf_area,
+                       uint8_t * up, int32_t up_stride, const lv_area_t * up_area, const lv_area_t * rect)
+{
+    lv_display_rotation_t rot;
+    if(!g_split || !g_turn || !ortho_rotation(o, &rot)) return false;
+    /* A half turn is a straight read for the PPA, fast enough alone. */
+    if(rot != LV_DISPLAY_ROTATION_90 && rot != LV_DISPLAY_ROTATION_270) return false;
+    const int32_t w = lv_area_get_width(rect), h = lv_area_get_height(rect);
+    if((int64_t)w * h < LV_DRAW_ORTHO_SPLIT_MIN_PIXELS || h < 8) return false;
+
+    /* Nothing else of ours may be writing while the bands are: the lines
+     * apart are only apart from each other. */
+    fence();
+
+    const int cpus = g_helper.on ? 2 : 1;
+    const float share = g_split_fixed ? g_split_fixed / 1000.0f
+                        : clampf(g_rate_turner / (g_rate_turner + cpus * g_rate_cpu), 0.2f, 0.95f);
+    const int32_t end = rect->y2 + 1;
+    const int32_t r1 = cut_row(nat, nat_stride, nat_buf_area, px, rect, rect->y1 + (int32_t)(share * h),
+                               rect->y1, rect->y2);
+    if(r1 < 0) return false;
+    int32_t r2 = end;
+    if(cpus == 2) {
+        r2 = cut_row(nat, nat_stride, nat_buf_area, px, rect, r1 + (end - r1) / 2, r1, rect->y2);
+        if(r2 < 0) r2 = end;   /* one CPU band, then */
+    }
+
+    const int64_t t0 = split_now_us();
+    lv_area_t first = *rect;
+    first.y2 = r1 - 1;
+    const uint32_t ticket = hand_to_turner(o, cf, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, &first,
+                                           true);
+    if(ticket == 0) return false;   /* declined: the caller turns it the old way */
+
+    band_t other = {o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, *rect};
+    other.rect.y1 = r1;
+    other.rect.y2 = r2 - 1;
+    const bool helped = r2 < end;
+    if(helped) helper_run(turn_band, &other);
+    lv_area_t mine = *rect;
+    mine.y1 = helped ? r2 : r1;
+    move_turned_rows(o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, &mine, true);
+    const int64_t t1 = split_now_us();
+    if(helped) helper_join();
+    const int64_t t2 = split_now_us();
+    const bool ok = wait_for(ticket);
+    const int64_t t3 = split_now_us();
+    g_last = 0;
+
+    /* Counted from the bands as they were turned, so the counts say whether
+     * they cover the picture once: no row twice, none left out. */
+    const uint64_t cpu_px = (uint64_t)lv_area_get_size(&mine) + (helped ? (uint64_t)lv_area_get_size(&other.rect) : 0);
+    const uint64_t turner_px = (uint64_t)lv_area_get_size(&first);
+    g_stats.bytes_turned += cpu_px * (uint64_t)px;
+    g_stats.bytes_split_cpu += cpu_px * (uint64_t)px;
+    g_stats.bytes_split_turner += turner_px * (uint64_t)px;
+    g_stats.splits++;
+    g_stats.split_cut = r1;
+    g_stats.split_cut2 = mine.y1;
+    if(!ok) return true;   /* the turner is gone; lvgl_ortho redraws the screen */
+
+    /* What each did, corrected a quarter of the way at a time. The CPU's rate
+     * is a core's. The turner's is exact when the CPU had to wait for it;
+     * when it was done first, it is at least what it did in the CPU's time,
+     * and is nudged up until the CPU waits again. */
+    if(t1 > t0 && t2 > t0) {
+        const float mine_rate = (float)((uint64_t)(end - mine.y1) * (uint64_t)w) / (float)(t1 - t0);
+        const float other_rate = helped ? (float)((uint64_t)(r2 - r1) * (uint64_t)w) / (float)(t2 - t0) : mine_rate;
+        const float cpu = clampf((mine_rate + other_rate) / 2.0f, 0.2f, 200.0f);
+        g_rate_cpu = 0.75f * g_rate_cpu + 0.25f * cpu;
+        const bool waited = t3 - t2 > 50;
+        float turner = (float)turner_px / (float)(waited ? t3 - t0 : t2 - t0);
+        if(!waited) turner = LV_MAX(turner, g_rate_turner) * 1.05f;
+        g_rate_turner = 0.75f * g_rate_turner + 0.25f * clampf(turner, 0.2f, 400.0f);
+    }
+    g_stats.split_share = (uint32_t)(1000 * turner_px / (turner_px + cpu_px));
+    return true;
+}
+
 static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * todo)
 {
     const lv_image_dsc_t * img;
@@ -1376,6 +1610,8 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
                             : (int32_t)img->header.w * px;
     if(try_cached(t, o, img, sstride, parts, np)) return true;
     for(int32_t i = 0; i < np; i++) {
+        if(turn_split(o, nb->header.cf, px, nb->data, nb->header.stride, &target->buf_area,
+                      (uint8_t *)img->data, sstride, &t->area, &parts[i])) continue;
         turn_or_cpu(o, nb->header.cf, px, nb->data, nb->header.stride, &target->buf_area,
                     (uint8_t *)img->data, sstride, &t->area, &parts[i], true);
     }
@@ -1767,6 +2003,16 @@ void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb)
 void lv_draw_ortho_set_tile_width(int32_t px)
 {
     g_tile_width = px > 0 ? px : 0;
+}
+
+void lv_draw_ortho_set_split(bool enable)
+{
+    g_split = enable;
+}
+
+void lv_draw_ortho_set_split_share(uint32_t permille)
+{
+    g_split_fixed = permille > 999 ? 999 : permille;
 }
 
 void lv_draw_ortho_set_fast_paths(bool enable)
