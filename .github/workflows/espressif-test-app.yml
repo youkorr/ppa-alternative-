@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# Espressif's esp_lvgl_adapter test app (test_apps/lvgl9), from the branch of
+# esp-iot-solution PR #818, built for a Waveshare ESP32-P4-WIFI6-Touch-LCD-7B
+# by espressif/waveshare-7b/prepare.py, on ESP-IDF v5.5.5. Two firmwares,
+# identical but for one option, both at rotation 90:
+#
+#   rotate_in_draw   CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW, the PR
+#   copy             the adapter as it is today: drawn upright, copied rotated,
+#                    with Espressif's PPA hang patch on ESP-IDF if it applies
+#
+# Each artifact is one .bin to write at 0x0. The tests start at boot; the
+# serial log says "BENCH ... ms each" and each test's PASS or FAIL.
+name: Espressif test app on a Waveshare 7B
+on:
+  push:
+    paths:
+      - "espressif/waveshare-7b/**"
+      - ".github/workflows/espressif-test-app.yml"
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container: espressif/idf:v5.5.5
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [rotate_in_draw, copy]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ppa
+      - uses: actions/checkout@v4
+        with:
+          repository: youkorr/esp-iot-solution
+          ref: feat/esp_lvgl_adapter-rotate-in-draw
+          path: iots
+          sparse-checkout: |
+            components/display/tools/esp_lvgl_adapter
+            components/display/lcd/esp_lcd_ek79007
+            components/button
+      - name: Prepare for the Waveshare 7B, mode ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -e
+          ADAPTER=$PWD/iots/components/display/tools/esp_lvgl_adapter
+          if [ "${{ matrix.mode }}" = copy ]; then
+            # Espressif's documented fix for a PPA hang with TRIPLE_PARTIAL and
+            # rotation. Written for ESP-IDF v6.0; applied here only if it fits.
+            if git -C "$IDF_PATH" apply --check "$ADAPTER/0001-bugfix-ppa-Temporary-fix-for-the-PPA-hang-issue.patch"; then
+              git -C "$IDF_PATH" apply "$ADAPTER/0001-bugfix-ppa-Temporary-fix-for-the-PPA-hang-issue.patch"
+              echo "PPA hang patch applied to ESP-IDF"
+            else
+              echo "PPA hang patch does not apply to this ESP-IDF; built without it"
+            fi
+          fi
+          python3 ppa/espressif/waveshare-7b/prepare.py "$ADAPTER/test_apps/lvgl9" "${{ matrix.mode }}"
+      - name: Build
+        shell: bash
+        run: |
+          set -e
+          . "$IDF_PATH/export.sh" > /dev/null
+          cd iots/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9
+          WS=$GITHUB_WORKSPACE/ppa/espressif/waveshare-7b/sdkconfig.waveshare
+          if [ "${{ matrix.mode }}" = rotate_in_draw ]; then
+            DEFAULTS="sdkconfig.defaults;sdkconfig.ci.rotate_in_draw;$WS"
+          else
+            DEFAULTS="sdkconfig.defaults;$WS"
+          fi
+          idf.py -D IDF_TARGET=esp32p4 -D "SDKCONFIG_DEFAULTS=$DEFAULTS" build
+          grep -E "^CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y" sdkconfig
+          if [ "${{ matrix.mode }}" = rotate_in_draw ]; then
+            grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW=y" sdkconfig
+          else
+            ! grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW=y" sdkconfig
+          fi
+          cd build
+          python -m esptool --chip esp32p4 merge_bin -o "$GITHUB_WORKSPACE/waveshare7b-${{ matrix.mode }}.bin" @flash_args
+          cp ../sdkconfig "$GITHUB_WORKSPACE/sdkconfig-${{ matrix.mode }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: waveshare7b-${{ matrix.mode }}
+          path: |
+            waveshare7b-${{ matrix.mode }}.bin
+            sdkconfig-${{ matrix.mode }}
