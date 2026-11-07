@@ -130,7 +130,8 @@ jobs:
   # The Tab5's camera into the panel's own frame buffers, both ways: through
   # esphome_esp-video and lvgl_ortho's window (tab5-test-camera), and
   # through youkorr/esphome's esp_video_camera drawn by LVGL as a picture
-  # (p4tab5-camera-ortho). Each file as it stands, with this repository's
+  # (p4tab5-camera-ortho); and the Waveshare 7B's OV5647 the first way
+  # (waveshare-test-camera). Each file as it stands, with this repository's
   # components and the fork's lvgl and mipi_dsi.
   camera:
     runs-on: ubuntu-24.04
@@ -138,7 +139,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        file: [tab5-test-camera, p4tab5-camera-ortho]
+        file: [tab5-test-camera, p4tab5-camera-ortho, waveshare-test-camera]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -171,6 +171,8 @@ CI compiles all twelve combinations with ESP-IDF. It includes `boards/` and
 block at its top, and `yaml/waveshare-test-lvgl.yaml` the same again for the
 Waveshare 7B turned over (180). It starts in the mode esp_lvgl_adapter's
 ROTATE_IN_DRAW uses: one core, drawing into the panel's own frame buffers.
+`yaml/waveshare-test-camera.yaml` is `yaml/tab5-test-camera.yaml` for that
+board's OV5647.
 
 `components/lvgl_bench` works the same way in any firmware: it times each
 LVGL refresh from `RENDER_START` to `REFR_READY`, drawing, turn and flush
