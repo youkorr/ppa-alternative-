@@ -46,6 +46,27 @@ the one above it, never worse. With ESPHome's own
 6.2 ms on the Tab5. `docs/chart.py` draws the chart above from
 `docs/p4sim-resultats.csv`.
 
+### Measured on a Tab5
+
+The same UI on an M5Stack Tab5 at 270, redrawn whole on every refresh
+(`lvgl_bench`, "Whole screen"), ESPHome 2026.12.0-dev with
+youkorr/lvgl_9.5, `yaml/tab5-test-lvgl.yaml`:
+
+| | ms per frame |
+|---|---|
+| lvgl's own rotation | 193.6 |
+| lvgl's own rotation, the fork's PPA (`use_ppa`, `use_ppa_img`) | 176.1 |
+| lvgl_ortho, the CPU turning (`ppa: false`) | 177 |
+| lvgl_ortho, the PPA turning, 1 core | 78.5 |
+| lvgl_ortho, the PPA turning, 2 cores | 71.0 |
+| lvgl_ortho, 2 cores, the panel's own frame buffers (`framebuffers: 3`) | **61.1** (3.2x) |
+
+The simulation is optimistic at 90 and 270: it was calibrated on a turn of
+180, where the PPA moves 41 Mpx/s, and on the board a turn of 270 moves
+about 15. At 61 ms a frame is the PPA turning 1280x720 and nothing else:
+the drawing on both cores is hidden behind it. `pixel_mode: 16` and `24`
+measure the same. Narrower tiles were slower, see `tile_width:` below.
+
 ## On an ESPHome board
 
 Two lines change in a board's YAML: `rotation:` leaves the `lvgl:` block and
@@ -66,7 +87,7 @@ lvgl_ortho:
   # ppa: true             # the default: the PPA turns while the CPU draws
   # cores: 2              # off by default: the second core draws every other tile
   # image_cache: 4MB      # the default: pictures that do not change are turned once
-  # tile_width: 256       # off by default: narrower, taller tiles (being measured)
+  # tile_width: 256       # off by default: narrower, taller tiles (slower on a Tab5)
 ```
 
 It takes LVGL's display over once ESPHome's lvgl has built it: one
@@ -88,8 +109,11 @@ rows that changed, and touches turned back to the screen's coordinates.
 - **`tile_width:`** caps how wide a tile is drawn, so it is taller instead.
   At 90 and 270 a tile's height is the length of each row the PPA writes:
   a whole-width tile of 1280 is 51 rows high, so the turner writes rows of 51
-  pixels; at 256 it writes rows of 256. Whether that is faster on a board is
-  what it is there to measure; `0`, the default, keeps the widest tiles.
+  pixels; at 256 it writes rows of 256. On a Tab5 it is slower: 73.8 ms
+  at 256 and 82.2 at 128 with 2 cores against 71.0, and 111.0 at 128 with
+  one against 78.5. Part of the cost is per tile, not per pixel -- LVGL
+  draws each task once per tile it touches, and each tile is one more PPA
+  transaction and one more wait. `0`, the default, keeps the widest tiles.
 - **`cores: 2`** draws every other tile on the second core (see
   [Two cores](#two-cores)). It needs LVGL built with an OS, which
   youkorr/lvgl_9.5 is, and is refused otherwise.
