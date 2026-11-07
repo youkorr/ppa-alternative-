@@ -5,6 +5,7 @@
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "esphome/core/version.h"
 
 #include <cstring>
 
@@ -261,6 +262,20 @@ void LvglOrtho::flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px
   lv_display_flush_ready(disp);
 }
 
+// A block of RGB565 to the display in one go. ESPHome 2026.11 gave
+// draw_pixels_at() a form without a colour order and moved the drivers' block
+// copy (mipi_dsi's among them) behind it; the old form still compiles but
+// ends in Display's per-pixel fallback, which on mipi_dsi only fills a buffer
+// of its own that is sent on update() -- never, under LVGL. The screen stays
+// black and each frame costs half a second.
+static void draw_block(display::Display *d, int x, int y, int w, int h, const uint8_t *px) {
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 11, 0)
+  d->draw_pixels_at(x, y, w, h, px, display::COLOR_BITNESS_565, false);
+#else
+  d->draw_pixels_at(x, y, w, h, px, display::COLOR_ORDER_RGB, display::COLOR_BITNESS_565, false);
+#endif
+}
+
 void LvglOrtho::copy_native_(const lv_area_t &in) {
   lv_area_t a = in;
   if (a.x1 < 0)
@@ -283,8 +298,7 @@ void LvglOrtho::copy_native_(const lv_area_t &in) {
     uint8_t *rows = this->buf_ + (size_t) a.y1 * this->stride_;
     const size_t len = (size_t) h * this->stride_;
     esp_cache_msync(rows, len, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
-    this->display_->draw_pixels_at(0, a.y1, this->width_, h, rows, display::COLOR_ORDER_RGB,
-                                   display::COLOR_BITNESS_565, false);
+    draw_block(this->display_, 0, a.y1, this->width_, h, rows);
   } else {
     // Narrow: a column of a turned UI (a clock along one edge). Whole rows
     // would copy the panel's width for it, and a block with gaps between its
@@ -308,8 +322,7 @@ void LvglOrtho::copy_native_(const lv_area_t &in) {
       memcpy(this->scratch_ + (size_t) y * w * 2, this->buf_ + (size_t) (a.y1 + y) * this->stride_ + a.x1 * 2,
              (size_t) w * 2);
     esp_cache_msync(this->scratch_, need, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    this->display_->draw_pixels_at(a.x1, a.y1, w, h, this->scratch_, display::COLOR_ORDER_RGB,
-                                   display::COLOR_BITNESS_565, false);
+    draw_block(this->display_, a.x1, a.y1, w, h, this->scratch_);
   }
   this->flush_us_ += micros() - t0;
   this->flush_rows_ += h;
