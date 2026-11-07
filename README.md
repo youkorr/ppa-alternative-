@@ -84,6 +84,27 @@ which is the whole difference between the two middle rows. At 64 ms a frame
 is the PPA's 270 turn alone, which is what `split:` (below) was built for --
 and measured slower.
 
+### Measured on a Waveshare 7B
+
+The same UI on a Waveshare ESP32-P4-WIFI6-Touch-LCD-7B (1024x600) turned
+over (180), `yaml/waveshare-test-lvgl.yaml`, the panel's own frame buffers in
+both lvgl_ortho rows:
+
+| | ms per frame |
+|---|---|
+| lvgl's own rotation | 129.0 |
+| lvgl_ortho, 1 core (esp_lvgl_adapter's ROTATE_IN_DRAW) | **57.0** (2.3x) |
+| lvgl_ortho, 2 cores | **47.7** (2.7x) |
+
+At 180 the turn is the PPA's easy case, and per pixel this board is slower
+than the Tab5 (47.7 ms for 0.61 Mpx against 61.1 for 0.92): what is left is
+most likely drawing the UI, not turning it -- a reading, since the log does
+not split the two. The second core gains 16 %, not twice.
+
+Its camera (OV5647 at 1280x960, the middle 1024x600 shown),
+`yaml/waveshare-test-camera.yaml` as it stands: **20.8 frames/s**, against
+15.6 for the Tab5's at 270.
+
 ## On an ESPHome board
 
 Two lines change in a board's YAML: `rotation:` leaves the `lvgl:` block and
