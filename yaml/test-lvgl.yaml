@@ -1,37 +1,71 @@
-# SPDX-License-Identifier: MIT
-# Copyright (c) 2026 youkorr
-# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
-#
-# A simple test of LVGL's speed on a turned screen, the same for the three
-# boards. Change the two words below, flash, press "LVGL bench" in Home
-# Assistant and read "LVGL ms per frame". Then
-# change mode, flash again, press again: the lower figure wins.
-#
-#   board: tab5       M5Stack Tab5, landscape (270)
-#          guition    Guition JC8012P4A1, landscape (90)
-#          waveshare  Waveshare 7B, turned over (180)
-#   mode:  ortho      lv_draw_ortho, the PPA turning while the CPU draws
-#          ortho_2cores  lv_draw_ortho and the PPA, the second core painting
-#                     every other tile (off by default: compare with ortho)
-#          ortho_cpu  lv_draw_ortho, the CPU turning (to compare with the PPA)
-#          lvgl       ESPHome's own rotation, as before lvgl_ortho
-#
-# Nothing else changes between the modes, so the figure measures the
-# rotation alone. Needs secrets.yaml with wifi_ssid, wifi_password and
-# api_encryption_key. The rest of each board is in boards/, the modes
-# in modes/.
-
-substitutions:
-  board: tab5
-  mode: ortho
-
-packages:
-  board: !include boards/${board}.yaml
-  mode: !include modes/${mode}.yaml
-
 esphome:
-  name: lvgl-test
-  friendly_name: LVGL test
+  name: ppa-alternative
+  friendly_name: ppa_alternative
+
+# Replace this with your actual platform if you aren't using ESP32.
+esp32:
+  variant: esp32p4
+  board: esp32-p4-evboard
+  flash_size: 16MB
+  cpu_frequency: 360MHz
+  framework:
+    type: esp-idf
+    advanced:
+      enable_idf_experimental_features: true
+
+logger:
+
+api:
+  encryption:
+    key: "ScxwpmQ4re+4pbTQypImv0ZOX1qcqFdG4v+h+I4bi00="
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: ppa_alternative Fallback Hotspot
+    password: "OPBWYrQYOQ95"
+
+captive_portal:
+
+
+# ---- MODE ---------------------------------------------------------------
+lvgl_ortho:
+  id: ortho
+  rotation: 270          # the Tab5 in landscape (ESPHome's degrees)
+  ppa: true              # false: mode ortho_cpu
+  # cores: 2             # mode ortho_2cores
+# -------------------------------------------------------------------------
+
+psram:
+  mode: hex
+  speed: 200MHz
+
+esp_ldo:
+  - voltage: 2.5V
+    channel: 3
+
+i2c:
+  - id: bsp_bus
+    sda: GPIO31
+    scl: GPIO32
+    frequency: 400kHz
+
+esp32_hosted:
+  variant: esp32c6
+  active_high: true
+  clk_pin: GPIO12
+  cmd_pin: GPIO13
+  d0_pin: GPIO11
+  d1_pin: GPIO10
+  d2_pin: GPIO9
+  d3_pin: GPIO8
+  reset_pin: GPIO15
+  slot: 1
+
 
 external_components:
   - source:
@@ -42,28 +76,78 @@ external_components:
   - source: github://youkorr/ppa-alternative-@main
     components: [lvgl_ortho, lvgl_bench]
 
-logger:
 
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+pi4ioe5v6408:
+  - id: pi4ioe1
+    address: 0x43
+    # 0: O - wifi_antenna_int_ext
+    # 1: O - speaker_enable
+    # 2: O - external_5v_power
+    # 3: NC
+    # 4: O - lcd reset
+    # 5: O - touch panel reset
+    # 6: O - camera reset
+    # 7: I - headphone detect
+  - id: pi4ioe2
+    address: 0x44
+    # 0: O - wifi_power
+    # 1: NC
+    # 2: NC
+    # 3: O - usb_5v_power
+    # 4: O - poweroff pulse
+    # 5: O - quick charge enable (inverted)
+    # 6: I - charging status
+    # 7: O - charge enable
 
-api:
-  encryption:
-    key: !secret api_encryption_key
+switch:
 
-ota:
-  - platform: esphome
-
-light:
-  - platform: monochromatic
-    id: backlight
-    name: "Backlight"
-    output: backlight_pwm
+  - platform: gpio
+    id: wifi_power
+    name: "WiFi"
+    internal: true
+    pin:
+      pi4ioe5v6408: pi4ioe2
+      number: 0
     restore_mode: ALWAYS_ON
 
-# The figures, in Home Assistant and in the log:
-#   [I][lvgl_bench]: ... ms each, worst ... ms -> at most ... fps
+  - platform: gpio
+    id: speaker_enable
+    name: "Speaker Enable"
+    pin:
+      pi4ioe5v6408: pi4ioe1
+      number: 1
+    restore_mode: ALWAYS_ON
+    inverted: False
+
+  - platform: gpio
+    id: wifi_antenna_int_ext
+    internal: True
+    pin:
+      pi4ioe5v6408: pi4ioe1
+      number: 0
+
+  - platform: gpio
+    id: usb_5v_power
+    name: USB-A Power
+    pin:
+      pi4ioe5v6408: pi4ioe2
+      number: 3
+    restore_mode: ALWAYS_ON      
+  - platform: gpio
+    id: camera_reset
+    pin:
+      pi4ioe5v6408: pi4ioe1
+      number: 6
+    restore_mode: ALWAYS_ON  
+
+  - platform: gpio
+    id: interrupt_pin_toushsreen
+    name: "interrupt_pin_toushscreen"
+    pin:
+      inverted: true
+      number: GPIO23
+    restore_mode: ALWAYS_ON  
+
 lvgl_bench:
   ms_per_frame:
     name: "LVGL ms per frame"
@@ -76,10 +160,24 @@ button:
     on_press:
       - lvgl_bench.run: 10s
 
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    id: backlight
+    name: Backlight
+    restore_mode: ALWAYS_ON
+
+output:
+  - platform: ledc
+    pin: GPIO22
+    id: backlight_pwm
+    frequency: 1000Hz    
+
 # An ordinary interface: text, rounded cards with borders and shadows, a
 # gradient, an arc, a bar, a slider and a switch -- what a dashboard is made
 # of. lvgl_bench.run redraws all of it on every refresh.
 lvgl:
+  # rotation: 270        # mode lvgl only, with the lvgl_ortho: block above commented out
   displays:
     - panel
   buffer_size: 100%
@@ -114,7 +212,7 @@ lvgl:
       widgets:
         - label:
             width: 100%
-            text: "LVGL test -- ${board}, ${mode}"
+            text: "LVGL test -- Tab5"
             text_color: 0xFFFFFF
             text_font: montserrat_28
         - obj:
@@ -205,3 +303,18 @@ lvgl:
             text: "Le texte compte aussi : beaucoup de petites lettres, sur un fond en degrade, comme un vrai tableau de bord."
             text_color: 0xB8C4D9
             long_mode: WRAP
+
+# ---- The board: M5Stack Tab5 (boards/tab5.yaml) --------------------------
+
+display:
+  - platform: mipi_dsi
+    id: panel
+    model: M5Stack-Tab5
+    dimensions:
+      width: 720
+      height: 1280
+    reset_pin:
+      pi4ioe5v6408: pi4ioe1
+      number: 4
+    pixel_mode: 16
+    color_order: rgb
