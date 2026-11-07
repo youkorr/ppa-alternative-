@@ -168,7 +168,9 @@ the screen, so the figure compares that and nothing else. It takes only
 CI compiles all twelve combinations with ESP-IDF. It includes `boards/` and
 `modes/`, so copy the whole `yaml/` folder; for the Tab5,
 `yaml/tab5-test-lvgl.yaml` is the same test in one file, the mode chosen in a
-block at its top.
+block at its top, and `yaml/waveshare-test-lvgl.yaml` the same again for the
+Waveshare 7B turned over (180). It starts in the mode esp_lvgl_adapter's
+ROTATE_IN_DRAW uses: one core, drawing into the panel's own frame buffers.
 
 `components/lvgl_bench` works the same way in any firmware: it times each
 LVGL refresh from `RENDER_START` to `REFR_READY`, drawing, turn and flush
