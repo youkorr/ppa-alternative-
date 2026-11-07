@@ -8,7 +8,10 @@
 # applied to it, so a fix for a newer ESPHome can be proved here before it
 # goes into that repository; once it is there, its patch is removed. Both
 # modes: lvgl_ortho, and lvgl's own rotation, which goes through the fork's
-# flush. A red run here is news about ESPHome dev, not a broken release.
+# flush. And panel_fbs: lvgl_ortho drawing straight into the panel's own
+# frame buffers through the fork's mipi_dsi (framebuffers: 3), with square
+# tiles -- the two things to try next on a Tab5. A red run here is news
+# about ESPHome dev, not a broken release.
 name: ESPHome dev
 on: [push, workflow_dispatch]
 jobs:
@@ -18,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [ortho, lvgl]
+        mode: [ortho, lvgl, panel_fbs]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,7 +46,7 @@ jobs:
                 type: git
                 url: https://github.com/youkorr/lvgl_9.5
                 ref: claude/jolly-lamport-ERZOC
-              components: [lvgl]
+              components: [lvgl]   # mode panel_fbs: [lvgl, mipi_dsi]
             - source: github://youkorr/ppa-alternative-@main
               components: [lvgl_ortho, lvgl_bench]"""
           assert s.count(old) == 1, "the external_components block moved"
@@ -64,6 +67,15 @@ jobs:
               s = s[:a] + "".join("# " + l + "\n" for l in s[a:b].rstrip("\n").split("\n")) + s[b:]
               s = s.replace("  # rotation: 270        # mode lvgl only", "  rotation: 270          # mode lvgl only")
               assert "  rotation: 270          # mode lvgl only" in s
+          if "${{ matrix.mode }}" == "panel_fbs":
+              # The file's own instructions for modes panel_fbs and tiles:
+              # the fork's mipi_dsi, the panel's three buffers, square tiles.
+              for a, b in (("path: /tmp/lvgl_9.5/components\n    components: [lvgl]\n",
+                            "path: /tmp/lvgl_9.5/components\n    components: [lvgl, mipi_dsi]\n"),
+                           ("    # framebuffers: 3      # mode panel_fbs", "    framebuffers: 3        # mode panel_fbs"),
+                           ("  # tile_width: 256      # mode tiles", "  tile_width: 256        # mode tiles")):
+                  assert s.count(a) == 1, a
+                  s = s.replace(a, b)
           open(p, "w").write(s)
           EOF
           printf 'wifi_ssid: "test"\nwifi_password: "testtest"\napi_encryption_key: "kIuGSIsyjV6h5x0uC4ToRJKNJa6tRtjSFdbTB8PA36A="\n' > yaml/secrets.yaml

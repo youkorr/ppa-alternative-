@@ -76,6 +76,8 @@ MUTANTS = {
                              "     * buffer back -- in partial mode, to send it to the panel. */\n    fence();\n", ""),
     # A canvas -- a draw buffer LVGL changes -- kept turned.
     "a modifiable picture kept": ("    if(img->header.flags & LV_IMAGE_FLAGS_MODIFIABLE) return false;\n", ""),
+    # tile_width taken and never used.
+    "the tile width ignored": ("    if(g_tile_width > 0 && tw > g_tile_width) tw = g_tile_width;\n", ""),
     # The PPA's angle the wrong way round.
     "the PPA turning the other way": (
         "        case LV_DISPLAY_ROTATION_90:\n            return PPA_SRM_ROTATION_ANGLE_90;",

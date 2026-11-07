@@ -63,6 +63,10 @@ CONFIG_SCHEMA = cv.All(
             # drawn again is then copied, not turned again. Only pictures
             # that cannot change (compiled in, an `image:`); 0 turns it off.
             cv.Optional("image_cache", default="4MB"): _bytes,
+            # At most this many pixels wide, a drawing tile (0: as wide as
+            # the screen). Narrower is taller, and at 90 and 270 a tile's
+            # height is the length of the rows the PPA writes: try 256.
+            cv.Optional("tile_width", default=0): cv.int_range(min=0, max=4096),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     only_on_variant(supported=[VARIANT_ESP32P4]),
@@ -145,4 +149,5 @@ async def to_code(config):
     cg.add(var.set_ppa(config["ppa"]))
     cg.add(var.set_cores(config["cores"]))
     cg.add(var.set_image_cache(config["image_cache"]))
+    cg.add(var.set_tile_width(config["tile_width"]))
     cg.add_define("USE_LVGL_ORTHO")
