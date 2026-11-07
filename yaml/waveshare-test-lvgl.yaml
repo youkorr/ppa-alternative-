@@ -1,0 +1,273 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# tab5-test-lvgl.yaml for the Waveshare ESP32-P4-WIFI6-Touch-LCD-7B
+# (1024x600), turned over (180), in ONE file. The same interface as on the
+# Tab5, so the two boards' figures compare. Flash it, press "LVGL bench" in
+# Home Assistant and read "LVGL ms per frame". Then change the MODE block
+# below, flash, press again.
+#
+# On the Tab5 the turn was 270, where the PPA moves about 15 Mpx/s on a P4
+# below v3.0. Here it is 180, where it moves about 41: this board shows the
+# other half of what the turn costs.
+#
+#   mode panel_fbs       as it is: lvgl_ortho, one core, drawing straight
+#                        into the panel's own frame buffers. This is what
+#                        esp_lvgl_adapter's ROTATE_IN_DRAW does (Espressif
+#                        PR #818), and the case the Tab5 did not measure.
+#   mode panel_fbs_2c    uncomment "cores: 2"
+#   mode ortho           comment out "framebuffers: 3" under display:
+#                        (each frame is then copied to the panel)
+#   mode ortho_cpu       ppa: false
+#   mode lvgl            comment out the whole lvgl_ortho: block, comment out
+#                        "framebuffers: 3", and uncomment "rotation: 180"
+#                        under lvgl: further down -- lvgl's own rotation, what
+#                        a rotated display costs today. use_ppa and
+#                        use_ppa_img may be true there to compare the fork's
+#                        PPA.
+#
+# For Espressif, three are enough: lvgl, panel_fbs and panel_fbs_2c.
+#
+# Needs secrets.yaml with wifi_ssid, wifi_password and api_encryption_key.
+
+# ---- MODE ---------------------------------------------------------------
+lvgl_ortho:
+  id: ortho
+  rotation: 180          # the 7B turned over (ESPHome's degrees)
+  ppa: true              # false: mode ortho_cpu
+  # cores: 2             # mode panel_fbs_2c
+# -------------------------------------------------------------------------
+
+esphome:
+  name: lvgl-test-ws
+  friendly_name: LVGL test Waveshare
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/youkorr/lvgl_9.5
+      ref: claude/jolly-lamport-ERZOC
+    # mipi_dsi from the fork: it is what gives the display its own frame
+    # buffers (framebuffers: 3).
+    components: [lvgl, mipi_dsi]
+  - source: github://youkorr/ppa-alternative-@main
+    components: [lvgl_ortho, lvgl_bench]
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: "Backlight"
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+
+# The figures, in Home Assistant and in the log:
+#   [I][lvgl_bench]: ... ms each, worst ... ms -> at most ... fps
+lvgl_bench:
+  ms_per_frame:
+    name: "LVGL ms per frame"
+  max_fps:
+    name: "LVGL max fps"
+
+button:
+  - platform: template
+    name: "LVGL bench"
+    on_press:
+      - lvgl_bench.run: 10s
+
+# An ordinary interface: text, rounded cards with borders and shadows, a
+# gradient, an arc, a bar, a slider and a switch -- what a dashboard is made
+# of. lvgl_bench.run redraws all of it on every refresh.
+lvgl:
+  # rotation: 180        # mode lvgl only, with the lvgl_ortho: block above commented out
+  displays:
+    - panel
+  buffer_size: 100%
+  color_depth: 16
+  byte_order: little_endian
+  # false beside lvgl_ortho: the fork's PPA blending and lvgl_ortho's turns
+  # stalled the PPA on a Tab5. True only in mode lvgl, to compare.
+  use_ppa: false
+  use_ppa_img: false
+  style_definitions:
+    - id: card
+      bg_color: 0x1E2633
+      border_color: 0x3A4A63
+      border_width: 2
+      radius: 16
+      shadow_color: 0x000000
+      shadow_width: 24
+      shadow_opa: 60%
+      shadow_offset_y: 6
+      pad_all: 12
+  pages:
+    - id: test_page
+      bg_color: 0x0B1220
+      bg_grad_color: 0x23345A
+      bg_grad_dir: VER
+      pad_all: 16
+      layout:
+        type: FLEX
+        flex_flow: ROW_WRAP
+        flex_align_main: SPACE_EVENLY
+        flex_align_track: CENTER
+        pad_row: 16
+        pad_column: 16
+      widgets:
+        - label:
+            width: 100%
+            text: "LVGL test -- Waveshare 7B"
+            text_color: 0xFFFFFF
+            text_font: montserrat_28
+        - obj:
+            styles: card
+            width: 30%
+            height: 34%
+            widgets:
+              - label:
+                  align: TOP_LEFT
+                  text: "Salon"
+                  text_color: 0xDDE6F5
+                  text_font: montserrat_20
+              - arc:
+                  align: CENTER
+                  width: 60%
+                  height: 75%
+                  value: 65
+                  arc_color: 0x334155
+                  indicator:
+                    arc_color: 0xF59E0B
+              - label:
+                  align: CENTER
+                  text: "21.5 °C"
+                  text_color: 0xFFFFFF
+        - obj:
+            styles: card
+            width: 30%
+            height: 34%
+            widgets:
+              - label:
+                  align: TOP_LEFT
+                  text: "Lumiere"
+                  text_color: 0xDDE6F5
+                  text_font: montserrat_20
+              - switch:
+                  align: CENTER
+                  state:
+                    checked: true
+              - slider:
+                  align: BOTTOM_MID
+                  width: 85%
+                  value: 40
+        - obj:
+            styles: card
+            width: 30%
+            height: 34%
+            widgets:
+              - label:
+                  align: TOP_LEFT
+                  text: "Batterie"
+                  text_color: 0xDDE6F5
+                  text_font: montserrat_20
+              - bar:
+                  align: CENTER
+                  width: 85%
+                  height: 18%
+                  value: 72
+              - label:
+                  align: BOTTOM_MID
+                  text: "72 %, 1.4 kW"
+                  text_color: 0xFFFFFF
+        - button:
+            styles: card
+            width: 22%
+            height: 16%
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Scene soir"
+        - button:
+            styles: card
+            width: 22%
+            height: 16%
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Volets"
+        - button:
+            styles: card
+            width: 22%
+            height: 16%
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Musique"
+        - label:
+            width: 100%
+            text: "Le texte compte aussi : beaucoup de petites lettres, sur un fond en degrade, comme un vrai tableau de bord."
+            text_color: 0xB8C4D9
+            long_mode: WRAP
+
+# ---- The board: Waveshare ESP32-P4-WIFI6-Touch-LCD-7B ----------------------
+# As in youkorr/esphome_esp-video yaml/ws-wired-portall.yaml, which runs on
+# this board.
+esp32:
+  variant: esp32p4
+  board: esp32-p4-evboard
+  flash_size: 32MB
+  cpu_frequency: 360MHz
+  framework:
+    type: esp-idf
+    advanced:
+      enable_idf_experimental_features: true
+
+psram:
+  mode: hex
+  speed: 200MHz
+
+esp32_hosted:
+  variant: esp32c6
+  clk_pin: GPIO18
+  cmd_pin: GPIO19
+  d0_pin: GPIO14
+  d1_pin: GPIO15
+  d2_pin: GPIO16
+  d3_pin: GPIO17
+  reset_pin: GPIO54
+  use_psram: false
+  slot: 1
+
+esp_ldo:
+  - voltage: 2.5V
+    channel: 3
+
+display:
+  - platform: mipi_dsi
+    id: panel
+    # Its reset pin (33), timings and EK79007 init are in the model. The
+    # model cannot mirror the panel (no_transform), so a turn of 180 is
+    # lvgl_ortho's or lvgl's, never the panel's own.
+    model: WAVESHARE-ESP32-P4-WIFI6-TOUCH-LCD-7B
+    pixel_mode: 16
+    framebuffers: 3        # mode panel_fbs; comment out for modes ortho and lvgl
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: GPIO32
+    frequency: 1000Hz
+    inverted: true

@@ -11,7 +11,8 @@
 # flush. And panel_fbs: lvgl_ortho drawing straight into the panel's own
 # frame buffers through the fork's mipi_dsi (framebuffers: 3), with square
 # tiles -- the two things to try next on a Tab5. And the camera test,
-# yaml/tab5-test-camera.yaml. A red run here is news about ESPHome dev,
+# yaml/tab5-test-camera.yaml. And the Waveshare 7B test,
+# yaml/waveshare-test-lvgl.yaml. A red run here is news about ESPHome dev,
 # not a broken release.
 name: ESPHome dev
 on: [push, workflow_dispatch]
@@ -82,10 +83,55 @@ jobs:
           printf 'wifi_ssid: "test"\nwifi_password: "testtest"\napi_encryption_key: "kIuGSIsyjV6h5x0uC4ToRJKNJa6tRtjSFdbTB8PA36A="\n' > yaml/secrets.yaml
       - name: esphome compile, mode ${{ matrix.mode }}
         run: esphome compile yaml/tab5-test-lvgl.yaml
+  # The Waveshare 7B test, turned over (180): as it stands (lvgl_ortho, one
+  # core, the panel's own frame buffers), and its mode lvgl (lvgl's own
+  # rotation), each made the way the file's header says.
+  waveshare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [panel_fbs, lvgl]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install "git+https://github.com/esphome/esphome@dev"
+      - run: git clone --depth 1 -b claude/jolly-lamport-ERZOC https://github.com/youkorr/lvgl_9.5 /tmp/lvgl_9.5
+      - name: Local components, dummy secrets
+        run: |
+          python3 - <<'PY'
+          p = "yaml/waveshare-test-lvgl.yaml"
+          s = open(p).read()
+          def sub(s, a, b):
+              assert s.count(a) == 1, a
+              return s.replace(a, b)
+          s = sub(s, """  - source:
+                type: git
+                url: https://github.com/youkorr/lvgl_9.5
+                ref: claude/jolly-lamport-ERZOC""", """  - source:
+                type: local
+                path: /tmp/lvgl_9.5/components""")
+          s = sub(s, "  - source: github://youkorr/ppa-alternative-@main",
+                  "  - source:\n      type: local\n      path: ../components")
+          if "${{ matrix.mode }}" == "lvgl":
+              a = s.index("lvgl_ortho:\n")
+              b = s.index("# ---", a)
+              s = s[:a] + "".join("# " + l + "\n" for l in s[a:b].rstrip("\n").split("\n")) + s[b:]
+              s = sub(s, "    framebuffers: 3", "    # framebuffers: 3")
+              s = sub(s, "  # rotation: 180        # mode lvgl only", "  rotation: 180          # mode lvgl only")
+          open(p, "w").write(s)
+          PY
+          printf 'wifi_ssid: "test"\nwifi_password: "testtest"\napi_encryption_key: "kIuGSIsyjV6h5x0uC4ToRJKNJa6tRtjSFdbTB8PA36A="\n' > yaml/secrets.yaml
+      - name: esphome compile, mode ${{ matrix.mode }}
+        run: esphome compile yaml/waveshare-test-lvgl.yaml
   # The Tab5's camera into the panel's own frame buffers, both ways: through
   # esphome_esp-video and lvgl_ortho's window (tab5-test-camera), and
   # through youkorr/esphome's esp_video_camera drawn by LVGL as a picture
-  # (p4tab5-camera-ortho). Each file as it stands, with this repository's
+  # (p4tab5-camera-ortho); and the Waveshare 7B's OV5647 the first way
+  # (waveshare-test-camera). Each file as it stands, with this repository's
   # components and the fork's lvgl and mipi_dsi.
   camera:
     runs-on: ubuntu-24.04
@@ -93,7 +139,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        file: [tab5-test-camera, p4tab5-camera-ortho]
+        file: [tab5-test-camera, p4tab5-camera-ortho, waveshare-test-camera]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

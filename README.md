@@ -69,10 +69,20 @@ measure the same. Narrower tiles were slower, see `tile_width:` below.
 
 The Tab5's camera (SC2356, 1280x720) on the whole screen, through the
 household's `esp_video_camera` and `lvgl_camera_display`
-(`yaml/p4tab5-camera-ortho.yaml`): **15.3 frames/s** with lvgl_ortho, each
-frame turned once by the PPA into the panel's own buffer, against 10-12
-through lvgl's rotation. 65 ms a frame is, again, the PPA's 270 turn alone,
-which is what `split:` (below) is for.
+(`yaml/p4tab5-camera-ortho.yaml`), each frame drawn by LVGL as a picture and
+turned once by the PPA:
+
+| | camera frames/s |
+|---|---|
+| lvgl's own rotation | 10-12 |
+| lvgl_ortho, ESPHome's `mipi_dsi` (a copy to the panel each frame) | 12.8 |
+| lvgl_ortho, the panel's own frame buffers (`framebuffers: 3`) | **15.6** |
+| the same, with `split: true` | 14.0 |
+
+The copy is 14.4 ms a frame (184 ms of copying a second at 12.8 frames),
+which is the whole difference between the two middle rows. At 64 ms a frame
+is the PPA's 270 turn alone, which is what `split:` (below) was built for --
+and measured slower.
 
 ## On an ESPHome board
 
@@ -95,7 +105,7 @@ lvgl_ortho:
   # cores: 2              # off by default: the second core draws every other tile
   # image_cache: 4MB      # the default: pictures that do not change are turned once
   # tile_width: 256       # off by default: narrower, taller tiles (slower on a Tab5)
-  # split: true           # off by default: a big picture's turn shared by the PPA and the CPU
+  # split: true           # off by default: the PPA and the CPU together (slower on a Tab5)
 ```
 
 It takes LVGL's display over once ESPHome's lvgl has built it: one
@@ -158,7 +168,11 @@ the screen, so the figure compares that and nothing else. It takes only
 CI compiles all twelve combinations with ESP-IDF. It includes `boards/` and
 `modes/`, so copy the whole `yaml/` folder; for the Tab5,
 `yaml/tab5-test-lvgl.yaml` is the same test in one file, the mode chosen in a
-block at its top.
+block at its top, and `yaml/waveshare-test-lvgl.yaml` the same again for the
+Waveshare 7B turned over (180). It starts in the mode esp_lvgl_adapter's
+ROTATE_IN_DRAW uses: one core, drawing into the panel's own frame buffers.
+`yaml/waveshare-test-camera.yaml` is `yaml/tab5-test-camera.yaml` for that
+board's OV5647.
 
 `components/lvgl_bench` works the same way in any firmware: it times each
 LVGL refresh from `RENDER_START` to `REFR_READY`, drawing, turn and flush
@@ -276,10 +290,20 @@ nothing more; `test/ppa_mutants.py` breaks each of those and the tests catch
 it.
 
 What it covers: pictures LVGL draws, which is how a camera reaches the
-screen through `lvgl_camera_display` and a canvas. Not yet the video window
-(`show_video`, `ortho_id`), nor the tiles the interface is drawn in. **Not
-measured on a board yet**: how fast the CPU turns out of and into PSRAM next
-to the PPA and the panel's scan-out is what the board will say.
+screen through `lvgl_camera_display` and a canvas. Not the video window
+(`show_video`, `ortho_id`), nor the tiles the interface is drawn in.
+
+**Measured on a Tab5, and slower.** The camera on the whole screen, the same
+firmware with `max_framerate: 30`: **15.6 frames/s with the PPA alone, 14.0
+with the split** on both cores. The shares settled at 60% to the PPA and 40%
+to the CPU, and a frame still took about 71 ms: the PPA took about 70 ms for
+three fifths of the frame it turns alone in 64, and each core turned about
+2.6 Mpx/s where the simulation gives one core alone 15-17. Everything slowed
+down together, which is the PSRAM being the limit: the PPA, both cores, the
+camera writing its frames and the panel scanning out sixty times a second
+all go through it, and the simulation models one of them at a time. So it
+stays off; the tests that hold it right stay, for a board with more memory
+bandwidth. The camera at 30 against 20 cost nothing (15.6 against 15.3).
 
 ### The PPA's faults, and what is done about them
 
