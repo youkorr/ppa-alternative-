@@ -6,13 +6,11 @@
 # running: no voice, no H.264, no dashboard, so the figure is the camera's
 # path alone. lvgl_camera_display points the canvas at each frame and LVGL
 # draws it as a picture, which lvgl_ortho turns straight into the panel's own
-# frame buffer (framebuffers: 3) -- with split: true, the PPA and both cores
-# together. With ortho_id: instead, each frame goes into lvgl_ortho's video
-# window, turned by the PPA alone: split does not cover that window yet.
+# frame buffer (framebuffers: 3). With ortho_id: instead, each frame goes
+# into lvgl_ortho's video window, turned by the PPA the same way.
 #
 # The figures, every 10 s in the log:
 #   [I][lvgl_ortho]: Last 10s: ... N screens/s shown ...
-#   [I][lvgl_ortho]:   N big pictures/s shared: X% by the PPA, Y% by the CPU
 #   [I][lvgl_camera_display]: === BENCHMARK (100 frames) === FPS: ...
 # The sensor sends 30 frames a second at most (SC2356 at 1280x720).
 #
@@ -29,9 +27,9 @@ lvgl_ortho:
   rotation: 270          # the Tab5 in landscape (ESPHome's degrees)
   ppa: true
   cores: 2
-  # Each camera frame's turn shared: the PPA turns part of its rows while
-  # both cores turn the rest. false: the PPA alone.
-  split: true
+  # true shares each frame's turn between the PPA and both cores: measured
+  # slower on a Tab5 (14.0 frames/s against 15.6), the PSRAM being the limit.
+  split: false
 
 esphome:
   name: camera-test
