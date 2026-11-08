@@ -94,22 +94,65 @@ internal RAM room for one 128 KiB tile block, cut in four for the two cores.
 Whether that is the gap is what a run with 128 KB of L2 cache will say: it is
 built (`l2_cache: 128` in the workflow below) and not yet measured.
 
-**A camera on the whole screen**, each frame drawn by LVGL as a picture and
-turned once by the PPA (`lvgl_camera_display`):
+### The cameras
 
-| | Tab5 (SC2356, 1280x720), 270 | Waveshare 7B (OV5647 at 1280x960), 180 |
+Each board's own sensor, as its YAML in
+[youkorr/esphome_esp-video](https://github.com/youkorr/esphome_esp-video)
+sets it up. A sensor's lanes and frame rate belong to the format the driver
+picks, so the sensor's rate is the ceiling the display has to keep up with:
+
+| board | panel, turn | sensor | format | lanes | the sensor sends |
+|---|---|---|---|---|---|
+| M5Stack Tab5 | 720x1280, 270 | SC2356 (SC202CS silicon) | RAW8 1280x720, the whole frame shown | 1 | 30 /s |
+| Waveshare 7B | 1024x600, 180 | OV5647 | RAW10 1280x960 binned, its centre 1024x600 shown | 2 | 45 /s (the YAML asks 30) |
+| Guition 10" | 800x1280, 90 | OV02C10 | RAW10 1288x728, its centre 1280x720 under 80 px of UI | 1 | 30 /s |
+
+**Measured on the boards**, the camera on the whole screen, each frame drawn
+by LVGL as a picture and turned once by the PPA (`lvgl_camera_display`):
+
+| | Tab5, SC2356 | Waveshare 7B, OV5647 |
 |---|---|---|
 | LVGL's own rotation | 10-12 /s | |
 | lvgl_ortho, frame copied to the panel (ESPHome's `mipi_dsi`) | 12.8 /s | |
 | lvgl_ortho, the panel's own frame buffers | **15.6 /s** | **20.8 /s** |
+| the same, the turn split between the PPA and both cores (`split:`) | 14.0 /s | |
 
 On the Tab5 the copy to the panel is 14.4 ms a frame, which is the whole
-difference between those two rows.
+difference between the second and third rows. The sensor at 30 frames a
+second against 20 changed nothing (15.6 against 15.3), so on the Tab5 the
+display is the limit, not the sensor: about half of what the SC2356 sends
+reaches the screen. The Guition's camera has not run with lvgl_ortho.
+
+**Tested on a PC at the sensors' real sizes.** `test/` has the three boards
+as cases, with their sensor's frame, their panel and their turn: the screen
+with the frame written by the (fake) PPA must be, pixel for pixel, the screen
+LVGL draws with that crop of the frame as an ordinary image. All three pass:
+
+```
+ok    M5Stack Tab5, SC2356: 1280x720 sensor frame into the 720x1280 panel at 90
+ok    Guition 10", OV02C10: 1288x728 sensor frame cropped into the 800x1280 panel at 270
+ok    Waveshare 7", OV5647: 1280x960 sensor frame cropped into the 1024x600 panel at 180
+```
+
+The angles there are LVGL's: ESPHome counts its quarter turns the other way,
+so its 270 is LVGL's 90. Besides those three, the camera has 45 more cases:
+frames upright and already turned, smaller and bigger than the screen, cut,
+mirrored, at every angle, through the PPA into the panel's own buffers.
+
+**ESP-IDF v5.5.6.** All the camera figures above are ESP-IDF v5.5.5. On
+v5.5.6 the camera of an ESP32-P4 below rev 3.0 did not start at all
+(`esp_cam_new_csi_ctlr: failed to configure format conversion`): v5.5.6
+takes the CSI bridge's input colour to be the ISP's output, and esp_video
+still handed it the sensor's RAW format, so the bridge was asked for a
+conversion that only rev 3.0 can do. esphome_esp-video carries the fix
+(commit 26e1be9), and so does Espressif's esp-video-components (79ae611),
+which no esp_video release carries yet. Nothing in lvgl_ortho changes.
 
 ### Not measured yet
 
 - **The Guition JC8012P4A1** (800x1280, 90): only simulated, see
-  [How it is measured](#how-it-is-measured).
+  [How it is measured](#how-it-is-measured); its OV02C10 camera only in the
+  tests.
 - **ESP32-P4 rev 3.0**, where the PPA's quarter turn works in 32x32 blocks
   rather than 16x16: neither board here has one (Espressif's CI does).
 - **RGB panels**: the adapter path supports them and has never run on one.
@@ -453,7 +496,7 @@ quote.
 ```
 git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 202 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 450 cases, and the ESPHome component at four angles
 build/ortho_test --ppa             # the PPA's cases alone
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case
