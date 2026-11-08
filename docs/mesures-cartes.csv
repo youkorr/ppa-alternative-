@@ -2,5 +2,6 @@ groupe,cas,reference,ppa_alternative,reference_nom,source
 espressif,Waveshare 7B 90°,15.8,17.3,esp_lvgl_adapter (Espressif),test_apps/lvgl9 PR #818 ESP-IDF v5.5.5
 espressif,Waveshare 7B 180°,16.6,18.0,esp_lvgl_adapter (Espressif),test_apps/lvgl9 PR #818 ESP-IDF v5.5.5
 espressif,Tab5 270°,11.3,13.0,esp_lvgl_adapter (Espressif),test_apps/lvgl9 PR #818 ESP-IDF v5.5.5
+espressif,Tab5 270° · L2 128 Ko,11.2,18.0,esp_lvgl_adapter (Espressif),test_apps/lvgl9 PR #818 ESP-IDF v5.5.5 cache L2 128 Ko (défaut d'ESP-IDF)
 esphome,Waveshare 7B 180°,7.75,20.96,rotation de LVGL (ESPHome),lvgl_bench 129.0 ms contre 47.7 ms
 esphome,Tab5 270°,5.17,16.37,rotation de LVGL (ESPHome),lvgl_bench 193.6 ms contre 61.1 ms
