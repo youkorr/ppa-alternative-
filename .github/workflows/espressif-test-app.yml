@@ -15,6 +15,7 @@
 # Each artifact is one .bin to write at 0x0. The tests start at boot; the
 # serial log says "BENCH ... ms each" and each test's PASS or FAIL.
 name: Espressif test app on a Waveshare 7B and a Tab5
+run-name: Espressif test app, ESP-IDF ${{ inputs.idf || 'v5.5.5' }}, ${{ inputs.ref || 'feat/esp_lvgl_adapter-rotate-in-draw' }}
 on:
   push:
     paths:
@@ -25,11 +26,14 @@ on:
       ref:
         description: "Branch of youkorr/esp-iot-solution to build"
         default: feat/esp_lvgl_adapter-rotate-in-draw
+      idf:
+        description: "ESP-IDF, a tag of the espressif/idf image (v5.5.5 is what ESPHome builds with)"
+        default: v5.5.5
 jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    container: espressif/idf:v5.5.5
+    container: espressif/idf:${{ inputs.idf || 'v5.5.5' }}
     strategy:
       fail-fast: false
       matrix:
@@ -92,14 +96,14 @@ jobs:
             ! grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW=y" sdkconfig
           fi
           cd build
-          python -m esptool --chip esp32p4 merge_bin -o "$GITHUB_WORKSPACE/${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}.bin" @flash_args
-          cp ../sdkconfig "$GITHUB_WORKSPACE/sdkconfig-${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}"
+          python -m esptool --chip esp32p4 merge_bin -o "$GITHUB_WORKSPACE/${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}.bin" @flash_args
+          cp ../sdkconfig "$GITHUB_WORKSPACE/sdkconfig-${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}"
           # The symbols, to read a crash's backtrace against this exact build.
-          cp test_esp_lvgl_adapter_lvgl9.elf "$GITHUB_WORKSPACE/${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}.elf"
+          cp test_esp_lvgl_adapter_lvgl9.elf "$GITHUB_WORKSPACE/${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}.elf"
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}
+          name: ${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}
           path: |
-            ${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}.bin
-            sdkconfig-${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}
-            ${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}.elf
+            ${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}.bin
+            sdkconfig-${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}
+            ${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}.elf

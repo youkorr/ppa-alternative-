@@ -51,7 +51,8 @@ sub(hw / "idf_component.yml", "  espressif/esp_lcd_touch_gt911:\n",
 sub(hw / "CMakeLists.txt", '    list(APPEND srcs "lcd/lcd_init_mipi_dsi.c")\n',
     '    list(APPEND srcs "lcd/lcd_init_mipi_dsi.c")\n'
     '    # M5Stack Tab5 run (prepare.py)\n'
-    '    list(APPEND component_requires espressif__esp_lcd_ili9881c espressif__esp_io_expander_pi4ioe5v6408)\n')
+    '    list(APPEND component_requires espressif__esp_lcd_ili9881c espressif__esp_io_expander_pi4ioe5v6408\n'
+    '         esp_driver_i2c esp_driver_ledc)\n')
 
 # hw_init.c refuses a board with no input at all; this run has none on purpose.
 sub(hw / "hw_init.c",
