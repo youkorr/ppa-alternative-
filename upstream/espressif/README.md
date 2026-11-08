@@ -16,6 +16,7 @@ une option désactivée par défaut : `CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`.
 |---|---|
 | branche `feat/esp_lvgl_adapter-rotate-in-draw` de [youkorr/esp-iot-solution](https://github.com/youkorr/esp-iot-solution) | le code de la PR ; tout ce qui y est poussé arrive dans la PR |
 | `esp-iot-solution/PR.md` | la description de la PR, telle qu'elle est sur GitHub |
+| `esp-iot-solution/comment-hardware.md` | un commentaire à coller dans la PR : ce qui n'a pas pu être testé (rev 3.0, RGB) |
 | `../../espressif/` | les firmwares de test pour la Waveshare 7B et la Tab5 |
 | workflow *Espressif pull request* | compile la branche de la PR comme la CI d'Espressif : ESP-IDF v5.5.5, release-v6.0, release-v6.1 et latest, avec et sans l'option |
 | workflow *Espressif test app on a Waveshare 7B and a Tab5* | fabrique les firmwares à flasher (`.bin` à l'adresse `0x0`) |
@@ -66,9 +67,12 @@ ESP-IDF v6.1 donne la même chose (13,0 - 13,2 images/s). Le détail est dans le
    - la taille du changement ;
    - le fait que `lv_draw_ortho` vienne de ce dépôt (même auteur, licence
      MIT, testé pixel par pixel contre LVGL).
-4. **En attente de ta décision** : un test de 14 lignes qui ferait tourner
-   l'option sur la carte rev 3.0 de leur CI (`pytest_adapter_lvgl9.py`). Il
-   est prêt, pas encore poussé dans la PR.
+4. **Le test rev 3.0, poussé dans la PR** : `test_adapter_esp32p4_rotate_in_draw`
+   (14 lignes de `pytest_adapter_lvgl9.py`) fait tourner les tests de
+   l'application avec l'option, écran tourné à 90°, sur la carte rev 3.0 de
+   leur CI. Il tourne quand un mainteneur lance leur CI ; rien à faire de ton
+   côté. Le commentaire à coller dans la PR est
+   `esp-iot-solution/comment-hardware.md`.
 
 ## Les règles d'Espressif, déjà respectées
 
@@ -78,3 +82,6 @@ ESP-IDF v6.1 donne la même chose (13,0 - 13,2 images/s). Le détail est dans le
 - Messages de commit au format qu'ils imposent : `feat(esp_lvgl_adapter): ...`,
   `fix(...)`, `docs(...)`.
 - CHANGELOG, README et README_CN du composant à jour.
+- Copyright : leur outil `check-copyright` (v1.1.1, leur configuration) a
+  été passé ; il met l'année à « 2025-2026 » sur les fichiers d'Espressif que
+  la PR modifie de 5 lignes ou plus.

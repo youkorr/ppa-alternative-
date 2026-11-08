@@ -75,6 +75,7 @@ transfer until it is waited for.
 
 - Host: the draw unit's test suite (pixel-exact against LVGL), see the repository above.
 - Build: `test_apps/lvgl9` for esp32p4 with `sdkconfig.ci.rotate_in_draw` and `sdkconfig.ci.p4rev3`, ESP-IDF v5.5.5, release-v6.0, release-v6.1 and latest (the images this test app is built with).
+- Target: `test_adapter_esp32p4_rotate_in_draw` in `pytest_adapter_lvgl9.py` runs the same feature tests with `sdkconfig.ci.rotate_in_draw` (display rotated 90 degrees, `DOUBLE_DIRECT`) on the `esp32p4_function_ev_board,screen,touch,eco_default` runner, the rev 3 board none of mine is.
 - Rebased on v0.7.5. With v0.7.5's PPA blend acceleration, `profile.enable_ppa_accel` is ignored (with a warning) on a display rotated this way: `lv_draw_ortho` already uses the PPA there, and the blend handlers on the same tiles would put two PPA users under one refresh. Other displays keep their setting.
 
 ### Measured through this adapter
@@ -114,7 +115,7 @@ An earlier version of this PR used two frame buffers and was *slower* at 90
 degrees, 66.1 ms: it drew a frame in 58.4 ms and then waited for the panel's
 refresh to switch buffers, which on a 60 Hz panel rounded every frame up to
 four refreshes. That is what the third buffer removes. Rev 3.0 silicon has not
-been measured.
+been measured; the pytest case above is what runs it on one.
 
 Running the test app also found two faults, both fixed in this PR:
 
