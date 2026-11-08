@@ -34,6 +34,11 @@ static int64_t s_bench_t0;
 static int64_t s_bench_sum_us;
 static int64_t s_bench_worst_us;
 static uint32_t s_bench_frames;
+/* The drawing alone: from RENDER_START to the start of the frame's last
+ * flush, where a double-buffered panel then waits for its next refresh. */
+static int64_t s_bench_flush_t;
+static int64_t s_bench_render_sum_us;
+static int64_t s_bench_render_worst_us;
 static lv_style_t s_bench_card;
 
 static void bench_render_start(lv_event_t *e)
@@ -42,11 +47,24 @@ static void bench_render_start(lv_event_t *e)
     s_bench_t0 = esp_timer_get_time();
 }
 
+static void bench_flush_start(lv_event_t *e)
+{
+    (void)e;
+    s_bench_flush_t = esp_timer_get_time();
+}
+
 static void bench_refr_ready(lv_event_t *e)
 {
     (void)e;
     if (s_bench_t0 == 0) {
         return;
+    }
+    if (s_bench_flush_t > s_bench_t0) {
+        const int64_t r = s_bench_flush_t - s_bench_t0;
+        s_bench_render_sum_us += r;
+        if (r > s_bench_render_worst_us) {
+            s_bench_render_worst_us = r;
+        }
     }
     const int64_t d = esp_timer_get_time() - s_bench_t0;
     s_bench_t0 = 0;
@@ -166,6 +184,7 @@ TEST_CASE("rotate bench: whole screen redrawn", "[bench]")
     bench_build_ui(scr);
     lv_display_add_event_cb(s_disp, bench_render_start, LV_EVENT_RENDER_START, NULL);
     lv_display_add_event_cb(s_disp, bench_refr_ready, LV_EVENT_REFR_READY, NULL);
+    lv_display_add_event_cb(s_disp, bench_flush_start, LV_EVENT_FLUSH_START, NULL);
     esp_lv_adapter_unlock();
 
     /* The first frame lays the UI out; leave it out of the figure. */
@@ -175,6 +194,8 @@ TEST_CASE("rotate bench: whole screen redrawn", "[bench]")
     s_bench_sum_us = 0;
     s_bench_worst_us = 0;
     s_bench_frames = 0;
+    s_bench_render_sum_us = 0;
+    s_bench_render_worst_us = 0;
     esp_lv_adapter_unlock();
 
     const int64_t started = esp_timer_get_time();
@@ -189,8 +210,10 @@ TEST_CASE("rotate bench: whole screen redrawn", "[bench]")
     TEST_ESP_OK(esp_lv_adapter_lock(pdMS_TO_TICKS(LVGL_LOCK_TIMEOUT_MS)));
     const uint32_t frames = s_bench_frames;
     const int64_t sum = s_bench_sum_us, worst = s_bench_worst_us;
+    const int64_t rsum = s_bench_render_sum_us, rworst = s_bench_render_worst_us;
     lv_display_remove_event_cb_with_user_data(s_disp, bench_render_start, NULL);
     lv_display_remove_event_cb_with_user_data(s_disp, bench_refr_ready, NULL);
+    lv_display_remove_event_cb_with_user_data(s_disp, bench_flush_start, NULL);
     lv_obj_clean(scr);
     lv_obj_set_layout(scr, LV_LAYOUT_NONE);
     esp_lv_adapter_unlock();
@@ -200,5 +223,8 @@ TEST_CASE("rotate bench: whole screen redrawn", "[bench]")
     ESP_LOGI(TAG, "BENCH %s: %u frames in %.1f s (%.1f/s), %.1f ms each, worst %.1f ms",
              BENCH_MODE, (unsigned)frames, elapsed / 1e6, frames * 1e6 / (double)elapsed,
              sum / 1000.0 / frames, worst / 1000.0);
+    ESP_LOGI(TAG, "BENCH drawing alone (to the last flush): %.1f ms each, worst %.1f ms; "
+             "the rest is the flush, and waiting for the panel when it is double-buffered",
+             rsum / 1000.0 / frames, rworst / 1000.0);
 }
 
