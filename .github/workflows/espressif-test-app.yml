@@ -80,9 +80,12 @@ jobs:
           cd build
           python -m esptool --chip esp32p4 merge_bin -o "$GITHUB_WORKSPACE/waveshare7b-${{ matrix.mode }}.bin" @flash_args
           cp ../sdkconfig "$GITHUB_WORKSPACE/sdkconfig-${{ matrix.mode }}"
+          # The symbols, to read a crash's backtrace against this exact build.
+          cp test_esp_lvgl_adapter_lvgl9.elf "$GITHUB_WORKSPACE/waveshare7b-${{ matrix.mode }}.elf"
       - uses: actions/upload-artifact@v4
         with:
           name: waveshare7b-${{ matrix.mode }}
           path: |
             waveshare7b-${{ matrix.mode }}.bin
             sdkconfig-${{ matrix.mode }}
+            waveshare7b-${{ matrix.mode }}.elf
