@@ -56,7 +56,10 @@ sub(app / "components/hw_init/hw_init.h",
 test = app / "main/test_esp_lvgl_adapter_features.c"
 if mode == "copy":
     sub(test, "static esp_lv_adapter_rotation_t get_configured_rotation(void)\n",
-        "/* Waveshare 7B run, mode copy: rotation 90 without ROTATE_IN_DRAW. */\n"
+        "/* Waveshare 7B run, mode copy: rotation 90 without ROTATE_IN_DRAW.\n"
+        " * hw_init.h defines ROTATION_0 when nothing else is, and it is tested\n"
+        " * first, so it has to go. */\n"
+        "#undef CONFIG_EXAMPLE_DISPLAY_ROTATION_0\n"
         "#define CONFIG_EXAMPLE_DISPLAY_ROTATION_90 1\n\n"
         "static esp_lv_adapter_rotation_t get_configured_rotation(void)\n")
 bench = (here / "bench.inc.c").read_text()
