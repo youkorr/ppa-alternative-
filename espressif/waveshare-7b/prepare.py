@@ -12,16 +12,21 @@
 #     does not drive, and nothing here needs a finger;
 #   - the tests start at boot (the app waits for a key on the serial port
 #     otherwise), after a timed full redraw (bench.inc.c);
-#   - mode "copy": the test app without ROTATE_IN_DRAW at rotation 90, so
-#     the same firmware shows what a rotated display costs today.
+#   - mode "copy": the test app without ROTATE_IN_DRAW, so the same
+#     firmware shows what a rotated display costs today;
+#   - the angle under test, 90 or 180, in both modes (the test app's own
+#     choice is 90 with ROTATE_IN_DRAW and 0 without).
 #
-#   prepare.py <test app dir> <rotate_in_draw|copy>
+#   prepare.py <test app dir> <rotate_in_draw|copy> [90|180]
 
+import re
 import sys
 from pathlib import Path
 
 app, mode = Path(sys.argv[1]), sys.argv[2]
+angle = sys.argv[3] if len(sys.argv) > 3 else "90"
 assert mode in ("rotate_in_draw", "copy"), mode
+assert angle in ("90", "180"), angle
 here = Path(__file__).resolve().parent
 
 
@@ -54,14 +59,16 @@ sub(app / "components/hw_init/hw_init.h",
     "#define HW_LCD_V_RES    600\n#define HW_USE_TOUCH    0   /* Waveshare 7B: GT911 reset not driven */\n")
 
 test = app / "main/test_esp_lvgl_adapter_features.c"
-if mode == "copy":
-    sub(test, "static esp_lv_adapter_rotation_t get_configured_rotation(void)\n",
-        "/* Waveshare 7B run, mode copy: rotation 90 without ROTATE_IN_DRAW.\n"
-        " * hw_init.h defines ROTATION_0 when nothing else is, and it is tested\n"
-        " * first, so it has to go. */\n"
-        "#undef CONFIG_EXAMPLE_DISPLAY_ROTATION_0\n"
-        "#define CONFIG_EXAMPLE_DISPLAY_ROTATION_90 1\n\n"
-        "static esp_lv_adapter_rotation_t get_configured_rotation(void)\n")
+# The angle under test replaces the test app's own choice, in both modes.
+t = test.read_text()
+func = re.compile(r"static esp_lv_adapter_rotation_t get_configured_rotation\(void\)\n\{.*?\n\}\n", re.S)
+assert len(func.findall(t)) == 1, "get_configured_rotation() not found once"
+t = func.sub("/* Waveshare 7B run: the angle under test (prepare.py). */\n"
+             "static esp_lv_adapter_rotation_t get_configured_rotation(void)\n"
+             "{\n"
+             f"    return ESP_LV_ADAPTER_ROTATE_{angle};\n"
+             "}\n", t)
+test.write_text(t)
 bench = (here / "bench.inc.c").read_text()
 bench = bench[bench.index("/* ----"):]   # without this repository's own header
 sub(test, "void app_main(void)\n", bench + "void app_main(void)\n")
@@ -71,4 +78,4 @@ sub(test, "    unity_run_menu();\n}",
     "    unity_run_all_tests();\n"
     "    ESP_LOGI(TAG, \"Waveshare 7B run: all tests done\");\n"
     "    unity_run_menu();\n}")
-print(f"prepared {app} for the Waveshare 7B, mode {mode}")
+print(f"prepared {app} for the Waveshare 7B, mode {mode}, rotation {angle}")
