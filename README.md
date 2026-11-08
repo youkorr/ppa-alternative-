@@ -109,28 +109,29 @@ Its camera (OV5647 at 1280x960, the middle 1024x600 shown),
 
 The same UI through the adapter's own test app, `test_apps/lvgl9` from
 esp-iot-solution PR #818, on the same Waveshare 7B (ESP32-P4 rev 1.3, ESP-IDF
-v5.5.5) at **90**, built by `espressif/waveshare-7b/`:
+v5.5.5), built by `espressif/waveshare-7b/`, two runs each:
 
-| | frame buffers | ms per frame | frames/s |
+| | frame buffers | 90 degrees | 180 degrees |
 |---|---|---|---|
-| the adapter today (TRIPLE_PARTIAL, drawn upright, turned by the PPA) | 3 | 63.4 | |
-| ROTATE_IN_DRAW, two buffers (each frame waits for the panel's refresh) | 2 | 66.1 | 15.2 |
-| ROTATE_IN_DRAW, two cores, three buffers | 3 | **57.5 - 58.2** | **17.2 - 17.3** |
+| the adapter today (TRIPLE_PARTIAL, drawn upright, turned by the PPA) | 3 | 63.4 ms | 59.4 - 59.7 ms (16.6/s) |
+| ROTATE_IN_DRAW, two buffers (each frame waits for the panel's refresh) | 2 | 66.1 ms (15.2/s) | |
+| ROTATE_IN_DRAW, two cores, three buffers | 3 | **57.5 - 58.2 ms (17.2 - 17.3/s)** | **54.9 - 55.2 ms (18.0/s)** |
 
 All the test app's tests pass in every row. The two-buffer row drew in 58.4 ms
 and then waited for the panel: a 60 Hz panel switches buffers on its refresh,
 so 58.4 ms of drawing became four refreshes, 66.1 ms. With three buffers LVGL
 draws the next frame into the third while the panel waits, and a frame costs
-what drawing it costs -- **8 to 9% faster than the adapter**, for the same
-three frame buffers. The buffer LVGL draws into is then two frames old: LVGL
-brings over the frame before, and the adapter copies the frame before that
-from its diff tracker, less what is about to be drawn again (nothing, on the
-whole-screen redraw measured here).
+what drawing it costs -- **8-9% faster than the adapter at 90 degrees, 7-8% at
+180**, for the same three frame buffers. The buffer LVGL draws into is then
+two frames old: LVGL brings over the frame before, and the adapter copies the
+frame before that from its diff tracker, less what is about to be drawn again
+(nothing, on the whole-screen redraw measured here).
 
 The 2.3x of the table above is against ESPHome's LVGL rotation, which does not
 overlap drawing and turning; the adapter already does, in strips in internal
-RAM, which is why the margin is smaller here. Both are most likely bound by
-the PPA's 90-degree turn on a rev 1.x P4.
+RAM, which is why the margin is smaller here. At 180 the PPA's turn is the
+easy case and our drawing time barely moves (55 against 58 ms): what is left
+is the CPU drawing this UI, on both cores.
 
 ## On an ESPHome board
 
