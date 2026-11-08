@@ -60,9 +60,9 @@ leur méthode ne bouge pas, la nôtre gagne 40 %. Le détail est dans le
 
 ## Ce qui reste à faire
 
-1. **L'accord de contributeur d'Espressif** : un robot le demande dans la
-   PR, il suffit de suivre son lien et de signer. Sans lui, rien n'est
-   fusionné.
+1. **L'accord de contributeur d'Espressif** : signé, le robot de la PR dit
+   « All committers have signed the CLA », y compris pour les derniers
+   commits.
 2. **Leur CI** : elle compile la PR pour plusieurs versions d'ESP-IDF. Si elle
    échoue, copier l'erreur ici ou dans la conversation : la correction se fait
    sur la branche du fork et arrive dans la PR toute seule.
