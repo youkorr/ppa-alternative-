@@ -16,6 +16,7 @@ une option désactivée par défaut : `CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`.
 |---|---|
 | branche `feat/esp_lvgl_adapter-rotate-in-draw` de [youkorr/esp-iot-solution](https://github.com/youkorr/esp-iot-solution) | le code de la PR ; tout ce qui y est poussé arrive dans la PR |
 | `esp-iot-solution/PR.md` | la description de la PR, telle qu'elle est sur GitHub |
+| `esp-iot-solution/comment-results.md` | un commentaire à coller dans la PR : il remplace celui qui la gardait en brouillon (mesures de l'adaptateur, deux corrections) |
 | `esp-iot-solution/comment-hardware.md` | un commentaire à coller dans la PR : ce qui n'a pas pu être testé (rev 3.0, RGB) |
 | `../../espressif/` | les firmwares de test pour la Waveshare 7B et la Tab5 |
 | workflow *Espressif pull request* | compile la branche de la PR comme la CI d'Espressif : ESP-IDF v5.5.5, release-v6.0, release-v6.1 et latest, avec et sans l'option |
