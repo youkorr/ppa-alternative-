@@ -34,6 +34,13 @@ jobs:
         run: |
           make -C test -j4 LVGL=/tmp/lvgl BUILD=build-mt2 CFLAGS="-O2 -g -DLV_USE_OS=1 -DLV_DRAW_ORTHO_TEST_TILES=2" build-mt2/ortho_test
           test/build-mt2/ortho_test --cores
+      - name: One block of internal RAM, as on esp_lvgl_adapter's P4 test app
+        # Its L2 cache takes 256 KB and leaves one region two blocks do not
+        # fit in: the tiles are cut out of the one block, on one core and two.
+        run: |
+          make -C test -j4 LVGL=/tmp/lvgl BUILD=build-1t CFLAGS="-O2 -g -DLV_USE_OS=1 -DLV_DRAW_ORTHO_TEST_TILES=1" build-1t/ortho_test
+          test/build-1t/ortho_test
+          test/build-1t/ortho_test --cores
       - name: The two-core test catches every mistake planted in it
         run: python3 test/ppa_mutants.py --cores build-mt
       # LVGL's own render thread races its own dispatcher (reported with one
