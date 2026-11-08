@@ -111,17 +111,26 @@ The same UI through the adapter's own test app, `test_apps/lvgl9` from
 esp-iot-solution PR #818, on the same Waveshare 7B (ESP32-P4 rev 1.3, ESP-IDF
 v5.5.5) at **90**, built by `espressif/waveshare-7b/`:
 
-| | frame buffers | ms per frame |
-|---|---|---|
-| the adapter today (TRIPLE_PARTIAL, drawn upright, turned by the PPA) | 3 | 63.4 |
-| ROTATE_IN_DRAW (lv_draw_ortho, one core, the panel's own buffers) | 2 | 66.1 |
+| | frame buffers | ms per frame | frames/s |
+|---|---|---|---|
+| the adapter today (TRIPLE_PARTIAL, drawn upright, turned by the PPA) | 3 | 63.4 | |
+| ROTATE_IN_DRAW, two buffers (each frame waits for the panel's refresh) | 2 | 66.1 | 15.2 |
+| ROTATE_IN_DRAW, two cores, three buffers | 3 | **57.5 - 58.2** | **17.2 - 17.3** |
 
-All the test app's tests pass in both. So against the adapter -- which
-already draws in strips in internal RAM and turns each one with the PPA while
-the next is drawn -- lv_draw_ortho is not faster at 90 on a rev 1.x P4, where
-both are most likely bound by the PPA's 90-degree turn; it saves one frame
-buffer. The 2.3x of the table above is against ESPHome's LVGL rotation, which
-does not overlap the two.
+All the test app's tests pass in every row. The two-buffer row drew in 58.4 ms
+and then waited for the panel: a 60 Hz panel switches buffers on its refresh,
+so 58.4 ms of drawing became four refreshes, 66.1 ms. With three buffers LVGL
+draws the next frame into the third while the panel waits, and a frame costs
+what drawing it costs -- **8 to 9% faster than the adapter**, for the same
+three frame buffers. The buffer LVGL draws into is then two frames old: LVGL
+brings over the frame before, and the adapter copies the frame before that
+from its diff tracker, less what is about to be drawn again (nothing, on the
+whole-screen redraw measured here).
+
+The 2.3x of the table above is against ESPHome's LVGL rotation, which does not
+overlap drawing and turning; the adapter already does, in strips in internal
+RAM, which is why the margin is smaller here. Both are most likely bound by
+the PPA's 90-degree turn on a rev 1.x P4.
 
 ## On an ESPHome board
 
