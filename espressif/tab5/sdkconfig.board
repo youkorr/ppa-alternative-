@@ -1,0 +1,2 @@
+# M5Stack Tab5: a P4 below rev 3.0 (its ESPHome build is too).
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
