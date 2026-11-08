@@ -127,7 +127,21 @@ two frames old: LVGL brings over the frame before, and the adapter copies the
 frame before that from its diff tracker, less what is about to be drawn again
 (nothing, on the whole-screen redraw measured here).
 
-The 2.3x of the table above is against ESPHome's LVGL rotation, which does not
+The same test app on an **M5Stack Tab5** (720x1280, ILI9881C, ESP32-P4 rev
+1.0) held in landscape, **270 degrees**, built by `espressif/tab5/`:
+
+| | ESP-IDF | frames/s | ms per frame (worst) |
+|---|---|---|---|
+| the adapter today (TRIPLE_PARTIAL) | v5.5.5 | 11.3 | 81.5 (103) |
+| ROTATE_IN_DRAW, two cores, three buffers | v5.5.5 | **13.0** | **77.0 - 77.5 (78)** |
+| the same | v6.1 | **13.0 - 13.2** | **75.8 - 76.9 (78)** |
+
+15% more frames a second than the adapter on the Tab5, and steadier: the
+adapter's worst frame is 103 ms, ours 78. The adapter's frames/s is lower than
+its ms per frame suggests because it loses about 7 ms between frames; frames/s
+is the figure to compare. ESP-IDF v6.1 measures the same as v5.5.5.
+
+The 2.3x of the first table is against ESPHome's LVGL rotation, which does not
 overlap drawing and turning; the adapter already does, in strips in internal
 RAM, which is why the margin is smaller here. At 180 the PPA's turn is the
 easy case and our drawing time barely moves (55 against 58 ms): what is left
