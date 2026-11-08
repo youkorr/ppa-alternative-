@@ -41,14 +41,17 @@ option, ESP-IDF v5.5.5, two runs each:
 | Waveshare 7B, 90 | 15.8 /s, 63.4 ms (worst 64.9) | **17.2 - 17.3 /s, 57.5 - 58.2 ms (worst 59.2)** | **+9 %** |
 | Waveshare 7B, 180 | 16.6 /s, 59.4 - 59.7 ms (worst 60.8) | **18.0 /s, 54.9 - 55.2 ms (worst 56.4)** | **+8 %** |
 | Tab5, 270 | 11.3 /s, 81.5 ms (worst 103) | **12.9 - 13.0 /s, 77.0 - 77.5 ms (worst 78)** | **+15 %** |
+| Tab5, 270, ESP-IDF's default L2 cache | 11.2 /s, 81.6 ms (worst 103) | **17.9 - 18.0 /s, 53.3 - 54.4 ms (worst 55)** | **+61 %** |
 
 Frames a second is the figure to compare: Espressif's path also loses about
 7 ms between frames on the Tab5, which its time per frame does not show. Same
 frame buffers in both columns (three), and every one of the test app's tests
 passes in every run. On the Tab5, **ESP-IDF v6.1** gives the same: 13.0 - 13.2
-/s, 75.8 - 76.9 ms. With ESP-IDF's default L2 cache (128 KB) instead of the test
-app's 256 KB, the PPA alternative on the Tab5 goes to **18.0 /s, 54.4 ms**: see
-[The L2 cache size](#the-l2-cache-size) below.
+/s, 75.8 - 76.9 ms.
+
+The last row is the same two firmwares built with ESP-IDF's default L2 cache,
+128 KB, where the test app sets 256 KB: Espressif's path does not move, the
+PPA alternative gains 40 %. See [The L2 cache size](#the-l2-cache-size) below.
 
 **What the turn itself costs.** An earlier build of the Espressif firmware
 ran at rotation 0 by mistake: 18.4 /s, 47.0 - 47.5 ms, which is this screen
@@ -82,9 +85,11 @@ after the other:
 | lvgl_ortho, 1 core, the panel's own frame buffers | | **57.0 ms** (2.3x) |
 | lvgl_ortho, 2 cores, the panel's own frame buffers (`framebuffers: 3`) | **61.1 ms** (3.2x) | **47.7 ms** (2.7x) |
 
-On the Tab5, 61 ms is the PPA turning 1280x720 and nothing else: a quarter
-turn runs at about 15 Mpx/s on this chip (16x16 macro blocks below rev 3.0),
-and the drawing on both cores is hidden behind it. `pixel_mode: 16` and `24`
+On the Tab5, the PPA turning 1280x720 is most of a frame: a quarter turn
+runs at 15-18 Mpx/s on this chip (16x16 macro blocks below rev 3.0), which is
+51-61 ms for the whole screen, and the drawing on both cores is hidden behind
+it. Where in that range a frame lands depends on the tiles' size: through the
+adapter with more internal RAM it was 54.4 ms (see the L2 cache below). `pixel_mode: 16` and `24`
 measure the same, and narrower tiles were slower (see `tile_width:` below).
 At 180 the turn is the PPA's easy case (about 41 Mpx/s), so on the Waveshare
 what is left is drawing the UI; the second core gains 16 %.
@@ -105,12 +110,12 @@ same firmware on the Tab5 at 270, built with 128 KB of L2 cache
 | Tab5, 270, ESP-IDF v5.5.5 | 256 KB of L2 cache (the test app's) | 128 KB (ESP-IDF's default) |
 |---|---|---|
 | PPA alternative | 12.9 - 13.0 /s, 77.0 - 77.5 ms | **17.9 - 18.0 /s, 53.3 - 54.4 ms (worst 55.2)** |
-| Espressif today | 11.3 /s, 81.5 ms | not measured yet |
+| Espressif today | 11.3 /s, 81.5 ms (worst 103) | 11.2 /s, 81.6 ms (worst 103) |
 
-40 % more frames, faster than through ESPHome (61.1 ms), and every test of
-the app passes. Espressif's own path at 128 KB is built
-(`tab5-copy-270-v5.5.5-l2-128k`); until it is measured, how far apart the two
-are at ESP-IDF's default is not known.
+Espressif's path does not move with the cache size. The PPA alternative
+gains 40 %, is faster than through ESPHome (61.1 ms), and at ESP-IDF's default
+gives **61 % more frames a second than Espressif's own rotation**. Every test
+of the app passes in both.
 
 ### The cameras
 
@@ -171,8 +176,8 @@ which no esp_video release carries yet. Nothing in lvgl_ortho changes.
 - **The Guition JC8012P4A1** (800x1280, 90): only simulated, see
   [How it is measured](#how-it-is-measured); its OV02C10 camera only in the
   tests.
-- **128 KB of L2 cache** for Espressif's path on the Tab5 and for both
-  paths on the Waveshare: the firmwares are built (run
+- **128 KB of L2 cache on the Waveshare**, both paths: the firmwares are
+  built (run
   [42518011578](https://github.com/youkorr/ppa-alternative-/actions/runs/42518011578)).
 - **ESP32-P4 rev 3.0**, where the PPA's quarter turn works in 32x32 blocks
   rather than 16x16: neither board here has one. PR #818 now carries a test
@@ -492,16 +497,17 @@ drawing into the panel's own frame buffers:
 kind to ours.** For the adapter it gave 88.4 ms on the Tab5 and 64.1 on the
 Waveshare at 180; the boards measured 81.5 and 59.5. For the PPA alternative
 it gave 34.7 and 25.1, and the boards measured 61.1 and 47.7 under ESPHome
-(77.0 and 55.0 through the adapter): the 2.5x it promised over Espressif is
-8 to 15 % on the boards. Two reasons, one measured and one not:
+(77.0 and 55.0 through the adapter, 54.4 on the Tab5 with ESP-IDF's default
+L2 cache): the 2.5x it promised over Espressif is 8 to 15 % on the boards
+with the test app's cache, 61 % on the Tab5 with ESP-IDF's default. Two reasons, one measured and one not:
 
 - **The PPA's quarter turn.** The simulation's PPA rate comes from a single
   turn of 180 on a Waveshare 7B, 14.9 ms for 1024x600, applied flat: 41.3
-  Mpx/s whatever the angle. A quarter turn on these chips is about 15 Mpx/s,
+  Mpx/s whatever the angle. A quarter turn on these chips is 15-18 Mpx/s,
   measured on the Tab5 one image at a time (0.92 ms for 128x128 against 0.40
   predicted, 4.33 against 1.59 for 256x256, 15.35 against 6.34 for 512x512)
-  and confirmed by the whole screen: 61.1 ms is the PPA turning 1280x720 at
-  that rate.
+  and confirmed by the whole screen: 54.4 - 61.1 ms is the PPA turning
+  1280x720 at that rate.
 - **The drawing.** At 180 the PPA's rate was right, and the Waveshare still
   measured twice the simulation: drawing the UI on two cores costs more on
   the board than the model of one memory access at a time allowed. Most

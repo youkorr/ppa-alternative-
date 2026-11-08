@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 475" width="940" height="475" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-label="Images par seconde mesurées sur les cartes : PPA alternative contre Espressif et LVGL">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 526" width="940" height="526" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-label="Images par seconde mesurées sur les cartes : PPA alternative contre Espressif et LVGL">
 <style>
   .bg { fill: #ffffff } .fg { fill: #1f2328 } .mute { fill: #59636e } .grid { stroke: #d1d9e0 }
   .ref { fill: #e0823d } .lvgl { fill: #b6bec8 } .ppa { fill: #1a6fd1 } .gain { fill: #1a7f37 }
@@ -7,16 +7,16 @@
     .ref { fill: #f0883e } .lvgl { fill: #5a626c } .ppa { fill: #388bfd } .gain { fill: #3fb950 }
   }
 </style>
-<rect class="bg" width="940" height="475"/>
+<rect class="bg" width="940" height="526"/>
 <text class="fg" x="24" y="38" font-size="22" font-weight="600">PPA alternative, mesuré sur les cartes</text>
 <text class="mute" x="24" y="62" font-size="13">Images par seconde, plus long est meilleur. Waveshare 7B (1024x600) et M5Stack Tab5 (720x1280), le même tableau de bord redessiné.</text>
 <text class="fg" x="24" y="112" font-size="14" font-weight="600">Contre l'adaptateur d'Espressif (même firmware, une seule option qui change)</text>
-<line class="grid" x1="190.0" x2="190.0" y1="122" y2="267"/>
-<line class="grid" x1="332.0" x2="332.0" y1="122" y2="267"/>
-<line class="grid" x1="474.0" x2="474.0" y1="122" y2="267"/>
-<line class="grid" x1="616.0" x2="616.0" y1="122" y2="267"/>
-<line class="grid" x1="758.0" x2="758.0" y1="122" y2="267"/>
-<line class="grid" x1="900.0" x2="900.0" y1="122" y2="267"/>
+<line class="grid" x1="190.0" x2="190.0" y1="122" y2="318"/>
+<line class="grid" x1="332.0" x2="332.0" y1="122" y2="318"/>
+<line class="grid" x1="474.0" x2="474.0" y1="122" y2="318"/>
+<line class="grid" x1="616.0" x2="616.0" y1="122" y2="318"/>
+<line class="grid" x1="758.0" x2="758.0" y1="122" y2="318"/>
+<line class="grid" x1="900.0" x2="900.0" y1="122" y2="318"/>
 <text class="fg" x="176" y="140.5" font-size="13" text-anchor="end">Waveshare 7B 90°</text>
 <text class="gain" x="176" y="157.5" font-size="14" font-weight="700" text-anchor="end">+9 %</text>
 <rect class="ref" x="190" y="126" width="448.7" height="16" rx="2"/>
@@ -35,29 +35,35 @@
 <text class="mute" x="515.9" y="241" font-size="11">11,3 /s · esp_lvgl_adapter (Espressif)</text>
 <rect class="ppa" x="190" y="247" width="369.2" height="16" rx="2"/>
 <text class="mute" x="564.2" y="260" font-size="11">13,0 /s · PPA alternative</text>
-<text class="fg" x="24" y="317" font-size="14" font-weight="600">Contre la rotation de LVGL sous ESPHome</text>
-<line class="grid" x1="190.0" x2="190.0" y1="327" y2="421"/>
-<line class="grid" x1="332.0" x2="332.0" y1="327" y2="421"/>
-<line class="grid" x1="474.0" x2="474.0" y1="327" y2="421"/>
-<line class="grid" x1="616.0" x2="616.0" y1="327" y2="421"/>
-<line class="grid" x1="758.0" x2="758.0" y1="327" y2="421"/>
-<line class="grid" x1="900.0" x2="900.0" y1="327" y2="421"/>
-<text class="fg" x="176" y="345.5" font-size="13" text-anchor="end">Waveshare 7B 180°</text>
-<text class="gain" x="176" y="362.5" font-size="14" font-weight="700" text-anchor="end">2,7×</text>
-<rect class="lvgl" x="190" y="331" width="220.1" height="16" rx="2"/>
-<text class="mute" x="415.1" y="344" font-size="11">7,8 /s · rotation de LVGL (ESPHome)</text>
-<rect class="ppa" x="190" y="350" width="595.3" height="16" rx="2"/>
-<text class="mute" x="790.3" y="363" font-size="11">21,0 /s · PPA alternative</text>
-<text class="fg" x="176" y="396.5" font-size="13" text-anchor="end">Tab5 270°</text>
-<text class="gain" x="176" y="413.5" font-size="14" font-weight="700" text-anchor="end">3,2×</text>
-<rect class="lvgl" x="190" y="382" width="146.8" height="16" rx="2"/>
-<text class="mute" x="341.8" y="395" font-size="11">5,2 /s · rotation de LVGL (ESPHome)</text>
-<rect class="ppa" x="190" y="401" width="464.9" height="16" rx="2"/>
-<text class="mute" x="659.9" y="414" font-size="11">16,4 /s · PPA alternative</text>
-<text class="mute" x="190.0" y="461" font-size="11" text-anchor="middle">0 /s</text>
-<text class="mute" x="332.0" y="461" font-size="11" text-anchor="middle">5 /s</text>
-<text class="mute" x="474.0" y="461" font-size="11" text-anchor="middle">10 /s</text>
-<text class="mute" x="616.0" y="461" font-size="11" text-anchor="middle">15 /s</text>
-<text class="mute" x="758.0" y="461" font-size="11" text-anchor="middle">20 /s</text>
-<text class="mute" x="900.0" y="461" font-size="11" text-anchor="middle">25 /s</text>
+<text class="fg" x="176" y="293.5" font-size="13" text-anchor="end">Tab5 270° · L2 128 Ko</text>
+<text class="gain" x="176" y="310.5" font-size="14" font-weight="700" text-anchor="end">+61 %</text>
+<rect class="ref" x="190" y="279" width="318.1" height="16" rx="2"/>
+<text class="mute" x="513.1" y="292" font-size="11">11,2 /s · esp_lvgl_adapter (Espressif)</text>
+<rect class="ppa" x="190" y="298" width="511.2" height="16" rx="2"/>
+<text class="mute" x="706.2" y="311" font-size="11">18,0 /s · PPA alternative</text>
+<text class="fg" x="24" y="368" font-size="14" font-weight="600">Contre la rotation de LVGL sous ESPHome</text>
+<line class="grid" x1="190.0" x2="190.0" y1="378" y2="472"/>
+<line class="grid" x1="332.0" x2="332.0" y1="378" y2="472"/>
+<line class="grid" x1="474.0" x2="474.0" y1="378" y2="472"/>
+<line class="grid" x1="616.0" x2="616.0" y1="378" y2="472"/>
+<line class="grid" x1="758.0" x2="758.0" y1="378" y2="472"/>
+<line class="grid" x1="900.0" x2="900.0" y1="378" y2="472"/>
+<text class="fg" x="176" y="396.5" font-size="13" text-anchor="end">Waveshare 7B 180°</text>
+<text class="gain" x="176" y="413.5" font-size="14" font-weight="700" text-anchor="end">2,7×</text>
+<rect class="lvgl" x="190" y="382" width="220.1" height="16" rx="2"/>
+<text class="mute" x="415.1" y="395" font-size="11">7,8 /s · rotation de LVGL (ESPHome)</text>
+<rect class="ppa" x="190" y="401" width="595.3" height="16" rx="2"/>
+<text class="mute" x="790.3" y="414" font-size="11">21,0 /s · PPA alternative</text>
+<text class="fg" x="176" y="447.5" font-size="13" text-anchor="end">Tab5 270°</text>
+<text class="gain" x="176" y="464.5" font-size="14" font-weight="700" text-anchor="end">3,2×</text>
+<rect class="lvgl" x="190" y="433" width="146.8" height="16" rx="2"/>
+<text class="mute" x="341.8" y="446" font-size="11">5,2 /s · rotation de LVGL (ESPHome)</text>
+<rect class="ppa" x="190" y="452" width="464.9" height="16" rx="2"/>
+<text class="mute" x="659.9" y="465" font-size="11">16,4 /s · PPA alternative</text>
+<text class="mute" x="190.0" y="512" font-size="11" text-anchor="middle">0 /s</text>
+<text class="mute" x="332.0" y="512" font-size="11" text-anchor="middle">5 /s</text>
+<text class="mute" x="474.0" y="512" font-size="11" text-anchor="middle">10 /s</text>
+<text class="mute" x="616.0" y="512" font-size="11" text-anchor="middle">15 /s</text>
+<text class="mute" x="758.0" y="512" font-size="11" text-anchor="middle">20 /s</text>
+<text class="mute" x="900.0" y="512" font-size="11" text-anchor="middle">25 /s</text>
 </svg>

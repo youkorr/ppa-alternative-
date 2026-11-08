@@ -72,7 +72,9 @@ def main():
                        f'y2="{g_bottom + 4}"/>')
         for r in cases:
             gain = r["ppa_alternative"] / r["reference"]
-            label = f"+{fr((gain - 1) * 100, 0)} %" if gain < 1.5 else f"{fr(gain)}×"
+            # Against Espressif in percent, as the README and the PR give it.
+            label = (f"+{fr((gain - 1) * 100, 0)} %" if g == "espressif" or gain < 1.5
+                     else f"{fr(gain)}×")
             out.append(f'<text class="fg" x="{left - 14}" y="{y + case_h / 2 - 3:.1f}" font-size="13" '
                        f'text-anchor="end">{escape(r["cas"])}</text>')
             out.append(f'<text class="gain" x="{left - 14}" y="{y + case_h / 2 + 14:.1f}" font-size="14" '

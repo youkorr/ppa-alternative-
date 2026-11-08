@@ -111,13 +111,28 @@ v6.1 measures the same as v5.5.5. (frames/s is the figure to compare: the
 adapter's TRIPLE_PARTIAL path loses about 7 ms between frames that its
 per-frame time does not show.)
 
+**With ESP-IDF's default L2 cache.** This test app sets
+`CONFIG_CACHE_L2_CACHE_256KB`; ESP-IDF's default is 128 KB, which leaves
+384 KiB of internal RAM for the heap instead of 256 KiB, and this option draws
+its tiles there. The same two firmwares built with 128 KB of L2 cache, Tab5,
+ROTATE_270, v5.5.5:
+
+| | L2 cache | frames/s | ms per frame (worst) |
+|---|---|---|---|
+| the adapter today: `DEFAULT_MIPI_DSI` (TRIPLE_PARTIAL) | 128 KB | 11.2 | 81.6 (103) |
+| this PR, `ROTATE_IN_DRAW`, two cores | 128 KB | **17.9 - 18.0** | **53.3 - 54.4 (55)** |
+
+The adapter's path does not move with the cache size; this option is 40%
+faster than with 256 KB, so at ESP-IDF's default it gives **61% more frames a
+second** than the adapter today. All tests pass in both.
+
 An earlier version of this PR used two frame buffers and was *slower* at 90
 degrees, 66.1 ms: it drew a frame in 58.4 ms and then waited for the panel's
 refresh to switch buffers, which on a 60 Hz panel rounded every frame up to
 four refreshes. That is what the third buffer removes. Rev 3.0 silicon has not
 been measured; the pytest case above is what runs it on one.
 
-Running the test app also found two faults, both fixed in this PR:
+Running the test app also found three faults, all fixed in this PR:
 
 - `lv_deinit()` deletes every draw unit, and the adapter created
   `lv_draw_ortho` only once: after the adapter was restarted, a display
