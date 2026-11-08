@@ -5,7 +5,9 @@ Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
 
 The description of esp-iot-solution PR #818 as it stands on GitHub
 (https://github.com/espressif/esp-iot-solution/pull/818), kept here so it can
-be edited with the code and pasted back.
+be edited with the code and pasted back. The **Title:** line is the PR's
+title, which has its own field on GitHub; the description is everything from
+"## Description" to the end.
 -->
 
 **Title:** feat(esp_lvgl_adapter): draw rotated DOUBLE_DIRECT displays in the panel's orientation
@@ -205,7 +207,7 @@ No PPA hang was seen in any of these runs (IDF 5.5.5 and
 5.5.6, both without the driver fix): blocks that would hang are cut in
 software before they are sent, with no IDF patch.
 
-- Hardware: `test_apps/lvgl9` run on a Waveshare 7B at 90 and 180 degrees and on an M5Stack Tab5 at 270, with and without this option, ESP-IDF v5.5.5 (and v6.1 on the Tab5), all tests passing (above).
+- Hardware: `test_apps/lvgl9` run on a Waveshare 7B at 90 and 180 degrees and on an M5Stack Tab5 at 270, with and without this option, ESP-IDF v5.5.5 (and v6.1 and a 128 KB L2 cache on the Tab5), all tests passing (above).
 
 ---
 
@@ -216,5 +218,5 @@ software before they are sent, with no IDF patch.
 - [x] README and README_CN
 - [x] Formatted with the repository's astyle rules, codespell clean
 - [x] Draw unit measured on hardware (Waveshare 7B and M5Stack Tab5, through ESPHome)
-- [x] Adapter integration run on hardware (Waveshare 7B at 90 and 180, M5Stack Tab5 at 270): all tests pass; 8-9% faster than TRIPLE_PARTIAL at 90, 7-8% at 180, 15% more frames/s on the Tab5, same frame buffers
+- [x] Adapter integration run on hardware (Waveshare 7B at 90 and 180, M5Stack Tab5 at 270): all tests pass; 8-9% faster than TRIPLE_PARTIAL at 90, 7-8% at 180, 15% more frames/s on the Tab5 (61% with ESP-IDF's default 128 KB L2 cache), same frame buffers
 - [ ] Contributor agreement signed (asked for when the PR is opened)
