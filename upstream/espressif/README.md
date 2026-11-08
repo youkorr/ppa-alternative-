@@ -4,73 +4,77 @@ Copyright (c) 2026 youkorr
 Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
 -->
 
-# La PR pour Espressif (pas encore envoyée)
+# La PR pour Espressif : esp-iot-solution #818
 
-Ce dossier contient une pull request **prête mais pas envoyée** pour
-[espressif/esp-iot-solution](https://github.com/espressif/esp-iot-solution),
-composant `esp_lvgl_adapter`. Elle n'est pas publique tant que l'étape 4
-ci-dessous n'est pas faite.
+**Ouverte et prête à être relue :**
+<https://github.com/espressif/esp-iot-solution/pull/818>
 
-| fichier | ce que c'est |
+Elle ajoute `lv_draw_ortho` au composant `esp_lvgl_adapter` d'Espressif, sous
+une option désactivée par défaut : `CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`.
+
+| où | quoi |
 |---|---|
-| `esp-iot-solution/0001-esp_lvgl_adapter-rotate-in-draw.patch` | la modification, prête à appliquer sur leur code |
-| `esp-iot-solution/PR.md` | le titre et le texte à coller dans la PR (en anglais) |
-
-La CI de ce dépôt (*Espressif pull request*) applique le patch sur leur code et
-compile leur application de test pour l'ESP32-P4 avec les quatre versions
-d'ESP-IDF que leur propre CI utilise (5.5.5, 6.0, 6.1 et la branche de
-développement), avec et sans l'option. Si elle est verte, la PR compile chez eux.
+| branche `feat/esp_lvgl_adapter-rotate-in-draw` de [youkorr/esp-iot-solution](https://github.com/youkorr/esp-iot-solution) | le code de la PR ; tout ce qui y est poussé arrive dans la PR |
+| `esp-iot-solution/PR.md` | la description de la PR, telle qu'elle est sur GitHub |
+| `../../espressif/` | les firmwares de test pour la Waveshare 7B et la Tab5 |
+| workflow *Espressif pull request* | compile la branche de la PR comme la CI d'Espressif : ESP-IDF v5.5.5, release-v6.0, release-v6.1 et latest, avec et sans l'option |
+| workflow *Espressif test app on a Waveshare 7B and a Tab5* | fabrique les firmwares à flasher (`.bin` à l'adresse `0x0`) |
 
 ## Ce que fait la PR
 
-Une nouvelle option, `CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`, désactivée par
-défaut. Avec un écran tourné en mode `DOUBLE_DIRECT`, LVGL dessine directement
-dans le sens de l'écran (avec `lv_draw_ortho` et le PPA), au lieu de dessiner
-droit puis de recopier en tournant. Une image en moins à recopier, et un frame
-buffer en moins (2 au lieu de 3).
+Avec un écran tourné en mode `DOUBLE_DIRECT`, LVGL dessine directement dans
+le sens de l'écran, au lieu de dessiner droit puis de recopier en tournant :
 
-## Avant d'envoyer : tester
+- les widgets sont dessinés par LVGL dans de petites tuiles en RAM interne,
+  et le PPA tourne chaque tuile dans le frame buffer pendant que le CPU
+  dessine la suivante ;
+- avec `LV_DRAW_SW_DRAW_UNIT_CNT` supérieur à 1, les tuiles sont dessinées
+  sur les deux cœurs ; quand la RAM interne n'a de place que pour un bloc de
+  128 Ko (cache L2 de 256 Ko), les tuiles sont découpées dans ce bloc ;
+- l'écran garde les **trois** frame buffers d'un écran tourné : LVGL dessine
+  l'image suivante dans le troisième pendant que l'écran attend son
+  rafraîchissement. Avec deux, chaque image attendait ce rafraîchissement
+  (66,1 ms au lieu de 58,4 sur la Waveshare) ;
+- les autres modes, la rotation 0 et LVGL v8 ne changent pas.
 
-1. Sur le Tab5 et le Waveshare, avec `yaml/test-lvgl.yaml` : noter les
-   « LVGL ms per frame » en mode `lvgl` et en mode `ortho`.
-2. Remplacer les `[crochets]` de la section *Testing* de `PR.md` par ces
-   chiffres.
+## Mesuré sur tes cartes
 
-Une PR testée seulement en simulation serait mal reçue : ces chiffres sont le
-plus important du texte.
+L'application de test d'Espressif (`test_apps/lvgl9`), le même firmware
+compilé deux fois, avec et sans l'option, ESP-IDF v5.5.5 :
 
-## Envoyer, étape par étape
+| | Espressif aujourd'hui | avec la PR | |
+|---|---|---|---|
+| Waveshare 7B, 90° | 15,8 images/s | **17,2 - 17,3 images/s** | **+9 %** |
+| Waveshare 7B, 180° | 16,6 images/s | **18,0 images/s** | **+8 %** |
+| Tab5, 270° | 11,3 images/s | **12,9 - 13,0 images/s** | **+15 %** |
 
-1. **Faire une copie (fork)** : sur la page
-   <https://github.com/espressif/esp-iot-solution>, bouton **Fork**. Cela crée
-   `youkorr/esp-iot-solution` sur ton compte.
-2. **Mettre le patch sur une branche de ta copie** (sur un PC avec git) :
-   ```
-   git clone https://github.com/youkorr/esp-iot-solution
-   cd esp-iot-solution
-   git checkout d2d935d0ee3e78deffa3981cc8c39ac8f534932b
-   git checkout -b feat/esp_lvgl_adapter-rotate-in-draw
-   git am chemin/vers/0001-esp_lvgl_adapter-rotate-in-draw.patch
-   git push -u origin feat/esp_lvgl_adapter-rotate-in-draw
-   ```
-   Si leur code a changé entre-temps et que `git am` refuse, demande-moi : je
-   remets le patch à jour sur leur dernière version.
-3. **Ouvrir la PR** : GitHub propose alors un bouton *Compare & pull request*.
-   La destination est `espressif/esp-iot-solution`, branche `master`.
-4. **Coller le titre et le texte** de `PR.md`, puis *Create pull request*.
-   C'est à ce moment-là que la PR devient publique.
-5. **Signer l'accord de contributeur** d'Espressif : un robot le demande
-   automatiquement dans la PR, il suffit de suivre son lien.
+Tous les tests de l'application passent dans tous les cas. Sur la Tab5,
+ESP-IDF v6.1 donne la même chose (13,0 - 13,2 images/s). Le détail est dans le
+[README principal](../../README.md#measured-on-the-boards).
 
-Ensuite les mainteneurs relisent, posent des questions ou demandent des
-changements. Je peux t'aider à répondre et à mettre la PR à jour.
+## Ce qui reste à faire
+
+1. **L'accord de contributeur d'Espressif** : un robot le demande dans la
+   PR, il suffit de suivre son lien et de signer. Sans lui, rien n'est
+   fusionné.
+2. **Leur CI** : elle compile la PR pour plusieurs versions d'ESP-IDF. Si elle
+   échoue, copier l'erreur ici ou dans la conversation : la correction se fait
+   sur la branche du fork et arrive dans la PR toute seule.
+3. **Les questions des relecteurs**, probablement :
+   - les puces **rev 3.0** et les écrans **RGB**, qu'aucune de tes cartes
+     n'a ;
+   - la taille du changement ;
+   - le fait que `lv_draw_ortho` vienne de ce dépôt (même auteur, licence
+     MIT, testé pixel par pixel contre LVGL).
+4. **En attente de ta décision** : un test de 14 lignes qui ferait tourner
+   l'option sur la carte rev 3.0 de leur CI (`pytest_adapter_lvgl9.py`). Il
+   est prêt, pas encore poussé dans la PR.
 
 ## Les règles d'Espressif, déjà respectées
 
 - Licence : le code ajouté est sous MIT, que leurs composants acceptent.
 - Formatage : leur outil astyle (version 3.4.7, leurs règles) a été passé.
 - Orthographe : codespell, sans erreur.
-- Message de commit au format qu'ils imposent : `feat(esp_lvgl_adapter): ...`.
-- Nom de branche : une seule barre oblique, pas de majuscule.
-- Leur vérification des en-têtes de copyright n'a pas pu tourner ici ;
-  l'en-tête suit leur format SPDX.
+- Messages de commit au format qu'ils imposent : `feat(esp_lvgl_adapter): ...`,
+  `fix(...)`, `docs(...)`.
+- CHANGELOG, README et README_CN du composant à jour.
