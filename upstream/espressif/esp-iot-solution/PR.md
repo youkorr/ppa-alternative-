@@ -219,4 +219,4 @@ software before they are sent, with no IDF patch.
 - [x] Formatted with the repository's astyle rules, codespell clean
 - [x] Draw unit measured on hardware (Waveshare 7B and M5Stack Tab5, through ESPHome)
 - [x] Adapter integration run on hardware (Waveshare 7B at 90 and 180, M5Stack Tab5 at 270): all tests pass; 8-9% faster than TRIPLE_PARTIAL at 90, 7-8% at 180, 15% more frames/s on the Tab5 (61% with ESP-IDF's default 128 KB L2 cache), same frame buffers
-- [ ] Contributor agreement signed (asked for when the PR is opened)
+- [x] Contributor agreement signed
