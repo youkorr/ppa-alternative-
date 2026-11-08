@@ -46,7 +46,9 @@ Frames a second is the figure to compare: Espressif's path also loses about
 7 ms between frames on the Tab5, which its time per frame does not show. Same
 frame buffers in both columns (three), and every one of the test app's tests
 passes in every run. On the Tab5, **ESP-IDF v6.1** gives the same: 13.0 - 13.2
-/s, 75.8 - 76.9 ms.
+/s, 75.8 - 76.9 ms. With ESP-IDF's default L2 cache (128 KB) instead of the test
+app's 256 KB, the PPA alternative on the Tab5 goes to **18.0 /s, 54.4 ms**: see
+[The L2 cache size](#the-l2-cache-size) below.
 
 **What the turn itself costs.** An earlier build of the Espressif firmware
 ran at rotation 0 by mistake: 18.4 /s, 47.0 - 47.5 ms, which is this screen
@@ -87,12 +89,28 @@ measure the same, and narrower tiles were slower (see `tile_width:` below).
 At 180 the turn is the PPA's easy case (about 41 Mpx/s), so on the Waveshare
 what is left is drawing the UI; the second core gains 16 %.
 
-The ESPHome figures are lower than the adapter's on the same board (61 against
-77 ms on the Tab5, 47.7 against 55 on the Waveshare). One difference is
-memory: the adapter's test app gives its L2 cache 256 KB, which leaves
-internal RAM room for one 128 KiB tile block, cut in four for the two cores.
-Whether that is the gap is what a run with 128 KB of L2 cache will say: it is
-built (`l2_cache: 128` in the workflow below) and not yet measured.
+### The L2 cache size
+
+It is most of the gap between the adapter and ESPHome. The ESPHome
+figures were lower than the adapter's on the same board (61 against 77 ms on
+the Tab5). The adapter's test app sets its L2 cache to 256 KB
+(`sdkconfig.defaults.esp32p4`), where ESP-IDF's default is 128 KB, and every
+KB of cache is a KB less of internal RAM: the heap's main internal block is
+256 KiB with 256 KB of cache and 384 KiB with 128 KB. `lv_draw_ortho` draws
+its tiles in internal RAM and cuts them out of whatever blocks fit there, so
+with more of it the tiles are bigger and there are fewer of them to turn. The
+same firmware on the Tab5 at 270, built with 128 KB of L2 cache
+(`l2_cache: 128` in the workflow below):
+
+| Tab5, 270, ESP-IDF v5.5.5 | 256 KB of L2 cache (the test app's) | 128 KB (ESP-IDF's default) |
+|---|---|---|
+| PPA alternative | 12.9 - 13.0 /s, 77.0 - 77.5 ms | **17.9 - 18.0 /s, 53.3 - 54.4 ms (worst 55.2)** |
+| Espressif today | 11.3 /s, 81.5 ms | not measured yet |
+
+40 % more frames, faster than through ESPHome (61.1 ms), and every test of
+the app passes. Espressif's own path at 128 KB is built
+(`tab5-copy-270-v5.5.5-l2-128k`); until it is measured, how far apart the two
+are at ESP-IDF's default is not known.
 
 ### The cameras
 
@@ -153,8 +171,12 @@ which no esp_video release carries yet. Nothing in lvgl_ortho changes.
 - **The Guition JC8012P4A1** (800x1280, 90): only simulated, see
   [How it is measured](#how-it-is-measured); its OV02C10 camera only in the
   tests.
+- **128 KB of L2 cache** for Espressif's path on the Tab5 and for both
+  paths on the Waveshare: the firmwares are built (run
+  [42518011578](https://github.com/youkorr/ppa-alternative-/actions/runs/42518011578)).
 - **ESP32-P4 rev 3.0**, where the PPA's quarter turn works in 32x32 blocks
-  rather than 16x16: neither board here has one (Espressif's CI does).
+  rather than 16x16: neither board here has one. PR #818 now carries a test
+  that runs it on Espressif's CI board.
 - **RGB panels**: the adapter path supports them and has never run on one.
 - **Pictures turned once** (`image_cache:`) and **a big turn split**
   (`split:`): `split:` was measured on the Tab5 and was slower (below);
