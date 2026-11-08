@@ -4,8 +4,8 @@
 #
 # Espressif's esp_lvgl_adapter test app (test_apps/lvgl9), from the branch of
 # esp-iot-solution PR #818, built for a Waveshare ESP32-P4-WIFI6-Touch-LCD-7B
-# by espressif/waveshare-7b/prepare.py, on ESP-IDF v5.5.5. Two firmwares,
-# identical but for one option, both at rotation 90:
+# by espressif/waveshare-7b/prepare.py, on ESP-IDF v5.5.5. Firmwares
+# identical but for one option, each at rotation 90 and 180:
 #
 #   rotate_in_draw   CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW, the PR
 #   copy             the adapter as it is today: drawn upright, copied rotated,
@@ -20,6 +20,10 @@ on:
       - "espressif/waveshare-7b/**"
       - ".github/workflows/espressif-test-app.yml"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch of youkorr/esp-iot-solution to build"
+        default: feat/esp_lvgl_adapter-rotate-in-draw
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -29,6 +33,7 @@ jobs:
       fail-fast: false
       matrix:
         mode: [rotate_in_draw, copy]
+        angle: ["90", "180"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,13 +41,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: youkorr/esp-iot-solution
-          ref: feat/esp_lvgl_adapter-rotate-in-draw
+          ref: ${{ inputs.ref || 'feat/esp_lvgl_adapter-rotate-in-draw' }}
           path: iots
           sparse-checkout: |
             components/display/tools/esp_lvgl_adapter
             components/display/lcd/esp_lcd_ek79007
             components/button
-      - name: Prepare for the Waveshare 7B, mode ${{ matrix.mode }}
+      - name: Prepare for the Waveshare 7B, mode ${{ matrix.mode }}, rotation ${{ matrix.angle }}
         shell: bash
         run: |
           set -e
@@ -57,7 +62,7 @@ jobs:
               echo "PPA hang patch does not apply to this ESP-IDF; built without it"
             fi
           fi
-          python3 ppa/espressif/waveshare-7b/prepare.py "$ADAPTER/test_apps/lvgl9" "${{ matrix.mode }}"
+          python3 ppa/espressif/waveshare-7b/prepare.py "$ADAPTER/test_apps/lvgl9" "${{ matrix.mode }}" "${{ matrix.angle }}"
       - name: Build
         shell: bash
         run: |
@@ -78,14 +83,14 @@ jobs:
             ! grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW=y" sdkconfig
           fi
           cd build
-          python -m esptool --chip esp32p4 merge_bin -o "$GITHUB_WORKSPACE/waveshare7b-${{ matrix.mode }}.bin" @flash_args
-          cp ../sdkconfig "$GITHUB_WORKSPACE/sdkconfig-${{ matrix.mode }}"
+          python -m esptool --chip esp32p4 merge_bin -o "$GITHUB_WORKSPACE/waveshare7b-${{ matrix.mode }}-${{ matrix.angle }}.bin" @flash_args
+          cp ../sdkconfig "$GITHUB_WORKSPACE/sdkconfig-${{ matrix.mode }}-${{ matrix.angle }}"
           # The symbols, to read a crash's backtrace against this exact build.
-          cp test_esp_lvgl_adapter_lvgl9.elf "$GITHUB_WORKSPACE/waveshare7b-${{ matrix.mode }}.elf"
+          cp test_esp_lvgl_adapter_lvgl9.elf "$GITHUB_WORKSPACE/waveshare7b-${{ matrix.mode }}-${{ matrix.angle }}.elf"
       - uses: actions/upload-artifact@v4
         with:
-          name: waveshare7b-${{ matrix.mode }}
+          name: waveshare7b-${{ matrix.mode }}-${{ matrix.angle }}
           path: |
-            waveshare7b-${{ matrix.mode }}.bin
-            sdkconfig-${{ matrix.mode }}
-            waveshare7b-${{ matrix.mode }}.elf
+            waveshare7b-${{ matrix.mode }}-${{ matrix.angle }}.bin
+            sdkconfig-${{ matrix.mode }}-${{ matrix.angle }}
+            waveshare7b-${{ matrix.mode }}-${{ matrix.angle }}.elf
