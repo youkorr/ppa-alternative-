@@ -15,7 +15,7 @@
 # Each artifact is one .bin to write at 0x0. The tests start at boot; the
 # serial log says "BENCH ... ms each" and each test's PASS or FAIL.
 name: Espressif test app on a Waveshare 7B and a Tab5
-run-name: Espressif test app, ESP-IDF ${{ inputs.idf || 'v5.5.5' }}, ${{ inputs.ref || 'feat/esp_lvgl_adapter-rotate-in-draw' }}
+run-name: Espressif test app, ESP-IDF ${{ inputs.idf || 'v5.5.5' }}, L2 ${{ inputs.l2_cache || '256' }} KB, ${{ inputs.ref || 'feat/esp_lvgl_adapter-rotate-in-draw' }}
 on:
   push:
     paths:
@@ -29,11 +29,16 @@ on:
       idf:
         description: "ESP-IDF, a tag of the espressif/idf image (v5.5.5 is what ESPHome builds with)"
         default: v5.5.5
+      l2_cache:
+        description: "L2 cache in KB: 256 is the test app's own, 128 leaves 128 KB more internal RAM"
+        default: "256"
 jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     container: espressif/idf:${{ inputs.idf || 'v5.5.5' }}
+    env:
+      NAME: ${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}${{ inputs.l2_cache == '128' && '-l2-128k' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -88,22 +93,27 @@ jobs:
           else
             DEFAULTS="sdkconfig.defaults;$WS"
           fi
+          if [ "${{ inputs.l2_cache }}" = 128 ]; then
+            printf 'CONFIG_CACHE_L2_CACHE_128KB=y\n' > sdkconfig.l2
+            DEFAULTS="$DEFAULTS;sdkconfig.l2"
+          fi
           idf.py -D IDF_TARGET=esp32p4 -D "SDKCONFIG_DEFAULTS=$DEFAULTS" build
           grep -E "^CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y" sdkconfig
+          if [ "${{ inputs.l2_cache }}" = 128 ]; then grep -E "^CONFIG_CACHE_L2_CACHE_128KB=y" sdkconfig; fi
           if [ "${{ matrix.mode }}" = rotate_in_draw ]; then
             grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW=y" sdkconfig
           else
             ! grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW=y" sdkconfig
           fi
           cd build
-          python -m esptool --chip esp32p4 merge_bin -o "$GITHUB_WORKSPACE/${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}.bin" @flash_args
-          cp ../sdkconfig "$GITHUB_WORKSPACE/sdkconfig-${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}"
+          python -m esptool --chip esp32p4 merge_bin -o "$GITHUB_WORKSPACE/$NAME.bin" @flash_args
+          cp ../sdkconfig "$GITHUB_WORKSPACE/sdkconfig-$NAME"
           # The symbols, to read a crash's backtrace against this exact build.
-          cp test_esp_lvgl_adapter_lvgl9.elf "$GITHUB_WORKSPACE/${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}.elf"
+          cp test_esp_lvgl_adapter_lvgl9.elf "$GITHUB_WORKSPACE/$NAME.elf"
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}
+          name: ${{ env.NAME }}
           path: |
-            ${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}.bin
-            sdkconfig-${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}
-            ${{ matrix.board }}-${{ matrix.mode }}-${{ matrix.angle }}-${{ inputs.idf || 'v5.5.5' }}.elf
+            ${{ env.NAME }}.bin
+            sdkconfig-${{ env.NAME }}
+            ${{ env.NAME }}.elf
