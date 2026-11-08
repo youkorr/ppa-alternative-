@@ -95,7 +95,7 @@ MUTANTS = {
 }
 # The second core: each must make `ortho_test --cores` fail. The third item
 # is extra compiler flags: LV_DRAW_ORTHO_TEST_TILES=2 leaves no room for more
-# than two tiles, so the four are halves of those.
+# than two blocks, so the four tiles are halves of those.
 CORES_MUTANTS = {
     # The other core's tile handed to it while the PPA still turns it out.
     "the other core's tile reused mid-turn": ("    wait_ticket(&u->ticket[base + 1]);\n", "", []),
@@ -105,9 +105,11 @@ CORES_MUTANTS = {
         "    if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);\n    if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);\n",
         "    if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);\n    if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);\n"
         "    if(ok[1]) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n", []),
-    # Two of the four halves in the same memory: the cores paint over each other.
-    "two halves overlapping": ("            u->tile[3] = u->tile[1] + half;\n", "            u->tile[3] = u->tile[0] + half;\n",
-                               ["-DLV_DRAW_ORTHO_TEST_TILES=2"]),
+    # Tiles cut from one block all at its start: the cores paint over each other.
+    "tiles cut from a block overlapping": (
+        "        u->tile[j] = j < want ? tile_aligned(u->tile_alloc[j / per]) + (size_t)(j % per) * bytes : NULL;\n",
+        "        u->tile[j] = j < want ? tile_aligned(u->tile_alloc[j / per]) : NULL;\n",
+        ["-DLV_DRAW_ORTHO_TEST_TILES=2"]),
     # The pair's first tile drawn into the other core's tile.
     "both cores in one tile": (
         "    ok[0] = prep_tile(jobs, n, o, &rect[0], u->tile[base], u->tile_bytes, &w[0]);",
