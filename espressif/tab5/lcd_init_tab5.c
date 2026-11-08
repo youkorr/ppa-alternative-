@@ -95,12 +95,16 @@ esp_err_t hw_lcd_init(esp_lcd_panel_handle_t *panel_handle, esp_lcd_panel_io_han
 {
     ESP_ERROR_CHECK(tab5_board_once());
 
-    /* Reset the panel through the IO expander, as ESPHome's M5Stack-Tab5 does. */
+    /* Reset the panel through the IO expander, as ESPHome's M5Stack-Tab5 does.
+     * The PI4IOE5V6408 starts with every output high-impedance and pulled
+     * down, so a level written alone never reaches the pin and the panel stays
+     * held in reset: the output has to be switched on (push-pull) as well. */
     ESP_ERROR_CHECK(esp_io_expander_set_dir(s_expander, TAB5_LCD_RESET_PIN, IO_EXPANDER_OUTPUT));
     ESP_ERROR_CHECK(esp_io_expander_set_level(s_expander, TAB5_LCD_RESET_PIN, 0));
+    ESP_ERROR_CHECK(esp_io_expander_set_output_mode(s_expander, TAB5_LCD_RESET_PIN, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL));
     vTaskDelay(pdMS_TO_TICKS(20));
     ESP_ERROR_CHECK(esp_io_expander_set_level(s_expander, TAB5_LCD_RESET_PIN, 1));
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(120));
 
     if (!s_ldo_mipi_phy) {
         const esp_ldo_channel_config_t ldo_mipi_phy_config = {
