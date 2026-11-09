@@ -69,7 +69,7 @@ logger:
     esp_video_camera: DEBUG 
 api:
   encryption:
-    key: "kKGGqJApE9NGQgYks4v9y43NGJV1kRIEOMJRf3Jf6o8="
+    key: ""
 
 ota:
   - platform: esphome
@@ -79,7 +79,7 @@ wifi:
   password: !secret wifi_password
   ap:
     ssid: camera-test-ws Fallback Hotspot
-    password: "VxDaiycD1XD4"
+    password: ""
 
 captive_portal:
 
@@ -156,7 +156,7 @@ lvgl_ortho:
   # true shares each frame's turn between the PPA and both cores: measured
   # slower on a Tab5 (14.0 frames/s against 15.6), the PSRAM being the limit.
   # Worth one try here: at 180 the PPA's share is larger.
-  split: true
+  split: false
 # The whole landscape screen is the camera's window.
 lvgl:
   displays:
