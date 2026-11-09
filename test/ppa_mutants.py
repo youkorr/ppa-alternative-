@@ -41,14 +41,14 @@ MUTANTS = {
     "DIG-734 blocks sent whole": (
         "    if(!cut(0, 0, bw, bh, rot, px * 8, pieces, &n, 0)) return 0;\n",
         "    pieces[n++] = (piece_t) {0, 0, bw, bh};\n"),
-    # Only the hanging direction kept: a bypass v5.5 gives where master would
-    # not is sent, which is not known to be harmless.
-    "a bypass master would not give sent": ("    return ((b ^ (b >> 1)) & 0x5u) != 0;\n",
-                                            "    return (((b >> 1) & ~b) & 0x5u) != 0;\n"),
-    # The drivers' own test: a last macro block of exactly the FIFO's depth
-    # taken for enough, which a Tab5 stalled on (464x70 at 90).
-    "the FIFO's own depth taken for enough": ("    return several && (hardware ? left <= FIFO_BITS : left < FIFO_BITS);\n",
+    # The drivers' own test taken for the need: a last macro block of exactly
+    # the FIFO's depth sent without the bypass, which a Tab5 stalled on
+    # (464x70 at 90).
+    "the FIFO's own depth taken for enough": ("    return several && (needed ? left < 2 * FIFO_BITS : left < FIFO_BITS);\n",
                                               "    return several && left < FIFO_BITS;\n"),
+    # The margin of a whole FIFO dropped: the exact depth kept, nothing above.
+    "no margin above the FIFO's depth": ("    return several && (needed ? left < 2 * FIFO_BITS : left < FIFO_BITS);\n",
+                                         "    return several && (needed ? left <= FIFO_BITS : left < FIFO_BITS);\n"),
     # Cuts anywhere, as before: strips as thin as one pixel.
     "slivers cut": ("#define SIDE 16\n", "#define SIDE 1\n"),
     # A wait with no bound: a stuck PPA freezes the screen (the driver's own

@@ -256,30 +256,40 @@ static int hardware_needs(uint32_t w_out, uint32_t h_in, uint32_t bits, uint32_t
     return (w_out > wdiv || h_in > mb) && wl * hl * bits <= 12 * 128;
 }
 
-/* Whether the driver programs the bypass otherwise than the hardware needs
- * it, at 16x16 or 32x32 macro blocks: in one direction the hang above, in
- * the other a bypass given where master would not give it. Neither should be
- * sent. */
-int p4fake_bypass_differs(uint32_t w, uint32_t h, uint32_t bits, int quarter)
+/* Not a hang in this fake but a rule lv_draw_ortho_ppa.c keeps: a block sent
+ * without the bypass leaves at least twice the FIFO's depth in its last
+ * macro block, at 16x16 or 32x32, so a race near the depth has room. Giving
+ * the bypass where it is not needed is allowed: Espressif's own
+ * esp_lvgl_adapter patches ESP-IDF to give it to every transaction. */
+static int too_close(uint32_t w_out, uint32_t h_in, uint32_t bits, uint32_t mb)
+{
+    const uint32_t wdiv = bits == 16 ? 64 : 32;
+    uint32_t wl = w_out % wdiv, hl = h_in % mb;
+    if(wl == 0) wl = wdiv;
+    if(hl == 0) hl = mb;
+    return (w_out > wdiv || h_in > mb) && wl * hl * bits < 2 * 12 * 128;
+}
+
+int p4fake_bypass_short(uint32_t w, uint32_t h, uint32_t bits, int quarter)
 {
     for(uint32_t mb = 16; mb <= 32; mb += 16)
-        if(driver_bypass(w, h, bits, mb) != (quarter ? hardware_needs(h, w, bits, mb) : hardware_needs(w, h, bits, mb)))
+        if(!driver_bypass(w, h, bits, mb) && (quarter ? too_close(h, w, bits, mb) : too_close(w, h, bits, mb)))
             return 1;
     return 0;
 }
 
-int g_p4_differs;
+int g_p4_short;
 
 static int quarter_turn(const ppa_srm_oper_config_t * op)
 {
     return op->rotation_angle == PPA_SRM_ROTATION_ANGLE_90 || op->rotation_angle == PPA_SRM_ROTATION_ANGLE_270;
 }
 
-static int differs(const ppa_srm_oper_config_t * op)
+static int bypass_short(const ppa_srm_oper_config_t * op)
 {
     if(op->scale_x != 1.0f || op->scale_y != 1.0f) return 0;
-    return p4fake_bypass_differs(op->in.block_w, op->in.block_h, op->out.srm_cm == PPA_SRM_COLOR_MODE_RGB565 ? 16 : 24,
-                                 quarter_turn(op));
+    return p4fake_bypass_short(op->in.block_w, op->in.block_h, op->out.srm_cm == PPA_SRM_COLOR_MODE_RGB565 ? 16 : 24,
+                               quarter_turn(op));
 }
 
 /* 16x16 macro blocks: silicon v1.x, the household's boards. */
@@ -343,7 +353,7 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t c, const ppa_srm_oper_c
         if(pending >= c->pending_max || g_count == QUEUE) return ESP_ERR_INVALID_STATE;
         const int stuck = never_finishes(op) || g_stall_next;
         g_p4_dig734 += never_finishes(op);
-        g_p4_differs += differs(op);
+        g_p4_short += bypass_short(op);
         g_stall_next = 0;
         g_queue[(g_head + g_count) % QUEUE].c = c;
         g_queue[(g_head + g_count) % QUEUE].op = *op;
@@ -358,7 +368,7 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t c, const ppa_srm_oper_c
      * stuck one ahead of it, or itself, and it never returns: the driver
      * waits with portMAX_DELAY. Here that is a failed test instead. */
     p4fake_run_all();
-    g_p4_differs += differs(op);
+    g_p4_short += bypass_short(op);
     if(g_count || never_finishes(op)) {
         g_p4_dig734 += never_finishes(op);
         fprintf(stderr, "p4fake: a blocking PPA transaction that would never return\n");

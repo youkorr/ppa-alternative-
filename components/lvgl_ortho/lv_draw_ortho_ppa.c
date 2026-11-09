@@ -22,7 +22,7 @@
  * DIG-734, and a read-back: what can be queued at once. A full queue is
  * declined and the CPU does that turn. */
 #define PENDING 32
-/* cut() needs at most 6 over every size up to 1300 x 1300 (test/main.c). */
+/* cut() needs at most 7 over every size up to 1300 x 1300 (test/main.c). */
 #define MAX_PIECES 8
 
 static ppa_client_handle_t g_client;
@@ -91,24 +91,28 @@ static uint32_t leftover(uint32_t w_in, uint32_t h_in, uint32_t bits, uint32_t m
 }
 
 /* Whether the driver bypasses: strictly below the FIFO's depth, in v5.5 and
- * on master alike. Whether the hardware needs it: AT the depth as well. A
- * Tab5's own log (silicon v1.0, ESP-IDF v5.5.6) showed a block whose last
- * macro block leaves exactly 1536 bits -- 464x70 turned 90 -- never finish,
- * right after an identical one had: most likely a race at the exact depth,
- * which the drivers' strict test leaves out. */
+ * on master alike. Whether it is needed, as this file judges it: below TWICE
+ * the depth. A Tab5's own log (silicon v1.0, ESP-IDF v5.5.6) showed a block
+ * whose last macro block leaves exactly 1536 bits -- 464x70 turned 90 --
+ * never finish, right after an identical one had: most likely a race at the
+ * exact depth, which the drivers' strict test leaves out, and nothing says
+ * the race stops one bit above it. A margin of a whole FIFO costs little,
+ * since a bypass given where it is not needed does no harm: Espressif's own
+ * esp_lvgl_adapter ships an ESP-IDF patch that gives it to every transaction
+ * ("Temporary fix for the PPA hang issue", 0001-bugfix-ppa-...patch). */
 static bool bypass(uint32_t w_in, uint32_t h_in, uint32_t bits, uint32_t mb, uint32_t sx_int, uint32_t sx_frag,
-                   uint32_t sy_int, uint32_t sy_frag, bool hardware)
+                   uint32_t sy_int, uint32_t sy_frag, bool needed)
 {
     bool several;
     const uint32_t left = leftover(w_in, h_in, bits, mb, sx_int, sx_frag, sy_int, sy_frag, &several);
-    return several && (hardware ? left <= FIFO_BITS : left < FIFO_BITS);
+    return several && (needed ? left < 2 * FIFO_BITS : left < FIFO_BITS);
 }
 
 /* Bits 0-3 of trail_t.bypass for a block: bit 0 whether the driver gives the
- * bypass, bit 1 whether the hardware needs it, at 16x16 macro blocks (silicon
- * below v3.0); bits 2 and 3 the same at 32x32. The driver sizes the block as
- * it reads it; the hardware, at 90 and 270, as it comes out turned (the fix on
- * master, 469aa16). */
+ * bypass, bit 1 whether it is needed, at 16x16 macro blocks (silicon below
+ * v3.0); bits 2 and 3 the same at 32x32. The driver sizes the block as it
+ * reads it; the need, at 90 and 270, is sized as it comes out turned (the fix
+ * on master, 469aa16). */
 static uint8_t bypass_bits(uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits, float scale_x,
                            float scale_y)
 {
@@ -133,27 +137,24 @@ bool lv_draw_ortho_ppa_dig734(uint32_t w, uint32_t h, lv_display_rotation_t rot,
     return (((b >> 1) & ~b) & 0x5u) != 0;
 }
 
-/* What is sent: a block the driver programs as the hardware needs, at either
- * macro-block size. Withholding the bypass where it is needed is the DIG-734
- * hang; giving it where it is not needed was taken for harmless and is not
- * known to be, so neither is sent. */
-static bool differs(uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits, float scale_x, float scale_y)
+/* What is not sent: a block that needs the bypass and is not given it, at
+ * either macro-block size -- the DIG-734 hang. */
+static bool unsafe(uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits, float scale_x, float scale_y)
 {
-    const uint8_t b = bypass_bits(w, h, rot, bits, scale_x, scale_y);
-    return ((b ^ (b >> 1)) & 0x5u) != 0;
+    return lv_draw_ortho_ppa_dig734(w, h, rot, bits, scale_x, scale_y);
 }
 
 typedef struct {
     uint32_t x, y, w, h;
 } piece_t;
 
-/* Cut a block into pieces the driver programs as the hardware needs. A cut
+/* Cut a block into pieces none of which needs a bypass it is not given. A cut
  * falls on the 8-pixel grid and leaves at least a macro block on each side:
  * no sliver, which is the shape the PPA has been tried on least -- an earlier
  * cut made strips of one pixel, a third of the time. A block that cannot be
  * cut so (one under 32 pixels, mostly) is the CPU's, and a small one costs it
  * little. Over every size up to 1300 x 1300, at 90 and 180, 16 and 24 bits:
- * at most 6 pieces, and at most 0.5% of sizes, 0.02% of their pixels, left to
+ * at most 7 pieces, and at most 0.7% of sizes, 0.03% of their pixels, left to
  * the CPU (test/main.c). Two levels try every cut on the grid, the third only
  * the first, so a block costs at most a few thousand tests of the predicate,
  * each a handful of instructions. False if it will not cut. */
@@ -162,7 +163,7 @@ typedef struct {
 static bool cut(uint32_t x, uint32_t y, uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits,
                 piece_t * out, int * n, int depth)
 {
-    if(!differs(w, h, rot, bits, 1.0f, 1.0f)) {
+    if(!unsafe(w, h, rot, bits, 1.0f, 1.0f)) {
         if(*n == MAX_PIECES) return false;
         out[(*n)++] = (piece_t) {x, y, w, h};
         return true;
@@ -472,15 +473,14 @@ esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * in)
     if(err != ESP_OK) return err;
     ppa_srm_oper_config_t op = *in;
     op.mode = PPA_TRANS_MODE_NON_BLOCKING;
-    const bool quarter = op.rotation_angle == PPA_SRM_ROTATION_ANGLE_90 ||
-                         op.rotation_angle == PPA_SRM_ROTATION_ANGLE_270;
     const lv_display_rotation_t rot = op.rotation_angle == PPA_SRM_ROTATION_ANGLE_90 ? LV_DISPLAY_ROTATION_90
+                                      : op.rotation_angle == PPA_SRM_ROTATION_ANGLE_180 ? LV_DISPLAY_ROTATION_180
                                       : op.rotation_angle == PPA_SRM_ROTATION_ANGLE_270 ? LV_DISPLAY_ROTATION_270
                                       : LV_DISPLAY_ROTATION_0;
     const uint32_t bits = op.out.srm_cm == PPA_SRM_COLOR_MODE_RGB565 ? 16 : op.out.srm_cm == PPA_SRM_COLOR_MODE_RGB888 ? 24 : 32;
     piece_t pieces[MAX_PIECES];
     int n = 0;
-    if(quarter && differs(op.in.block_w, op.in.block_h, rot, bits, op.scale_x, op.scale_y)) {
+    if(unsafe(op.in.block_w, op.in.block_h, rot, bits, op.scale_x, op.scale_y)) {
         if(op.scale_x == 1.0f && op.scale_y == 1.0f && !op.mirror_x && !op.mirror_y &&
            cut(0, 0, op.in.block_w, op.in.block_h, rot, bits, pieces, &n, 0)) {
             /* pieces placed below */
@@ -491,12 +491,12 @@ esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * in)
             n = 0;
             bool safe = false;
             for(uint32_t k = 1; k <= 3 && !safe; k++) {
-                if(op.in.block_h > k && !differs(op.in.block_w, op.in.block_h - k, rot, bits, op.scale_x,
+                if(op.in.block_h > k && !unsafe(op.in.block_w, op.in.block_h - k, rot, bits, op.scale_x,
                                                  op.scale_y)) {
                     op.in.block_h -= k;
                     safe = true;
                 }
-                else if(op.in.block_w > k && !differs(op.in.block_w - k, op.in.block_h, rot, bits, op.scale_x,
+                else if(op.in.block_w > k && !unsafe(op.in.block_w - k, op.in.block_h, rot, bits, op.scale_x,
                                                       op.scale_y)) {
                     op.in.block_w -= k;
                     safe = true;
@@ -518,6 +518,10 @@ esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * in)
         else if(rot == LV_DISPLAY_ROTATION_270) {
             ox = bh - p->y - p->h;
             oy = p->x;
+        }
+        else if(rot == LV_DISPLAY_ROTATION_180) {
+            ox = bw - p->x - p->w;
+            oy = bh - p->y - p->h;
         }
         op.in.block_w = p->w;
         op.in.block_h = p->h;

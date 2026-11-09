@@ -29,10 +29,10 @@
  *    so a sixth of all block sizes hang for ever (fixed on master by 469aa16).
  *    And both drivers bypass only strictly below the FIFO's depth, while a
  *    Tab5 hung on a block leaving exactly that depth (464x70 turned 90).
- *    Such a block is cut here into pieces the driver programs as the hardware
- *    needs -- in both directions, since a bypass given where it is not needed
- *    is not known to be harmless -- each at least 16 pixels a side: no
- *    sliver.
+ *    Such a block is cut here into pieces that are either given the bypass
+ *    or leave at least twice the depth -- a bypass where it is not needed does
+ *    no harm, Espressif's own esp_lvgl_adapter gives it to every transaction
+ *    -- each at least 16 pixels a side: no sliver.
  *  - No wait is unbounded: a transaction that has not finished in
  *    LV_DRAW_ORTHO_PPA_TIMEOUT_MS marks the PPA stuck, and lv_draw_ortho and
  *    the video window go on without it. The driver's own blocking mode waits
@@ -91,8 +91,10 @@ int lv_draw_ortho_ppa_cut(uint32_t w, uint32_t h, lv_display_rotation_t rot, uin
 
 /** Whether the PPA driver can hang on this scale-rotate-mirror: `w` x `h`
  *  the INPUT block, `rot` LVGL's rotation, `bits` the output's bits a pixel,
- *  scales as given to the driver. DIG-734 as v5.5.6 and earlier meet it, and
- *  a last macro block of exactly the FIFO's depth, which master meets too. */
+ *  scales as given to the driver: it needs the macro-block bypass and the
+ *  driver does not give it. DIG-734 as v5.5.6 and earlier meet it, and a last
+ *  macro block within twice the FIFO's depth, which master meets too (a Tab5
+ *  hung at exactly the depth). */
 bool lv_draw_ortho_ppa_dig734(uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits,
                               float scale_x, float scale_y);
 
