@@ -381,11 +381,16 @@ static void turner_failed(void)
     g_turner_failed = true;
 }
 
+static int64_t split_now_us(void);
+
 static bool wait_for(uint32_t t)
 {
     if(t == 0 || g_wait == NULL) return true;
     g_stats.waits++;
-    if(g_wait(t)) return true;
+    const int64_t t0 = split_now_us();
+    const bool ok = g_wait(t);
+    g_stats.wait_us += (uint64_t)(split_now_us() - t0);
+    if(ok) return true;
     turner_failed();
     return false;
 }
