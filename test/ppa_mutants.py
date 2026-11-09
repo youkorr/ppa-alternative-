@@ -45,6 +45,10 @@ MUTANTS = {
     # not is sent, which is not known to be harmless.
     "a bypass master would not give sent": ("    return ((b ^ (b >> 1)) & 0x5u) != 0;\n",
                                             "    return (((b >> 1) & ~b) & 0x5u) != 0;\n"),
+    # The drivers' own test: a last macro block of exactly the FIFO's depth
+    # taken for enough, which a Tab5 stalled on (464x70 at 90).
+    "the FIFO's own depth taken for enough": ("    return several && (hardware ? left <= FIFO_BITS : left < FIFO_BITS);\n",
+                                              "    return several && left < FIFO_BITS;\n"),
     # Cuts anywhere, as before: strips as thin as one pixel.
     "slivers cut": ("#define SIDE 16\n", "#define SIDE 1\n"),
     # A wait with no bound: a stuck PPA freezes the screen (the driver's own

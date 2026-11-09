@@ -271,7 +271,8 @@ lvgl_ortho:
 
 It takes LVGL's display over once ESPHome's lvgl has built it: one
 panel-sized buffer in the panel's orientation, a flush that copies only the
-rows that changed, and touches turned back to the screen's coordinates.
+rows that changed. Touches need nothing: LVGL turns a pointer by the
+display's rotation itself.
 
 - **The panel's own frame buffers.** With youkorr/lvgl_9.5's `mipi_dsi` and
   `framebuffers: 3`, LVGL draws straight into the buffer the panel will show
@@ -526,10 +527,10 @@ Read in ESP-IDF's, LVGL's and ESPHome's own issues and pull requests (October
 
 | | what it is | elsewhere | here |
 |---|---|---|---|
-| **DIG-734** ([esp-idf #19023](https://github.com/espressif/esp-idf/issues/19023), [#19096](https://github.com/espressif/esp-idf/issues/19096), [#18768](https://github.com/espressif/esp-idf/pull/18768)) | at 90 and 270, a block whose last macro block leaves the DMA under its FIFO depth never finishes | fixed on ESP-IDF master (469aa16), **not in v5.5.6**, which ESPHome 2026.10 builds with; esp_lvgl_adapter's "PPA freeze with rotation" is this | `lv_draw_ortho_ppa.c` applies the driver's test both ways and cuts a block into pieces for which v5.5's driver programs exactly what master's does, in both directions, each at least 16 pixels a side: no sliver. Every size up to 1300x1300 checked: at most 6 pieces, 0.6% of sizes (0.03% of their pixels) left to the CPU |
+| **DIG-734** ([esp-idf #19023](https://github.com/espressif/esp-idf/issues/19023), [#19096](https://github.com/espressif/esp-idf/issues/19096), [#18768](https://github.com/espressif/esp-idf/pull/18768)) | at 90 and 270, a block whose last macro block leaves the DMA under its FIFO depth never finishes | fixed on ESP-IDF master (469aa16), **not in v5.5.6**, which ESPHome 2026.10 builds with; esp_lvgl_adapter's "PPA freeze with rotation" is this | `lv_draw_ortho_ppa.c` applies the driver's test both ways, counts a last block of exactly the FIFO's depth as too small too (below), and cuts a block into pieces the driver programs as the hardware needs, in both directions, each at least 16 pixels a side: no sliver. Every size up to 1300x1300, at 90 and 180, 16 and 24 bits, checked: at most 6 pieces, 0.5% of sizes (0.02% of their pixels) left to the CPU |
 | **an unbounded wait** | the driver's blocking mode waits for ever: a stuck transfer is a frozen screen | LVGL's PPA unit blocks with no timeout; the author's own [lvgl #10265](https://github.com/lvgl/lvgl/pull/10265) (open, not merged) keeps that call | every wait is bounded (`LV_DRAW_ORTHO_PPA_TIMEOUT_MS`, 250 ms); past it the CPU turns, the video window is refused, and the screen is redrawn and the log says so, with the transaction that never finished: its whole geometry, the buffers, and the bypass each driver would program |
 | **DMA2D reset hang** ([esp-idf #18999](https://github.com/espressif/esp-idf/issues/18999), [#19108](https://github.com/espressif/esp-idf/issues/19108)) | after a software reset a DMA2D channel can wait for ever inside a spinlock | open at Espressif | **not handled**: it spins below anything a component can bound. A power cycle clears it |
-| **a stall on a moving wallpaper** (Tab5, `yaml/tab5-camera-ui.yaml`, November 2026) | three large translucent lights drifting over the home page redraw blocks of every size, a third of which need cutting for DIG-734, and the PPA stalled | not known elsewhere | **cause not known yet.** Two things this project did that Espressif's own use does not were removed: cutting a DIG-734 block into strips as thin as one pixel (a third of all cuts), and sending blocks for which v5.5's driver gives the bypass where master would not. If it stalls again, the log names the transaction |
+| **DIG-734 at the FIFO's exact depth** (Tab5, `yaml/tab5-camera-ui.yaml`, November 2026) | a block whose last macro block leaves exactly 1536 bits -- 464x70 turned 90, a tile band behind three moving lights -- never finished, right after an identical one had: most likely a race at the exact depth | **not known elsewhere**: both drivers, v5.5 and master, bypass only strictly below the depth | found from the board's own report of the transaction that never finished (`lv_draw_ortho_ppa_describe_stall()`); such a block is cut like any DIG-734 block. The test PPA now hangs on it, and an existing test scene was already sending one |
 
 ## How it is measured
 
@@ -614,7 +615,7 @@ quote.
 ```
 git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 507 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 510 cases, and the ESPHome component at four angles
 build/ortho_test --ppa             # the PPA's cases alone
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case

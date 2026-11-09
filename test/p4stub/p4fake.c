@@ -230,20 +230,15 @@ void p4fake_reset(void)
  * block's width and height; the hardware, at 90 and 270, needs it decided
  * from the turned ones (the fix on master, 469aa16). Where it needed the
  * bypass and was not given it, the DMA never raises its end: the transaction
- * never finishes. Unscaled RGB565/RGB888, 16x16 macro blocks (silicon v1.x). */
-static int mb_bypass(uint32_t w_out, uint32_t h_in, uint32_t bits)
-{
-    const uint32_t wdiv = bits == 16 ? 64 : 32;
-    uint32_t wl = w_out % wdiv, hl = h_in % 16;
-    if(wl == 0) wl = wdiv;
-    if(hl == 0) hl = 16;
-    return (w_out > wdiv || h_in > 16) && wl * hl * bits < 12 * 128;
-}
-
-/* The same test at both macro-block sizes, both ways round: whether v5.5's
- * driver programs the bypass differently from master's. Not a hang in this
- * fake, a transaction lv_draw_ortho_ppa.c should not have sent. */
-static int mb_bypass_at(uint32_t w_out, uint32_t h_in, uint32_t bits, uint32_t mb)
+ * never finishes. Unscaled RGB565/RGB888.
+ *
+ * And what master's fix does not know, from a Tab5's own log (silicon v1.0,
+ * ESP-IDF v5.5.6, November 2026): a block whose last macro block leaves
+ * EXACTLY the FIFO's depth never finished -- 464x70 turned 90, 1536 bits of
+ * 1536 both ways round -- right after an identical one had. Both drivers test
+ * strictly below the depth; the hardware needs the bypass at it too. It hung
+ * once in many there; here it always does. */
+static int driver_bypass(uint32_t w_out, uint32_t h_in, uint32_t bits, uint32_t mb)
 {
     const uint32_t wdiv = bits == 16 ? 64 : 32;
     uint32_t wl = w_out % wdiv, hl = h_in % mb;
@@ -252,28 +247,48 @@ static int mb_bypass_at(uint32_t w_out, uint32_t h_in, uint32_t bits, uint32_t m
     return (w_out > wdiv || h_in > mb) && wl * hl * bits < 12 * 128;
 }
 
-int p4fake_bypass_differs(uint32_t w, uint32_t h, uint32_t bits)
+static int hardware_needs(uint32_t w_out, uint32_t h_in, uint32_t bits, uint32_t mb)
+{
+    const uint32_t wdiv = bits == 16 ? 64 : 32;
+    uint32_t wl = w_out % wdiv, hl = h_in % mb;
+    if(wl == 0) wl = wdiv;
+    if(hl == 0) hl = mb;
+    return (w_out > wdiv || h_in > mb) && wl * hl * bits <= 12 * 128;
+}
+
+/* Whether the driver programs the bypass otherwise than the hardware needs
+ * it, at 16x16 or 32x32 macro blocks: in one direction the hang above, in
+ * the other a bypass given where master would not give it. Neither should be
+ * sent. */
+int p4fake_bypass_differs(uint32_t w, uint32_t h, uint32_t bits, int quarter)
 {
     for(uint32_t mb = 16; mb <= 32; mb += 16)
-        if(mb_bypass_at(w, h, bits, mb) != mb_bypass_at(h, w, bits, mb)) return 1;
+        if(driver_bypass(w, h, bits, mb) != (quarter ? hardware_needs(h, w, bits, mb) : hardware_needs(w, h, bits, mb)))
+            return 1;
     return 0;
 }
 
 int g_p4_differs;
 
-static int differs(const ppa_srm_oper_config_t * op)
+static int quarter_turn(const ppa_srm_oper_config_t * op)
 {
-    if(op->rotation_angle != PPA_SRM_ROTATION_ANGLE_90 && op->rotation_angle != PPA_SRM_ROTATION_ANGLE_270) return 0;
-    if(op->scale_x != 1.0f || op->scale_y != 1.0f) return 0;
-    return p4fake_bypass_differs(op->in.block_w, op->in.block_h, op->out.srm_cm == PPA_SRM_COLOR_MODE_RGB565 ? 16 : 24);
+    return op->rotation_angle == PPA_SRM_ROTATION_ANGLE_90 || op->rotation_angle == PPA_SRM_ROTATION_ANGLE_270;
 }
 
+static int differs(const ppa_srm_oper_config_t * op)
+{
+    if(op->scale_x != 1.0f || op->scale_y != 1.0f) return 0;
+    return p4fake_bypass_differs(op->in.block_w, op->in.block_h, op->out.srm_cm == PPA_SRM_COLOR_MODE_RGB565 ? 16 : 24,
+                                 quarter_turn(op));
+}
+
+/* 16x16 macro blocks: silicon v1.x, the household's boards. */
 static int never_finishes(const ppa_srm_oper_config_t * op)
 {
-    if(op->rotation_angle != PPA_SRM_ROTATION_ANGLE_90 && op->rotation_angle != PPA_SRM_ROTATION_ANGLE_270) return 0;
     const uint32_t bits = op->out.srm_cm == PPA_SRM_COLOR_MODE_RGB565 ? 16 : 24;
-    const int given = mb_bypass(op->in.block_w, op->in.block_h, bits);
-    const int needed = mb_bypass(op->in.block_h, op->in.block_w, bits);
+    const uint32_t w = op->in.block_w, h = op->in.block_h;
+    const int given = driver_bypass(w, h, bits, 16);
+    const int needed = quarter_turn(op) ? hardware_needs(h, w, bits, 16) : hardware_needs(w, h, bits, 16);
     return needed && !given;
 }
 

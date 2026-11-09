@@ -288,17 +288,22 @@ int main(int argc, char **argv) {
   p4fake_watch(nullptr);
 
   // A finger: the glass point under a UI point must come back as that point.
+  // Read the way ESPHome's lvgl has it read, by LVGL itself: LVGL turns a
+  // pointer by the display's rotation on its own (indev_pointer_proc), so a
+  // test calling the read callback alone never sees what LVGL does after it
+  // -- which is how a second turn here went unnoticed until a board's touch
+  // pressed nothing.
   const lv_point_t ui = {uw - 14, uh - 14};  // the small square's middle
   lv_area_t a = {ui.x, ui.y, ui.x, ui.y};
   lv_area_t n;
   lv_draw_ortho_native_area(disp, &a, &n);
   g_glass_point = {n.x1, n.y1};
-  lv_indev_data_t data;
-  std::memset(&data, 0, sizeof data);
-  lv_indev_get_read_cb(touch)(touch, &data);
-  std::snprintf(what, sizeof what, "touch at glass %d,%d reads UI %d,%d (want %d,%d)", (int) n.x1, (int) n.y1,
-                (int) data.point.x, (int) data.point.y, (int) ui.x, (int) ui.y);
-  expect(data.point.x == ui.x && data.point.y == ui.y, what);
+  lv_indev_read(touch);
+  lv_point_t got = {-1, -1};
+  lv_indev_get_point(touch, &got);
+  std::snprintf(what, sizeof what, "touch at glass %d,%d reads UI %d,%d through LVGL (want %d,%d)", (int) n.x1,
+                (int) n.y1, (int) got.x, (int) got.y, (int) ui.x, (int) ui.y);
+  expect(got.x == ui.x && got.y == ui.y, what);
 
 #if LVGL_ORTHO_FAST_PRESENT
   // Many frames, each with a change, so every buffer takes its turn.

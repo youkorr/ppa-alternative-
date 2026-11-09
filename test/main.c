@@ -608,14 +608,29 @@ static void scene_covered(lv_obj_t * scr)
     lv_obj_set_pos(img, 0, 0);
 }
 
-/* Every block size up to 1300 x 1300, at 90 and at 16 and 24 bits, through the
- * cut lv_draw_ortho_ppa.c sends: the pieces cover the block exactly once, each
- * is one v5.5's driver programs as master's (p4fake's own test, written from
- * ppa_srm.c), none cut from it is under 16 pixels a side, and few are left to
- * the CPU. */
+/* Every block size up to 1300 x 1300, at 90 and 180 and at 16 and 24 bits,
+ * through the cut lv_draw_ortho_ppa.c sends: the pieces cover the block
+ * exactly once, each is one the driver programs as the hardware needs
+ * (p4fake's own test, written from ppa_srm.c and a Tab5's log), none cut from
+ * it is under 16 pixels a side, and few are left to the CPU. */
 static void check_ppa_cut(void)
 {
-    for(uint32_t bits = 16; bits <= 24; bits += 8) {
+    /* The block a Tab5 stalled on: its last macro block leaves exactly the
+     * FIFO's 1536 bits, which neither driver bypasses. */
+    {
+        uint32_t p[8][4];
+        const int n = lv_draw_ortho_ppa_cut(464, 70, LV_DISPLAY_ROTATION_90, 16, p, 8);
+        g_cases++;
+        if(n != 1) printf("  ok    the block a Tab5 stalled on, 464x70 at 90, is not sent whole (%d pieces)\n", n);
+        else {
+            g_failures++;
+            printf("  FAIL  the block a Tab5 stalled on, 464x70 at 90, is sent whole\n");
+        }
+    }
+    for(int r = 0; r < 4; r++) for(uint32_t bits = 16; bits <= 24; bits += 8) {
+        if(r == 0 || r == 3) continue;   /* 270 tests as 90 does, 0 as 180 does */
+        const lv_display_rotation_t rot = r == 1 ? LV_DISPLAY_ROTATION_90 : LV_DISPLAY_ROTATION_180;
+        const int quarter = rot == LV_DISPLAY_ROTATION_90;
         long sizes = 0, cut_up = 0, cpu = 0, bad = 0;
         unsigned long long px = 0, cpu_px = 0;
         int worst = 0;
@@ -624,13 +639,13 @@ static void check_ppa_cut(void)
         for(uint32_t w = 1; w <= 1300; w++) {
             for(uint32_t h = 1; h <= 1300; h++) {
                 uint32_t p[8][4];
-                const int n = lv_draw_ortho_ppa_cut(w, h, LV_DISPLAY_ROTATION_90, bits, p, 8);
+                const int n = lv_draw_ortho_ppa_cut(w, h, rot, bits, p, 8);
                 sizes++;
                 px += (unsigned long long)w * h;
                 if(n == 0) {
                     cpu++;
                     cpu_px += (unsigned long long)w * h;
-                    if(!p4fake_bypass_differs(w, h, bits)) bad++;   /* left to the CPU for nothing */
+                    if(!p4fake_bypass_differs(w, h, bits, quarter)) bad++;   /* left to the CPU for nothing */
                     continue;
                 }
                 if(n > 1) cut_up++;
@@ -643,7 +658,7 @@ static void check_ppa_cut(void)
                     const uint32_t x = p[i][0], y = p[i][1], pw = p[i][2], ph = p[i][3];
                     area += (unsigned long long)pw * ph;
                     if(x + pw > w || y + ph > h || pw == 0 || ph == 0) bad++;
-                    else if(p4fake_bypass_differs(pw, ph, bits)) bad++;
+                    else if(p4fake_bypass_differs(pw, ph, bits, quarter)) bad++;
                     /* Thinner than 16 only where the block itself is. */
                     else if(n > 1 && ((pw < 16 && pw != w) || (ph < 16 && ph != h))) bad++;
                     if(cover && x + pw <= w && y + ph <= h) {
@@ -667,10 +682,10 @@ static void check_ppa_cut(void)
         }
         g_cases++;
         char what[240];
-        snprintf(what, sizeof(what), "PPA cut, every size to 1300x1300 at %u bits: %ld cut up, at most %d pieces, "
-                 "%.2f%% of sizes (%.3f%% of pixels) left to the CPU", (unsigned)bits, cut_up, worst,
+        snprintf(what, sizeof(what), "PPA cut, every size to 1300x1300 at %s and %u bits: %ld cut up, at most %d "
+                 "pieces, %.2f%% of sizes (%.3f%% of pixels) left to the CPU", rot_name(rot), (unsigned)bits, cut_up, worst,
                  100.0 * cpu / sizes, 100.0 * cpu_px / px);
-        if(bad == 0 && worst <= 6 && cpu * 100 < sizes && cut_up > 0) printf("  ok    %s\n", what);
+        if(bad == 0 && worst <= 6 && cpu * 200 < sizes && cut_up > 0) printf("  ok    %s\n", what);
         else {
             g_failures++;
             printf("  FAIL  %s -- %ld wrong (first %ux%u)\n", what, bad, (unsigned)bw, (unsigned)bh);
@@ -713,7 +728,7 @@ static void check_ppa_stall(int32_t nw, int32_t nh, lv_display_rotation_t rot)
     lv_draw_ortho_ppa_describe_stall(stall_line, NULL);
     g_cases++;
     if(strstr(g_stall_text, "turning engine") && strstr(g_stall_text, "never finished #") &&
-       strstr(g_stall_text, "turned 270") && strstr(g_stall_text, "bypass v5.5/master"))
+       strstr(g_stall_text, "turned 270") && strstr(g_stall_text, "bypass given/needed"))
         printf("  ok    ...and the stall is described, as lvgl_ortho logs it:\n%s", g_stall_text);
     else {
         g_failures++;

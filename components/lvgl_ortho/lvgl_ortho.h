@@ -84,7 +84,6 @@ class LvglOrtho : public Component {
  protected:
   static void flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map);
   static void render_start_cb_(lv_event_t *e);
-  static void read_cb_(lv_indev_t *indev, lv_indev_data_t *data);
   void copy_native_(const lv_area_t &native);
   bool on_screen_(lv_obj_t *obj) const;
 

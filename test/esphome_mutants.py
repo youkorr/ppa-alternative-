@@ -20,9 +20,19 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 ORTHO = HERE.parent / "components" / "lvgl_ortho"
 MUTANTS = {
-    "touch not turned": (
-        "      lv_display_rotate_point(g_self->disp_, &data->point);",
-        "      ;",
+    # LVGL turns a pointer by the display's rotation itself: turning it here
+    # as well, as this component once did, lands every touch off the screen.
+    "touch turned twice": (
+        "      n++;\n",
+        "    {\n"
+        "      static lv_indev_read_cb_t orig;\n"
+        "      orig = lv_indev_get_read_cb(indev);\n"
+        "      lv_indev_set_read_cb(indev, [](lv_indev_t *i, lv_indev_data_t *dt) {\n"
+        "        orig(i, dt);\n"
+        "        lv_display_rotate_point(lv_indev_get_display(i), &dt->point);\n"
+        "      });\n"
+        "      n++;\n"
+        "    }\n",
     ),
     "flush area not turned": (
         "    lv_draw_ortho_native_area(disp, area, &native);",

@@ -29,12 +29,6 @@ static constexpr uint32_t REPORT_MS = 10000;
 // the display's user data is ESPHome lvgl's.
 static LvglOrtho *g_self = nullptr;
 
-// The touch (and any pointer) devices whose read callback is wrapped, with
-// the callback each had.
-static constexpr int MAX_INDEVS = 4;
-static lv_indev_t *g_indev[MAX_INDEVS];
-static lv_indev_read_cb_t g_read[MAX_INDEVS];
-
 // lv_area_intersect() and lv_area_is_equal() are in LVGL 9's PRIVATE headers
 // (lv_area_private.h), which a component outside LVGL cannot count on.
 static bool intersect(lv_area_t *res, const lv_area_t *a, const lv_area_t *b) {
@@ -137,26 +131,22 @@ void LvglOrtho::setup() {
     return;
   }
 
-  // LVGL 9 does not turn a pointer's coordinates by the display's rotation,
-  // and the touchscreen reports the glass's. lv_display_rotate_point() is the
-  // exact inverse of where lv_draw_ortho draws (tested in test/main.c).
+  // The touchscreen reports the glass's coordinates, and LVGL turns a
+  // pointer by the display's rotation itself, in indev_pointer_proc (9.5, 9.6
+  // and master alike), with lv_display_rotate_point() -- the exact inverse of
+  // where lv_draw_ortho draws (test/main.c). So nothing is done to a touch
+  // here. Turning it here as well, as this did until November 2026, turned
+  // it twice: on a Tab5 every touch landed off the screen and pressed nothing.
   int n = 0;
-  for (lv_indev_t *indev = lv_indev_get_next(nullptr); indev != nullptr && n < MAX_INDEVS;
-       indev = lv_indev_get_next(indev)) {
-    if (lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER)
-      continue;
+  for (lv_indev_t *indev = lv_indev_get_next(nullptr); indev != nullptr; indev = lv_indev_get_next(indev)) {
     lv_display_t *d = lv_indev_get_display(indev);
-    if (d != nullptr && d != this->disp_)
-      continue;
-    g_indev[n] = indev;
-    g_read[n] = lv_indev_get_read_cb(indev);
-    lv_indev_set_read_cb(indev, read_cb_);
-    n++;
+    if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER && (d == nullptr || d == this->disp_))
+      n++;
   }
 
   lv_obj_invalidate(lv_display_get_screen_active(this->disp_));
   this->ready_ = true;
-  ESP_LOGI(TAG, "LVGL draws the panel's %dx%d directly at ESPHome rotation %d (%d touch device(s) turned)",
+  ESP_LOGI(TAG, "LVGL draws the panel's %dx%d directly at ESPHome rotation %d (%d touch device(s), turned by LVGL)",
            (int) this->width_, (int) this->height_, this->degrees_, n);
   if (this->panel_fbs_ > 0) {
     ESP_LOGI(TAG, "...into the panel's own %d frame buffers: nothing is turned and nothing is copied", this->panel_fbs_);
@@ -238,18 +228,6 @@ void LvglOrtho::dump_config() {
                   lv_draw_ortho_get_stats()->tiles_in_turn == 4 ? ", a pair drawn while the last is turned" : "");
   } else {
     ESP_LOGCONFIG(TAG, "  Drawing: one core%s", this->cores_ > 1 ? " (cores: 2 refused, see above)" : "");
-  }
-}
-
-void LvglOrtho::read_cb_(lv_indev_t *indev, lv_indev_data_t *data) {
-  for (int i = 0; i < MAX_INDEVS; i++) {
-    if (g_indev[i] != indev)
-      continue;
-    if (g_read[i] != nullptr)
-      g_read[i](indev, data);
-    if (g_self != nullptr && g_self->disp_ != nullptr)
-      lv_display_rotate_point(g_self->disp_, &data->point);
-    return;
   }
 }
 
