@@ -751,11 +751,13 @@ static bool prep_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
     /* The tile starts as what is already under it, so blending is right --
      * unless the first thing drawn paints all of it anyway. */
     if(!covers(&jobs[first], tile)) {
+        const uint64_t before = g_stats.bytes_turned;
         uint32_t t = turn_or_cpu(o, cf, px, nb->data, nb->header.stride, &target->buf_area,
                                  w->tb.data, stride, tile, &w->nat, false);
         if(!wait_ticket(&t))   /* it is drawn on next */
             move_turned(o, px, nb->data, nb->header.stride, &target->buf_area, w->tb.data, stride, tile, &w->nat,
                         false);
+        g_stats.bytes_read_back += g_stats.bytes_turned - before;
     }
     else g_stats.tiles_unread++;
     return true;
@@ -1625,6 +1627,7 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
     const int32_t sstride = img->header.stride ? (int32_t)img->header.stride
                             : (int32_t)img->header.w * px;
     if(try_cached(t, o, img, sstride, parts, np)) return true;
+    const uint64_t before = g_stats.bytes_turned;
     for(int32_t i = 0; i < np; i++) {
         if(turn_split(o, nb->header.cf, px, nb->data, nb->header.stride, &target->buf_area,
                       (uint8_t *)img->data, sstride, &t->area, &parts[i])) continue;
@@ -1633,6 +1636,7 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
     }
     fence();   /* the picture is the application's again when the task is finished */
     g_stats.images_turned++;
+    g_stats.bytes_turned_images += g_stats.bytes_turned - before;
     return true;
 }
 

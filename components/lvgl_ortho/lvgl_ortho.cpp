@@ -457,6 +457,17 @@ void LvglOrtho::loop() {
       if (st->bytes_turned > 0) {
         ESP_LOGI(TAG, "  turned %.0f KiB/s, %.0f%% of it by the PPA, the CPU waited %.1f times/s for it",
                  st->bytes_turned / 1024.0f / s, 100.0f * st->bytes_handed / st->bytes_turned, st->waits / s);
+        // What the turned bytes are. A picture turned more than once a screen,
+        // or more KiB a picture than the part of it on the glass, is LVGL
+        // drawing it twice; read-back is what lies under tiles of a part of
+        // the screen drawn again.
+        const uint64_t tiles_out = st->bytes_turned - st->bytes_turned_images - st->bytes_read_back;
+        ESP_LOGI(TAG, "    of it: pictures %.0f KiB/s (%.2f a screen, %.0f KiB each), tiles out %.0f KiB/s, "
+                 "read back under tiles %.0f KiB/s",
+                 st->bytes_turned_images / 1024.0f / s,
+                 this->presents_ ? (float) st->images_turned / this->presents_ : 0.0f,
+                 st->images_turned ? st->bytes_turned_images / 1024.0f / st->images_turned : 0.0f,
+                 tiles_out / 1024.0f / s, st->bytes_read_back / 1024.0f / s);
       }
       // Pictures copied out of the cache instead of turned again, and how
       // much it holds: a wallpaper redrawn shows up here.
