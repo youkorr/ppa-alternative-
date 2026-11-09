@@ -257,13 +257,17 @@ then what the turned bytes were:
 ```
   turned 23040 KiB/s, 100% of it by the PPA, the CPU waited 38.4 times/s for it
     of it: pictures 22800 KiB/s (1.00 a screen, 1200 KiB each), tiles out 120 KiB/s, read back under tiles 120 KiB/s
+    pictures: 19.0/s, 0.0/s the same one again, 0.0/s into a layer; 19.2 refreshes/s drawn
 ```
 
 A picture is a camera frame or a wallpaper drawn by LVGL. More than one a
 screen, or more KiB each than the part of it on the glass (1200 KiB for a
 1024x600 screen in RGB565), is the same frame drawn twice; read-back is what
-lay under tiles of a part of the screen drawn again. (The figures above are
-an example of the shape, not a measurement.)
+lay under tiles of a part of the screen drawn again. The last line says
+where a second picture would come from: the same frame turned again, a
+picture drawn into one of LVGL's layers and again as the layer, or refreshes
+drawn and never shown (more refreshes than screens shown). (The figures above
+are an example of the shape, not a measurement.)
 
 ## Testing it on the three boards
 
@@ -559,7 +563,7 @@ quote.
 ```
 git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 474 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 504 cases, and the ESPHome component at four angles
 build/ortho_test --ppa             # the PPA's cases alone
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case
