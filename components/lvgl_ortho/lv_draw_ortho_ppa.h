@@ -27,10 +27,12 @@
  *    finishes. The driver works around it, but up to v5.5.6 -- what ESPHome
  *    builds with -- it sizes that last block before the turn instead of after,
  *    so a sixth of all block sizes hang for ever (fixed on master by 469aa16).
- *    Such a block is cut here into pieces for which v5.5's driver programs
- *    the PPA exactly as master's does -- in both directions, since a bypass
- *    given where master would not give it is not known to be harmless -- each
- *    at least 16 pixels a side: no sliver.
+ *    And both drivers bypass only strictly below the FIFO's depth, while a
+ *    Tab5 hung on a block leaving exactly that depth (464x70 turned 90).
+ *    Such a block is cut here into pieces the driver programs as the hardware
+ *    needs -- in both directions, since a bypass given where it is not needed
+ *    is not known to be harmless -- each at least 16 pixels a side: no
+ *    sliver.
  *  - No wait is unbounded: a transaction that has not finished in
  *    LV_DRAW_ORTHO_PPA_TIMEOUT_MS marks the PPA stuck, and lv_draw_ortho and
  *    the video window go on without it. The driver's own blocking mode waits
@@ -87,9 +89,10 @@ void lv_draw_ortho_ppa_describe_stall(lv_draw_ortho_ppa_line_cb_t line, void * u
 int lv_draw_ortho_ppa_cut(uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits, uint32_t (*pieces)[4],
                           int max);
 
-/** Whether the PPA driver of ESP-IDF v5.5.6 and earlier can hang on this
- *  scale-rotate-mirror: `w` x `h` the INPUT block, `rot` LVGL's rotation, `bits`
- *  the output's bits a pixel, scales as given to the driver. DIG-734. */
+/** Whether the PPA driver can hang on this scale-rotate-mirror: `w` x `h`
+ *  the INPUT block, `rot` LVGL's rotation, `bits` the output's bits a pixel,
+ *  scales as given to the driver. DIG-734 as v5.5.6 and earlier meet it, and
+ *  a last macro block of exactly the FIFO's depth, which master meets too. */
 bool lv_draw_ortho_ppa_dig734(uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits,
                               float scale_x, float scale_y);
 

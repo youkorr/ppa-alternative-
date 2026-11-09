@@ -381,8 +381,9 @@ display:
 # The glass's own coordinates (720x1280 portrait): lvgl_ortho turns each
 # touch into the landscape screen, as it turns the picture. Read every 8 ms
 # with no interrupt, as in the household's working Tab5 configurations
-# (esphome_esp-video's tab5-portall-*.yaml). The first flash of this file
-# took GPIO23 as an interrupt input instead, and no touch came through.
+# (esphome_esp-video's tab5-portall-*.yaml). No touch came through on the
+# first two flashes of this file, and the cause was lvgl_ortho turning each
+# touch a second time after LVGL had: fixed there, not here.
 touchscreen:
   - platform: gt911
     id: touch_screen

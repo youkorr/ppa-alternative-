@@ -27,9 +27,10 @@ int p4fake_watched(void);
  * ESP-IDF v5.5.6 driver (what ESPHome builds with), and any made to stall. */
 extern int g_p4_dig734;
 /* Transactions sent for which v5.5's driver programs the macro-block bypass
- * differently from master's, at 16x16 or 32x32 blocks: none should be. */
+ * otherwise than the hardware needs it, at 16x16 or 32x32 blocks: none
+ * should be. `quarter` for a turn of 90 or 270. */
 extern int g_p4_differs;
-int p4fake_bypass_differs(uint32_t w, uint32_t h, uint32_t bits);
+int p4fake_bypass_differs(uint32_t w, uint32_t h, uint32_t bits, int quarter);
 /* Fills the PPA did. */
 extern int g_p4_fills;
 /* Of g_p4_pixels, those a fill wrote (a fill writes; a turn reads and writes). */
