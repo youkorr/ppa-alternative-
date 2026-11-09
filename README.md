@@ -286,7 +286,7 @@ did, how often the CPU waited for it, and how many tiles the second core drew,
 then what the turned bytes were:
 
 ```
-  turned 23040 KiB/s, 100% of it by the PPA, the CPU waited 38.4 times/s for it
+  turned 23040 KiB/s, 100% of it by the PPA, the CPU waited 38.4 times/s for it, 14.2 ms a screen
     of it: pictures 22800 KiB/s (1.00 a screen, 1200 KiB each), tiles out 120 KiB/s, read back under tiles 120 KiB/s
     pictures: 19.0/s, 0.0/s the same one again, 0.0/s into a layer; 19.2 refreshes/s drawn
 ```
@@ -294,7 +294,8 @@ then what the turned bytes were:
 A picture is a camera frame or a wallpaper drawn by LVGL. More than one a
 screen, or more KiB each than the part of it on the glass (1200 KiB for a
 1024x600 screen in RGB565), is the same frame drawn twice; read-back is what
-lay under tiles of a part of the screen drawn again. The last line says
+lay under tiles of a part of the screen drawn again. The milliseconds a screen
+are the PPA's share of each frame: the rest is LVGL, the camera and the loop. The last line says
 where a second picture would come from: the same frame turned again, a
 picture drawn into one of LVGL's layers and again as the layer, or refreshes
 drawn and never shown (more refreshes than screens shown). (The figures above

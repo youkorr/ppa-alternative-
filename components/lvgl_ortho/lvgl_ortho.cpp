@@ -464,8 +464,12 @@ void LvglOrtho::loop() {
       // wait for it: near 100% and few waits is the PPA working for nothing.
       const lv_draw_ortho_stats_t *st = lv_draw_ortho_get_stats();
       if (st->bytes_turned > 0) {
-        ESP_LOGI(TAG, "  turned %.0f KiB/s, %.0f%% of it by the PPA, the CPU waited %.1f times/s for it",
-                 st->bytes_turned / 1024.0f / s, 100.0f * st->bytes_handed / st->bytes_turned, st->waits / s);
+        // The wait is the PPA's share of a frame; the rest of the frame time
+        // is LVGL drawing, the camera and the loop.
+        ESP_LOGI(TAG, "  turned %.0f KiB/s, %.0f%% of it by the PPA, the CPU waited %.1f times/s for it, "
+                 "%.1f ms a screen",
+                 st->bytes_turned / 1024.0f / s, 100.0f * st->bytes_handed / st->bytes_turned, st->waits / s,
+                 this->presents_ ? st->wait_us / 1000.0f / this->presents_ : 0.0f);
         // What the turned bytes are. A picture turned more than once a screen,
         // or more KiB a picture than the part of it on the glass, is LVGL
         // drawing it twice; read-back is what lies under tiles of a part of

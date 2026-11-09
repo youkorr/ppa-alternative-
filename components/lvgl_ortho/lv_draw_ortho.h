@@ -109,6 +109,8 @@ typedef struct {
                                     turned just before it: a camera frame drawn a second time */
     uint32_t images_in_layer;  /**< of images_turned, those turned into a layer of LVGL's (a widget drawn
                                     apart, then drawn again as a whole) rather than the screen */
+    uint64_t wait_us;          /**< time the CPU spent in `waits`, in microseconds: the part of a frame
+                                    that is the turner's and not the drawing's */
 } lv_draw_ortho_stats_t;
 
 /** Called with a straight (unturned) copy so a platform can hand it to DMA.
