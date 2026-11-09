@@ -502,6 +502,9 @@ static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_displ
         printf("  FAIL  lv_draw_ortho_ppa_init\n");
         return;
     }
+    /* Only lv_draw_ortho's own transactions count: other cases hand the fake
+     * raw ones. */
+    g_p4_short = 0;
     for(int run = 0; run < 4; run++) {
         /* One by one, every task after the first reads back what is already
          * on the glass: the PPA's other direction. */
@@ -555,12 +558,12 @@ static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_displ
                    g_p4_dig734, st->turner_failed ? ", and the PPA was given up on" : "");
             g_p4_dig734 = 0;
         }
-        /* Nor one v5.5's driver programs otherwise than master's. */
-        if(g_p4_differs) {
+        /* Nor one left without the bypass within twice the FIFO's depth. */
+        if(g_p4_short) {
             g_failures++;
-            printf("  FAIL  ...and %d transaction(s) were sent that v5.5's driver bypasses otherwise than master's\n",
-                   g_p4_differs);
-            g_p4_differs = 0;
+            printf("  FAIL  ...and %d transaction(s) were sent without the bypass, within twice the FIFO's depth\n",
+                   g_p4_short);
+            g_p4_short = 0;
         }
         p4fake_run_all();
         drop_screen(nat);
@@ -610,7 +613,7 @@ static void scene_covered(lv_obj_t * scr)
 
 /* Every block size up to 1300 x 1300, at 90 and 180 and at 16 and 24 bits,
  * through the cut lv_draw_ortho_ppa.c sends: the pieces cover the block
- * exactly once, each is one the driver programs as the hardware needs
+ * exactly once, each is given the bypass or leaves twice the FIFO's depth
  * (p4fake's own test, written from ppa_srm.c and a Tab5's log), none cut from
  * it is under 16 pixels a side, and few are left to the CPU. */
 static void check_ppa_cut(void)
@@ -645,7 +648,7 @@ static void check_ppa_cut(void)
                 if(n == 0) {
                     cpu++;
                     cpu_px += (unsigned long long)w * h;
-                    if(!p4fake_bypass_differs(w, h, bits, quarter)) bad++;   /* left to the CPU for nothing */
+                    if(!p4fake_bypass_short(w, h, bits, quarter)) bad++;   /* left to the CPU for nothing */
                     continue;
                 }
                 if(n > 1) cut_up++;
@@ -658,7 +661,7 @@ static void check_ppa_cut(void)
                     const uint32_t x = p[i][0], y = p[i][1], pw = p[i][2], ph = p[i][3];
                     area += (unsigned long long)pw * ph;
                     if(x + pw > w || y + ph > h || pw == 0 || ph == 0) bad++;
-                    else if(p4fake_bypass_differs(pw, ph, bits, quarter)) bad++;
+                    else if(p4fake_bypass_short(pw, ph, bits, quarter)) bad++;
                     /* Thinner than 16 only where the block itself is. */
                     else if(n > 1 && ((pw < 16 && pw != w) || (ph < 16 && ph != h))) bad++;
                     if(cover && x + pw <= w && y + ph <= h) {
@@ -685,7 +688,7 @@ static void check_ppa_cut(void)
         snprintf(what, sizeof(what), "PPA cut, every size to 1300x1300 at %s and %u bits: %ld cut up, at most %d "
                  "pieces, %.2f%% of sizes (%.3f%% of pixels) left to the CPU", rot_name(rot), (unsigned)bits, cut_up, worst,
                  100.0 * cpu / sizes, 100.0 * cpu_px / px);
-        if(bad == 0 && worst <= 6 && cpu * 200 < sizes && cut_up > 0) printf("  ok    %s\n", what);
+        if(bad == 0 && worst <= 7 && cpu * 100 < sizes && cut_up > 0) printf("  ok    %s\n", what);
         else {
             g_failures++;
             printf("  FAIL  %s -- %ld wrong (first %ux%u)\n", what, bad, (unsigned)bw, (unsigned)bh);

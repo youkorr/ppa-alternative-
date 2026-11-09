@@ -350,8 +350,11 @@ int main(int argc, char **argv) {
     FILE *log = std::tmpfile();
     const int saved = dup(1);
     dup2(fileno(log), 1);
+    // The whole screen, so the PPA has work whatever the angle: a small
+    // change alone may be one block the CPU turns.
     p4fake_stall_next();
     lv_obj_set_style_bg_color(s.small, lv_color_hex(0x00ffff), 0);
+    lv_obj_invalidate(lv_display_get_screen_active(disp));
     lv_refr_now(disp);
     ortho.loop();
     ortho.loop();
