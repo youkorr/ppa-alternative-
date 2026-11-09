@@ -49,13 +49,15 @@ compilé deux fois, avec et sans l'option, ESP-IDF v5.5.5 :
 | Waveshare 7B, 90° | 15,8 images/s | **17,2 - 17,3 images/s** | **+9 %** |
 | Waveshare 7B, 180° | 16,6 images/s | **18,0 images/s** | **+8 %** |
 | Tab5, 270° | 11,3 images/s | **12,9 - 13,0 images/s** | **+15 %** |
-| Tab5, 270°, cache L2 de 128 Ko (le défaut d'ESP-IDF) | 11,2 images/s | **17,9 - 18,0 images/s** | **+61 %** |
+| Waveshare 7B, 90°, cache L2 de 128 Ko (le défaut d'ESP-IDF) | 15,5 - 15,6 images/s | **23,3 - 23,4 images/s** | **+50 %** |
+| Waveshare 7B, 180°, cache L2 de 128 Ko | 16,7 images/s | **25,9 - 26,1 images/s** | **+56 %** |
+| Tab5, 270°, cache L2 de 128 Ko | 11,2 images/s | **17,9 - 18,0 images/s** | **+61 %** |
 
 Tous les tests de l'application passent dans tous les cas. Sur la Tab5,
 ESP-IDF v6.1 donne la même chose (13,0 - 13,2 images/s).
 L'application de test d'Espressif règle le cache L2 à 256 Ko ; avec les
 128 Ko par défaut d'ESP-IDF, il reste plus de RAM interne pour les tuiles :
-leur méthode ne bouge pas, la nôtre gagne 40 %. Le détail est dans le
+leur méthode ne bouge pas, la nôtre gagne de 35 à 45 %, sur les deux cartes. Le détail est dans le
 [README principal](../../README.md#measured-on-the-boards).
 
 ## Ce qui reste à faire

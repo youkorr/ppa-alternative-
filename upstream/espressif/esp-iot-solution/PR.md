@@ -116,17 +116,19 @@ per-frame time does not show.)
 **With ESP-IDF's default L2 cache.** This test app sets
 `CONFIG_CACHE_L2_CACHE_256KB`; ESP-IDF's default is 128 KB, which leaves
 384 KiB of internal RAM for the heap instead of 256 KiB, and this option draws
-its tiles there. The same two firmwares built with 128 KB of L2 cache, Tab5,
-ROTATE_270, v5.5.5:
+its tiles there. The same firmwares built with 128 KB of L2 cache, v5.5.5,
+two runs each:
 
-| | L2 cache | frames/s | ms per frame (worst) |
+| 128 KB of L2 cache | the adapter today: `DEFAULT_MIPI_DSI` (TRIPLE_PARTIAL) | this PR, `ROTATE_IN_DRAW`, two cores | |
 |---|---|---|---|
-| the adapter today: `DEFAULT_MIPI_DSI` (TRIPLE_PARTIAL) | 128 KB | 11.2 | 81.6 (103) |
-| this PR, `ROTATE_IN_DRAW`, two cores | 128 KB | **17.9 - 18.0** | **53.3 - 54.4 (55)** |
+| Waveshare 7B, 90 | 15.5 - 15.6/s, 63.5 - 64.1 ms (65) | **23.3 - 23.4/s, 42.4 - 42.6 ms (43.5)** | **+50%** |
+| Waveshare 7B, 180 | 16.7/s, 59.4 - 59.7 ms (61) | **25.9 - 26.1/s, 38.2 ms (38.8)** | **+56%** |
+| M5Stack Tab5, 270 | 11.2/s, 81.6 ms (103) | **17.9 - 18.0/s, 53.3 - 54.4 ms (55)** | **+61%** |
 
-The adapter's path does not move with the cache size; this option is 40%
-faster than with 256 KB, so at ESP-IDF's default it gives **61% more frames a
-second** than the adapter today. All tests pass in both.
+The adapter's path does not move with the cache size on either board; this
+option is 35-45% faster than with 256 KB, so at ESP-IDF's default it gives
+**50-61% more frames a second** than the adapter today. All tests pass in
+every run.
 
 An earlier version of this PR used two frame buffers and was *slower* at 90
 degrees, 66.1 ms: it drew a frame in 58.4 ms and then waited for the panel's
@@ -207,7 +209,7 @@ No PPA hang was seen in any of these runs (IDF 5.5.5 and
 5.5.6, both without the driver fix): blocks that would hang are cut in
 software before they are sent, with no IDF patch.
 
-- Hardware: `test_apps/lvgl9` run on a Waveshare 7B at 90 and 180 degrees and on an M5Stack Tab5 at 270, with and without this option, ESP-IDF v5.5.5 (and v6.1 and a 128 KB L2 cache on the Tab5), all tests passing (above).
+- Hardware: `test_apps/lvgl9` run on a Waveshare 7B at 90 and 180 degrees and on an M5Stack Tab5 at 270, with and without this option, ESP-IDF v5.5.5 (and v6.1 on the Tab5), with the test app's 256 KB L2 cache and with ESP-IDF's default 128 KB, all tests passing (above).
 
 ---
 
@@ -218,5 +220,5 @@ software before they are sent, with no IDF patch.
 - [x] README and README_CN
 - [x] Formatted with the repository's astyle rules, codespell clean
 - [x] Draw unit measured on hardware (Waveshare 7B and M5Stack Tab5, through ESPHome)
-- [x] Adapter integration run on hardware (Waveshare 7B at 90 and 180, M5Stack Tab5 at 270): all tests pass; 8-9% faster than TRIPLE_PARTIAL at 90, 7-8% at 180, 15% more frames/s on the Tab5 (61% with ESP-IDF's default 128 KB L2 cache), same frame buffers
+- [x] Adapter integration run on hardware (Waveshare 7B at 90 and 180, M5Stack Tab5 at 270): all tests pass; 8-9% faster than TRIPLE_PARTIAL at 90, 7-8% at 180, 15% more frames/s on the Tab5; 50-61% more on both boards with ESP-IDF's default 128 KB L2 cache; same frame buffers
 - [x] Contributor agreement signed
