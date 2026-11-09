@@ -151,7 +151,7 @@ by LVGL as a picture and turned once by the PPA (`lvgl_camera_display`):
 | lvgl_ortho, frame copied to the panel (ESPHome's `mipi_dsi`) | 12.8 /s | |
 | lvgl_ortho, the panel's own frame buffers | **15.6 /s** | **20.8 /s** |
 | the same, the turn split between the PPA and both cores (`split:`) | 14.0 /s | |
-| the panel's own frame buffers, ESPHome's main loop kept awake | | **27.8 /s** (LVGL's own counter 26-28) |
+| the panel's own frame buffers, ESPHome's main loop kept awake (`fast_loop: true`) | **20.4 /s** | **27.8 /s** (LVGL's own counter 26-28) |
 
 On the Tab5 the copy to the panel is 14.4 ms a frame, which is the whole
 difference between the second and third rows. The sensor at 30 frames a
@@ -187,7 +187,8 @@ esphome:
 
 Measured with `esp_video_camera` and `lvgl_camera_display` from
 youkorr/esphome (branch `esp_video_camera-lvgl`), OV5647 at 1280x960, ESPHome
-2026.12.0-dev. The Tab5 has not been run this way.
+2026.12.0-dev. The Tab5 the same way, `fast_loop: true`, its SC2356 at
+1280x720: **20.4 screens/s** against the 15.6 before, about 30 % more.
 
 **What is left is the PPA, and the camera's own memory traffic slows it.**
 With the loop awake the frame is 35.6 ms (28.1 screens/s) and the CPU spends
@@ -199,6 +200,12 @@ the ISP writes about 110 MB/s into the PSRAM the PPA reads and writes and the
 panel scans out of. That is the likely cause and it is not measured apart.
 Lowering it means a smaller sensor format; one of exactly 1024x600 would also
 stop at the sensor's 30 frames a second.
+
+On the Tab5 it is the same shape: 49 ms a frame, **44.3 ms of it waiting for
+the PPA** to turn the 1280x720 picture a quarter turn, one picture of 1800 KiB
+a screen. That is about 21 Mpx/s, faster than the 15-18 a quarter turn reads
+in tiles: one whole picture is one transaction. The SC2356 sends 30 frames a
+second, so there too the turn is the limit, not the sensor.
 
 **Tested on a PC at the sensors' real sizes.** `test/` has the three boards
 as cases, with their sensor's frame, their panel and their turn: the screen
