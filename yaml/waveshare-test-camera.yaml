@@ -64,13 +64,19 @@ external_components:
     components: [lvgl, mipi_dsi]
   - source: github://youkorr/ppa-alternative-@main
     components: [lvgl_ortho]
+    refresh: 0s   # ESPHome keeps a git source for a day otherwise
   - source:
       type: git
       url: https://github.com/youkorr/esphome_esp-video
       # main: its esp_video starts the camera on ESP-IDF 5.5.6 on a P4 below v3.0
       ref: main
     components: [esp_video, esp_cam_sensor, lvgl_camera_display]
+    refresh: 0s
 
+# ESPHome's defaults leave ESP-IDF's own logs at ERROR, so the ISP prints
+# nothing a frame. Keep it so when comparing: `esp-idf: DEBUG` under logs: makes
+# the ISP log every frame, and each line wakes ESPHome's main loop, which is
+# fast_loop's job -- the two together measure neither.
 logger:
 
 wifi:
@@ -135,6 +141,11 @@ lvgl_camera_display:
   camera_id: ws_cam
   canvas_id: camera_canvas
   update_interval: 16ms
+  # Keeps ESPHome's main loop awake while the camera is shown. Without it the
+  # loop sleeps up to 16 ms between passes and a ready frame waits: measured
+  # here, 20 frames/s at WARN against 25 when the ISP's DEBUG lines happened
+  # to wake it. false to see the difference.
+  fast_loop: true
   # Left out so LVGL draws each frame as a picture, which split shares
   # between the PPA and the CPU. Put back to send frames into lvgl_ortho's
   # video window instead: the PPA alone (15 frames/s on the Tab5 at 1280x720).
