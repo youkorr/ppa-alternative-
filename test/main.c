@@ -1427,6 +1427,26 @@ static void check_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int3
                 g_failures++;
                 printf("  FAIL  ...and the frame did not take its fast path\n");
             }
+            /* The turned bytes the picture accounts for: the part of the
+             * frame on the screen, turned once -- what the board's report
+             * divides by the screens shown to see a frame drawn twice. */
+            const int32_t uw = swap ? nh : nw, uh = swap ? nw : nh;
+            const uint64_t on_screen = (uint64_t)LV_MIN(cw, uw) * (uint64_t)LV_MIN(ch, uh) * 2;
+            const uint64_t want_bytes = native ? 0 : on_screen;
+            g_cases++;
+            if(st->bytes_turned_images == want_bytes && (native || st->images_turned == 1) &&
+               st->bytes_turned_images + st->bytes_read_back <= st->bytes_turned) {
+                printf("  ok    %s: the picture is %llu of the %llu bytes turned, read-back %llu\n", what,
+                       (unsigned long long)st->bytes_turned_images, (unsigned long long)st->bytes_turned,
+                       (unsigned long long)st->bytes_read_back);
+            }
+            else {
+                g_failures++;
+                printf("  FAIL  %s: the picture counted %llu bytes in %u turns, want %llu once "
+                       "(%llu turned, %llu read back)\n", what, (unsigned long long)st->bytes_turned_images,
+                       st->images_turned, (unsigned long long)want_bytes, (unsigned long long)st->bytes_turned,
+                       (unsigned long long)st->bytes_read_back);
+            }
         }
         drop_screen(s);
     }

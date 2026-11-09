@@ -101,6 +101,10 @@ typedef struct {
     uint32_t split_share;      /**< the turner's share of the last split, in permille */
     int32_t split_cut;         /**< the last split's first native row after the turner's band */
     int32_t split_cut2;        /**< and the first row of this core's band (split_cut when no other core helped) */
+    uint64_t bytes_turned_images; /**< of bytes_turned, pictures turned in one pass: a camera frame drawn by
+                                       LVGL is here, once per frame shown when nothing draws it twice */
+    uint64_t bytes_read_back;  /**< of bytes_turned, what was under a tile, turned back into it before
+                                    the tile was drawn; the rest of bytes_turned is tiles going out */
 } lv_draw_ortho_stats_t;
 
 /** Called with a straight (unturned) copy so a platform can hand it to DMA.

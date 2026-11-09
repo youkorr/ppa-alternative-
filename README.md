@@ -251,7 +251,19 @@ rows that changed, and touches turned back to the screen's coordinates.
   youkorr/lvgl_9.5 is, and is refused otherwise.
 
 Every ten seconds the log says how much was turned, how much of it the PPA
-did, how often the CPU waited for it, and how many tiles the second core drew.
+did, how often the CPU waited for it, and how many tiles the second core drew,
+then what the turned bytes were:
+
+```
+  turned 23040 KiB/s, 100% of it by the PPA, the CPU waited 38.4 times/s for it
+    of it: pictures 22800 KiB/s (1.00 a screen, 1200 KiB each), tiles out 120 KiB/s, read back under tiles 120 KiB/s
+```
+
+A picture is a camera frame or a wallpaper drawn by LVGL. More than one a
+screen, or more KiB each than the part of it on the glass (1200 KiB for a
+1024x600 screen in RGB565), is the same frame drawn twice; read-back is what
+lay under tiles of a part of the screen drawn again. (The figures above are
+an example of the shape, not a measurement.)
 
 ## Testing it on the three boards
 
@@ -403,6 +415,20 @@ limit, and 16 % on the Waveshare at 180 (57.0 to 47.7 ms), where drawing is.
 It costs the second core's time and a 12 KiB stack, so it is off by default:
 compare `ortho` and `ortho_2cores` with `lvgl_bench` and keep the faster.
 
+**A pair is two tiles of one redraw**, so the second core paints only where a
+redraw needs more than one tile. On a whole screen redrawn it gets half of
+them: the boards' logs during `lvgl_bench` read `960 of 1920 tiles painted on
+the second core` (Tab5) and the like. Over a camera it gets **none**, and that
+is expected rather than a fault: the frame is a picture, turned in one PPA
+pass without tiles (`split: true` is what puts a second core on it), and what
+is left each frame is a tile or two -- the scroll bars a canvas bigger than
+the screen draws over it, a label -- each a redraw of its own. A night of the
+OV5647 on the Waveshare read `0 of 345 tiles`, about 1.8 tiles a screen. The
+PC tests draw a canvas bigger than its screen and find the same: a few KiB
+of tiles a frame, which go when the screen's scroll bars are turned off
+(`scrollbar_mode: "OFF"` on the canvas's parent, which also takes the bars
+off the picture).
+
 ### A big turn split
 
 A quarter turn is the slowest thing the PPA does, about 15 Mpx/s on a Tab5,
@@ -533,7 +559,7 @@ quote.
 ```
 git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 450 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 474 cases, and the ESPHome component at four angles
 build/ortho_test --ppa             # the PPA's cases alone
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case
