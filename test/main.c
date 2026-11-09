@@ -485,6 +485,77 @@ static void check_scene(const char * scene, int32_t nw, int32_t nh, lv_color_for
     free(want);
 }
 
+/* A font whose engine is not safe on two cores at once, as ESPHome's is not:
+ * esphome::font::Font keeps the last glyph it looked up in two plain members,
+ * so a lookup on one core can hand the other core the wrong glyph, whose
+ * bitmap is then written into a buffer sized for another -- on a Tab5, a
+ * crash minutes into a moving screen with a large clock. This one counts the
+ * cores inside it at once, and stays inside long enough to be met. */
+#if LV_USE_OS != LV_OS_NONE
+#include <stdatomic.h>
+#include <unistd.h>
+static lv_font_t g_spy_font;
+static atomic_int g_spy_inside, g_spy_most, g_spy_calls;
+static void spy_enter(void)
+{
+    const int now = atomic_fetch_add(&g_spy_inside, 1) + 1;
+    int most = atomic_load(&g_spy_most);
+    while(now > most && !atomic_compare_exchange_weak(&g_spy_most, &most, now)) {}
+    atomic_fetch_add(&g_spy_calls, 1);
+    usleep(50);
+}
+static bool spy_glyph_dsc(const lv_font_t * font, lv_font_glyph_dsc_t * dsc, uint32_t letter, uint32_t next)
+{
+    spy_enter();
+    const bool r = lv_font_montserrat_28.get_glyph_dsc(font, dsc, letter, next);
+    atomic_fetch_sub(&g_spy_inside, 1);
+    return r;
+}
+static const void * spy_glyph_bitmap(lv_font_glyph_dsc_t * dsc, lv_draw_buf_t * buf)
+{
+    spy_enter();
+    const void * r = lv_font_montserrat_28.get_glyph_bitmap(dsc, buf);
+    atomic_fetch_sub(&g_spy_inside, 1);
+    return r;
+}
+static void scene_text(lv_obj_t * scr)
+{
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x102030), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_t * l = lv_label_create(scr);
+    lv_obj_set_width(l, lv_pct(100));
+    lv_obj_set_style_text_font(l, &g_spy_font, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(0xffffff), 0);
+    lv_label_set_text(l, "18:18 lundi 9 novembre 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz "
+                      "18:18 lundi 9 novembre 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz "
+                      "18:18 lundi 9 novembre 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz "
+                      "18:18 lundi 9 novembre 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz");
+}
+
+static void check_font_one_core(void)
+{
+    g_spy_font = lv_font_montserrat_28;
+    g_spy_font.get_glyph_dsc = spy_glyph_dsc;
+    g_spy_font.get_glyph_bitmap = spy_glyph_bitmap;
+    /* The panel of a Tab5 turned into landscape, so pairs of tiles both cut
+     * through the text. */
+    lv_draw_ortho_set_tile_width(256);
+    atomic_store(&g_spy_most, 0);
+    atomic_store(&g_spy_calls, 0);
+    check_scene("text", 720, 1280, LV_COLOR_FORMAT_RGB565, LV_DISPLAY_ROTATION_270, scene_text);
+    lv_draw_ortho_set_tile_width(0);
+    g_cases++;
+    const int most = atomic_load(&g_spy_most), calls = atomic_load(&g_spy_calls);
+    if(most == 1 && calls > 0)
+        printf("  ok    a font is never asked for a glyph by both cores at once (%d calls)\n", calls);
+    else {
+        g_failures++;
+        printf("  FAIL  a font was asked for glyphs by %d cores at once (%d calls): ESPHome's would hand out the "
+               "wrong glyph\n", most, calls);
+    }
+}
+#endif
+
 /* The same scenes with the PPA turning the tiles (lv_draw_ortho_ppa.c, on
  * the fake PPA). The fake runs a non-blocking transaction only when time is
  * let pass or a blocking one follows, so a wait lv_draw_ortho forgets leaves
@@ -2183,6 +2254,10 @@ int main(int argc, char ** argv)
     check_camera(400, 640, LV_DISPLAY_ROTATION_90, 322, 182);
     check_camera(512, 300, LV_DISPLAY_ROTATION_180, 640, 480);
     check_camera(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
+
+#if LV_USE_OS != LV_OS_NONE
+    if(g_two_cores) check_font_one_core();
+#endif
 
     /* Last: after it the PPA is stuck, as it would stay on a board. */
     check_ppa_stall(320, 480, LV_DISPLAY_ROTATION_270);

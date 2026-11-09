@@ -453,7 +453,14 @@ Two renderers at once is what LVGL itself does with
 `LV_DRAW_SW_DRAW_UNIT_CNT > 1`, and it is safe for the same reason: the state
 they share (the circle cache of rounded corners, the image decoders) is
 behind LVGL's mutexes — which are real only with an OS. With `LV_OS_NONE`
-`cores: 2` is refused. Tiles go in pairs, four of them with a PPA so a pair is
+`cores: 2` is refused. **A font is not behind those mutexes**, and ESPHome's
+is not safe on two cores: `esphome::font::Font` keeps the last glyph it
+looked up in two plain members, so a lookup on one core can hand the other
+the wrong glyph, written into a buffer sized for another. On a Tab5 that was
+a crash a few minutes into a screen with a large clock under moving lights.
+So when both tiles of a pair draw text, the second is drawn after the first
+on the same core; a test font that counts the cores inside it at once holds
+this to one. Tiles go in pairs, four of them with a PPA so a pair is
 drawn while the last pair is turned; where internal RAM has no room for two
 more, the two there are cut in half (no extra RAM, about a quarter more
 drawing, still faster):
