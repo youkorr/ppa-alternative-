@@ -62,6 +62,11 @@ class LvglOrtho : public Component {
   // After lvgl, which builds the display in its own setup().
   float get_setup_priority() const override { return setup_priority::LATE; }
 
+  // Called from other components: youkorr/esphome_esp-video's
+  // lvgl_camera_display (ortho_id:), and possibly Portall's canvas mode one
+  // day. Keep show_video(), clear_video() and is_ready() as they are --
+  // same signatures, callable from the loop -- or change their callers too.
+
   /// Show one video frame (RGB565, `width` x `height`) in `obj`'s place,
   /// turned once by the PPA. The frame is centred in the object the way an
   /// lv_image centres its source; whatever does not fit is cropped. Call it
