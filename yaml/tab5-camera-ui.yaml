@@ -97,6 +97,18 @@ time:
           - script.execute: update_clock
 
 script:
+  # The back button over the video goes away after a few seconds, as a video
+  # player's controls do. Shown, it costs every frame: LVGL redraws it over
+  # each new picture, reading back what is under it -- on a Tab5, 17.9 frames
+  # a second against 20.3 for the camera alone (test-camer-tab5-ppa-
+  # alternative.yaml, the same components). A touch on the picture brings it
+  # back.
+  - id: hide_back_button
+    mode: restart
+    then:
+      - delay: 4s
+      - lvgl.widget.hide: back_button
+
   # The clock, the date and the wallpaper's colours. Run once a minute: a
   # label rewritten every second would redraw it every second for nothing.
   - id: update_clock
@@ -261,6 +273,8 @@ lvgl:
             on_click:
               - lvgl_camera_display.start: camera_display
               - lvgl.page.show: camera_page
+              - lvgl.widget.show: back_button
+              - script.execute: hide_back_button
 
     # ---- Camera --------------------------------------------------------------
     - id: camera_page
@@ -273,7 +287,12 @@ lvgl:
             y: 0
             width: 1280
             height: 720
-        # Small, so the frames drawn under it each time cost little.
+            # A touch on the picture shows the back button again.
+            clickable: true
+            on_press:
+              - lvgl.widget.show: back_button
+              - script.execute: hide_back_button
+        # Small, and hidden after a few seconds (hide_back_button).
         - button:
             id: back_button
             x: 28
@@ -379,16 +398,19 @@ display:
     color_order: rgb
 
 # The glass's own coordinates (720x1280 portrait): lvgl_ortho turns each
-# touch into the landscape screen, as it turns the picture. Read every 8 ms
-# with no interrupt, as in the household's working Tab5 configurations
-# (esphome_esp-video's tab5-portall-*.yaml). No touch came through on the
-# first two flashes of this file, and the cause was lvgl_ortho turning each
-# touch a second time after LVGL had: fixed there, not here.
+# touch into the landscape screen, as it turns the picture. Read with no
+# interrupt, as in the household's working Tab5 configurations (esphome_esp-
+# video's tab5-portall-*.yaml), but every 25 ms rather than 8: LVGL reads a
+# touch only about every 33 ms, and each read is an I2C transfer on the
+# camera sensor's bus, from the same main loop that takes the camera's frames.
+# No touch came through on the first two flashes of this file, and the cause
+# was lvgl_ortho turning each touch a second time after LVGL had: fixed there,
+# not here.
 touchscreen:
   - platform: gt911
     id: touch_screen
     i2c_id: bsp_bus
-    update_interval: 8ms
+    update_interval: 25ms
     reset_pin:
       pi4ioe5v6408: pi4ioe1
       number: 5
