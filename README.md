@@ -189,6 +189,17 @@ Measured with `esp_video_camera` and `lvgl_camera_display` from
 youkorr/esphome (branch `esp_video_camera-lvgl`), OV5647 at 1280x960, ESPHome
 2026.12.0-dev. The Tab5 has not been run this way.
 
+**What is left is the PPA, and the camera's own memory traffic slows it.**
+With the loop awake the frame is 35.6 ms (28.1 screens/s) and the CPU spends
+**31.7 ms of it waiting for the PPA** to turn the picture: 1024x600 in 31.7 ms
+is about 19 Mpx/s, half the 41 Mpx/s a 180-degree turn of the whole screen
+measured on its own on this board. The OV5647's 1280x960 format runs at 45
+frames a second whatever `max_framerate:` says (30 and 45 both read 28), so
+the ISP writes about 110 MB/s into the PSRAM the PPA reads and writes and the
+panel scans out of. That is the likely cause and it is not measured apart.
+Lowering it means a smaller sensor format; one of exactly 1024x600 would also
+stop at the sensor's 30 frames a second.
+
 **Tested on a PC at the sensors' real sizes.** `test/` has the three boards
 as cases, with their sensor's frame, their panel and their turn: the screen
 with the frame written by the (fake) PPA must be, pixel for pixel, the screen
