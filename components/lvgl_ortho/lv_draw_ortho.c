@@ -824,7 +824,9 @@ static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
  * shared caches (the circle cache of rounded corners, the image decoders and
  * their cache) are behind LVGL's own mutexes -- which are real only with an
  * OS. With LV_OS_NONE they compile to nothing, so then there is no second
- * core. youkorr/lvgl_9.5 runs LV_OS_FREERTOS on an ESP32. */
+ * core. youkorr/lvgl_9.5 runs LV_OS_FREERTOS on an ESP32. A font is not
+ * behind those mutexes, and ESPHome's is not safe on two cores: text is drawn
+ * on one core at a time (draws_text). */
 #if defined(LV_DRAW_ORTHO_SIM_CORES)
 #define ORTHO_HELPER 1   /* the P4 simulation: run where it is joined, counted apart */
 #elif LV_USE_OS == LV_OS_FREERTOS && defined(ESP_PLATFORM)
@@ -1000,12 +1002,29 @@ static void helper_paint(tile_work_t * w)
     helper_run(paint_tile_job, w);
 }
 
+/* Whether any job draws text in `rect`. A font engine need not be safe on
+ * two cores at once, and ESPHome's is not: esphome::font::Font keeps the last
+ * glyph it looked up in two plain members, so a lookup on one core can hand
+ * the other the wrong glyph, whose bitmap is then written into a buffer sized
+ * for another one. On a Tab5 that was a crash a few minutes into a screen with
+ * a large clock under moving lights. LVGL's own locks do not reach a font. */
+static bool draws_text(const job_t * jobs, int32_t n, const lv_area_t * rect)
+{
+    for(int32_t i = 0; i < n; i++) {
+        const lv_draw_task_type_t type = jobs[i].t->type;
+        if((type == LV_DRAW_DSC_TYPE_LABEL || type == LV_DRAW_DSC_TYPE_LETTER) && job_touches(&jobs[i], rect))
+            return true;
+    }
+    return false;
+}
+
 /* Two tiles at once: the second painted by the other core while this one
  * reads back and paints the first. Its read-back goes first so the other
  * core starts as early as it can; the first's read-back then runs while the
  * other core paints. Both are turned out after the join, in order. With four
  * tiles the pairs alternate, so a pair is painted while the PPA turns out
- * the last one. */
+ * the last one. When both tiles draw text, the second is painted here after
+ * the first instead: text is drawn by one core at a time (draws_text). */
 static void draw_pair(ortho_unit_t * u, const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t rect[2])
 {
     int32_t base = 0;
@@ -1015,15 +1034,19 @@ static void draw_pair(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
     }
     tile_work_t w[2];
     bool ok[2];
+    const bool helped = !(draws_text(jobs, n, &rect[0]) && draws_text(jobs, n, &rect[1]));
     wait_ticket(&u->ticket[base + 1]);
     ok[1] = prep_tile(jobs, n, o, &rect[1], u->tile[base + 1], u->tile_bytes, &w[1]);
-    if(ok[1]) helper_paint(&w[1]);
+    if(ok[1] && helped) helper_paint(&w[1]);
     wait_ticket(&u->ticket[base]);
     ok[0] = prep_tile(jobs, n, o, &rect[0], u->tile[base], u->tile_bytes, &w[0]);
     if(ok[0]) paint_tile(&w[0]);
     if(ok[1]) {
-        helper_join();
-        g_stats.tiles_other_core++;
+        if(helped) {
+            helper_join();
+            g_stats.tiles_other_core++;
+        }
+        else paint_tile(&w[1]);
     }
     if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);
     if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);

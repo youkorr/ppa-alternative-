@@ -111,15 +111,22 @@ CORES_MUTANTS = {
     "the other core's tile reused mid-turn": ("    wait_ticket(&u->ticket[base + 1]);\n", "", []),
     # The other core's tile turned out before it has finished painting it.
     "turned out before the other core finished": (
-        "    if(ok[1]) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n"
+        "    if(ok[1]) {\n        if(helped) {\n            helper_join();\n            g_stats.tiles_other_core++;\n        }\n"
+        "        else paint_tile(&w[1]);\n    }\n"
         "    if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);\n    if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);\n",
+        "    if(ok[1] && !helped) paint_tile(&w[1]);\n"
         "    if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);\n    if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);\n"
-        "    if(ok[1]) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n", []),
+        "    if(ok[1] && helped) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n", []),
     # Tiles cut from one block all at its start: the cores paint over each other.
     "tiles cut from a block overlapping": (
         "        u->tile[j] = j < want ? tile_aligned(u->tile_alloc[j / per]) + (size_t)(j % per) * bytes : NULL;\n",
         "        u->tile[j] = j < want ? tile_aligned(u->tile_alloc[j / per]) : NULL;\n",
         ["-DLV_DRAW_ORTHO_TEST_TILES=2"]),
+    # Text on both cores at once: a font engine that is not safe there (as
+    # ESPHome's is not) hands out the wrong glyph.
+    "text on both cores at once": (
+        "    const bool helped = !(draws_text(jobs, n, &rect[0]) && draws_text(jobs, n, &rect[1]));",
+        "    const bool helped = true;", []),
     # The pair's first tile drawn into the other core's tile.
     "both cores in one tile": (
         "    ok[0] = prep_tile(jobs, n, o, &rect[0], u->tile[base], u->tile_bytes, &w[0]);",
