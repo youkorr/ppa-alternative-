@@ -27,11 +27,15 @@
  *    finishes. The driver works around it, but up to v5.5.6 -- what ESPHome
  *    builds with -- it sizes that last block before the turn instead of after,
  *    so a sixth of all block sizes hang for ever (fixed on master by 469aa16).
- *    Such a block is cut here into pieces that are safe either way.
+ *    Such a block is cut here into pieces for which v5.5's driver programs
+ *    the PPA exactly as master's does -- in both directions, since a bypass
+ *    given where master would not give it is not known to be harmless -- each
+ *    at least 16 pixels a side: no sliver.
  *  - No wait is unbounded: a transaction that has not finished in
  *    LV_DRAW_ORTHO_PPA_TIMEOUT_MS marks the PPA stuck, and lv_draw_ortho and
  *    the video window go on without it. The driver's own blocking mode waits
- *    with portMAX_DELAY, which is a frozen screen.
+ *    with portMAX_DELAY, which is a frozen screen. What it was stuck on is
+ *    kept: lv_draw_ortho_ppa_describe_stall().
  */
 #ifndef LV_DRAW_ORTHO_PPA_H
 #define LV_DRAW_ORTHO_PPA_H
@@ -67,6 +71,21 @@ esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * op);
  *  until a reset, since nothing public can unstick it. */
 bool lv_draw_ortho_ppa_stuck(void);
 void lv_draw_ortho_ppa_mark_stuck(void);
+
+/** A line of lv_draw_ortho_ppa_describe_stall(). */
+typedef void (*lv_draw_ortho_ppa_line_cb_t)(const char * line, void * user);
+
+/** After a stall, a few lines on what the PPA was stuck on: which engine, the
+ *  transaction that never finished with its whole geometry and the bypass
+ *  each driver would program, those queued behind it, and the last that
+ *  finished. Nothing when the PPA has not stalled. */
+void lv_draw_ortho_ppa_describe_stall(lv_draw_ortho_ppa_line_cb_t line, void * user);
+
+/** How a `w` x `h` input block turned at `rot` is cut before it is sent:
+ *  the number of pieces (1 when it is sent whole) with each piece's x, y, w, h
+ *  in `pieces`, or 0 when it is left to the CPU. For tests. */
+int lv_draw_ortho_ppa_cut(uint32_t w, uint32_t h, lv_display_rotation_t rot, uint32_t bits, uint32_t (*pieces)[4],
+                          int max);
 
 /** Whether the PPA driver of ESP-IDF v5.5.6 and earlier can hang on this
  *  scale-rotate-mirror: `w` x `h` the INPUT block, `rot` LVGL's rotation, `bits`

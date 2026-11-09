@@ -22,7 +22,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
+
+#include <unistd.h>
 
 #include "lvgl_ortho.h"
 
@@ -334,6 +337,36 @@ int main(int argc, char **argv) {
                 g_bad_render);
   expect(g_bad_render == 0, what);
 #endif
+
+  // Last, since a stuck PPA stays stuck: loop() reports a stall once, with
+  // what the PPA was stuck on -- the lines a board's log has to carry.
+  {
+    std::fflush(stdout);
+    FILE *log = std::tmpfile();
+    const int saved = dup(1);
+    dup2(fileno(log), 1);
+    p4fake_stall_next();
+    lv_obj_set_style_bg_color(s.small, lv_color_hex(0x00ffff), 0);
+    lv_refr_now(disp);
+    ortho.loop();
+    ortho.loop();
+    std::fflush(stdout);
+    dup2(saved, 1);
+    close(saved);
+    std::string text;
+    std::rewind(log);
+    for (int c; (c = std::fgetc(log)) != EOF;)
+      text += (char) c;
+    std::fclose(log);
+    std::fputs(text.c_str(), stdout);
+    size_t told = 0;
+    for (size_t at = 0; (at = text.find("The PPA stopped answering", at)) != std::string::npos; at++)
+      told++;
+    std::snprintf(what, sizeof what, "a stalled PPA is reported once (%zu times), with what it was stuck on", told);
+    expect(told == 1 && text.find("silicon v") != std::string::npos &&
+               text.find("engine:") != std::string::npos && text.find("never finished #") != std::string::npos,
+           what);
+  }
 
   std::printf("%d of %d cases passed\n", g_cases - g_fail, g_cases);
   return g_fail ? 1 : 0;

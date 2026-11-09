@@ -379,13 +379,15 @@ display:
     color_order: rgb
 
 # The glass's own coordinates (720x1280 portrait): lvgl_ortho turns each
-# touch into the landscape screen, as it turns the picture.
+# touch into the landscape screen, as it turns the picture. Read every 8 ms
+# with no interrupt, as in the household's working Tab5 configurations
+# (esphome_esp-video's tab5-portall-*.yaml). The first flash of this file
+# took GPIO23 as an interrupt input instead, and no touch came through.
 touchscreen:
   - platform: gt911
     id: touch_screen
     i2c_id: bsp_bus
-    interrupt_pin: GPIO23
-    update_interval: never
+    update_interval: 8ms
     reset_pin:
       pi4ioe5v6408: pi4ioe1
       number: 5
@@ -436,4 +438,13 @@ switch:
     pin:
       pi4ioe5v6408: pi4ioe2
       number: 3
+    restore_mode: ALWAYS_ON
+  # The touch controller's INT line, driven as in test-camer-tab5-ppa-
+  # alternative.yaml and the household's Portall Tab5.
+  - platform: gpio
+    id: touch_int
+    internal: true
+    pin:
+      number: GPIO23
+      inverted: true
     restore_mode: ALWAYS_ON
