@@ -11,11 +11,6 @@ esp32:
   cpu_frequency: 360MHz
   framework:
     type: esp-idf
-    #version: 5.5.5
-    #sdkconfig_options:
-      #CONFIG_LOG_DYNAMIC_LEVEL_CONTROL: "y"
-      #CONFIG_LOG_TAG_LEVEL_IMPL_NONE: "n"
-      #CONFIG_LOG_TAG_LEVEL_IMPL_CACHE_AND_LINKED_LIST: "y"
     advanced:
       enable_idf_experimental_features: true
 
