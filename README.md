@@ -151,7 +151,7 @@ by LVGL as a picture and turned once by the PPA (`lvgl_camera_display`):
 | lvgl_ortho, frame copied to the panel (ESPHome's `mipi_dsi`) | 12.8 /s | |
 | lvgl_ortho, the panel's own frame buffers | **15.6 /s** | **20.8 /s** |
 | the same, the turn split between the PPA and both cores (`split:`) | 14.0 /s | |
-| the panel's own frame buffers, ESPHome's main loop kept awake | | **26.2 /s** (LVGL's own counter 26-28) |
+| the panel's own frame buffers, ESPHome's main loop kept awake | | **27.8 /s** (LVGL's own counter 26-28) |
 
 On the Tab5 the copy to the panel is 14.4 ms a frame, which is the whole
 difference between the second and third rows. The sensor at 30 frames a
@@ -168,8 +168,13 @@ lvgl_ortho turning exactly one picture of 1200 KiB a screen in both: the
 ISP's DEBUG lines, one or two a frame, were what woke the loop (ESPHome's
 logger wakes it for a line from another task). Per frame the work was the
 same, about 35 ms; at WARN about 15 ms more was the loop asleep. Held awake
-with ESPHome's `HighFrequencyLoopRequester`, at WARN, it reads **26.2
-screens/s**. The two lines that do it, in a board's YAML:
+with ESPHome's `HighFrequencyLoopRequester`, at WARN, it reads **27.8
+screens/s**, one picture turned a screen. In the first ten seconds after the
+camera starts the picture is turned 1.8 times a screen and it reads 26.2;
+the second report is back at one, every time so far. `lvgl_camera_display`
+in youkorr/esphome now has `fast_loop: true` for this, holding the loop
+awake only while the display is on; without it, two lines in a board's YAML
+do the same:
 
 ```yaml
 esphome:
