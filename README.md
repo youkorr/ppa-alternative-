@@ -151,12 +151,38 @@ by LVGL as a picture and turned once by the PPA (`lvgl_camera_display`):
 | lvgl_ortho, frame copied to the panel (ESPHome's `mipi_dsi`) | 12.8 /s | |
 | lvgl_ortho, the panel's own frame buffers | **15.6 /s** | **20.8 /s** |
 | the same, the turn split between the PPA and both cores (`split:`) | 14.0 /s | |
+| the panel's own frame buffers, ESPHome's main loop kept awake | | **26.2 /s** (LVGL's own counter 26-28) |
 
 On the Tab5 the copy to the panel is 14.4 ms a frame, which is the whole
 difference between the second and third rows. The sensor at 30 frames a
 second against 20 changed nothing (15.6 against 15.3), so on the Tab5 the
 display is the limit, not the sensor: about half of what the SC2356 sends
 reaches the screen. The Guition's camera has not run with lvgl_ortho.
+
+**On the Waveshare the last 20 % was ESPHome's main loop sleeping.** The
+camera is taken from the main loop (`esp_video_camera` polls its capture
+queue there), and that loop sleeps up to 16 ms between passes unless
+something wakes it, so a frame ready meanwhile waits. The same firmware read
+**25** frames a second with `esp-idf: DEBUG` and **20** at WARN, with
+lvgl_ortho turning exactly one picture of 1200 KiB a screen in both: the
+ISP's DEBUG lines, one or two a frame, were what woke the loop (ESPHome's
+logger wakes it for a line from another task). Per frame the work was the
+same, about 35 ms; at WARN about 15 ms more was the loop asleep. Held awake
+with ESPHome's `HighFrequencyLoopRequester`, at WARN, it reads **26.2
+screens/s**. The two lines that do it, in a board's YAML:
+
+```yaml
+esphome:
+  on_boot:
+    then:
+      - lambda: |-
+          static esphome::HighFrequencyLoopRequester fast_loop;
+          fast_loop.start();
+```
+
+Measured with `esp_video_camera` and `lvgl_camera_display` from
+youkorr/esphome (branch `esp_video_camera-lvgl`), OV5647 at 1280x960, ESPHome
+2026.12.0-dev. The Tab5 has not been run this way.
 
 **Tested on a PC at the sensors' real sizes.** `test/` has the three boards
 as cases, with their sensor's frame, their panel and their turn: the screen
