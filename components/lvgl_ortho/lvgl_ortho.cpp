@@ -10,6 +10,8 @@
 #include <cstring>
 
 #include "esp_cache.h"
+#include "esp_chip_info.h"
+#include "esp_idf_version.h"
 #include "lv_draw_ortho_ppa.h"
 #include "esp_heap_caps.h"
 
@@ -448,8 +450,16 @@ void LvglOrtho::loop() {
   if (this->ppa_on_ && !this->ppa_lost_ && lv_draw_ortho_get_stats()->turner_failed) {
     this->ppa_lost_ = true;
     ESP_LOGE(TAG, "The PPA stopped answering for %d ms: the CPU turns from now on, until a reset. "
-                  "Please report the panel and the screen that was shown",
+                  "Please report the panel and the screen that was shown, with the lines below",
              LV_DRAW_ORTHO_PPA_TIMEOUT_MS);
+    // What it was stuck on, whole: the one thing a board can say and nothing
+    // here can reproduce. The silicon decides the macro-block size the bypass
+    // is judged at (16x16 below v3.0, 32x32 from it).
+    esp_chip_info_t chip;
+    esp_chip_info(&chip);
+    ESP_LOGE(TAG, "  ESP-IDF %s, silicon v%d.%d; stuck on", esp_get_idf_version(), chip.revision / 100,
+             chip.revision % 100);
+    lv_draw_ortho_ppa_describe_stall([](const char *line, void *) { ESP_LOGE(TAG, "  %s", line); }, nullptr);
     lv_obj_invalidate(lv_display_get_screen_active(this->disp_));
   }
   const uint32_t now = millis();

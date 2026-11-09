@@ -41,6 +41,12 @@ MUTANTS = {
     "DIG-734 blocks sent whole": (
         "    if(!cut(0, 0, bw, bh, rot, px * 8, pieces, &n, 0)) return 0;\n",
         "    pieces[n++] = (piece_t) {0, 0, bw, bh};\n"),
+    # Only the hanging direction kept: a bypass v5.5 gives where master would
+    # not is sent, which is not known to be harmless.
+    "a bypass master would not give sent": ("    return ((b ^ (b >> 1)) & 0x5u) != 0;\n",
+                                            "    return (((b >> 1) & ~b) & 0x5u) != 0;\n"),
+    # Cuts anywhere, as before: strips as thin as one pixel.
+    "slivers cut": ("#define SIDE 16\n", "#define SIDE 1\n"),
     # A wait with no bound: a stuck PPA freezes the screen (the driver's own
     # blocking mode). The test would hang, so the run has a timeout.
     "a wait with no bound": ("        else if((idle_us += 10) >= LV_DRAW_ORTHO_PPA_TIMEOUT_MS * 1000u) {",

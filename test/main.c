@@ -555,6 +555,13 @@ static void check_scene_ppa(const char * scene, int32_t nw, int32_t nh, lv_displ
                    g_p4_dig734, st->turner_failed ? ", and the PPA was given up on" : "");
             g_p4_dig734 = 0;
         }
+        /* Nor one v5.5's driver programs otherwise than master's. */
+        if(g_p4_differs) {
+            g_failures++;
+            printf("  FAIL  ...and %d transaction(s) were sent that v5.5's driver bypasses otherwise than master's\n",
+                   g_p4_differs);
+            g_p4_differs = 0;
+        }
         p4fake_run_all();
         drop_screen(nat);
     }
@@ -601,10 +608,88 @@ static void scene_covered(lv_obj_t * scr)
     lv_obj_set_pos(img, 0, 0);
 }
 
+/* Every block size up to 1300 x 1300, at 90 and at 16 and 24 bits, through the
+ * cut lv_draw_ortho_ppa.c sends: the pieces cover the block exactly once, each
+ * is one v5.5's driver programs as master's (p4fake's own test, written from
+ * ppa_srm.c), none cut from it is under 16 pixels a side, and few are left to
+ * the CPU. */
+static void check_ppa_cut(void)
+{
+    for(uint32_t bits = 16; bits <= 24; bits += 8) {
+        long sizes = 0, cut_up = 0, cpu = 0, bad = 0;
+        unsigned long long px = 0, cpu_px = 0;
+        int worst = 0;
+        uint32_t bw = 0, bh = 0;
+        static uint8_t seen[1300 * 1300 / 8 + 1];
+        for(uint32_t w = 1; w <= 1300; w++) {
+            for(uint32_t h = 1; h <= 1300; h++) {
+                uint32_t p[8][4];
+                const int n = lv_draw_ortho_ppa_cut(w, h, LV_DISPLAY_ROTATION_90, bits, p, 8);
+                sizes++;
+                px += (unsigned long long)w * h;
+                if(n == 0) {
+                    cpu++;
+                    cpu_px += (unsigned long long)w * h;
+                    if(!p4fake_bypass_differs(w, h, bits)) bad++;   /* left to the CPU for nothing */
+                    continue;
+                }
+                if(n > 1) cut_up++;
+                if(n > worst) worst = n;
+                /* Cover: every pixel once. Only for cut blocks, sampled to keep it quick. */
+                const bool cover = n > 1 && (w * 7 + h * 13) % 97 == 0;
+                if(cover) memset(seen, 0, (w * h + 7) / 8);
+                unsigned long long area = 0;
+                for(int i = 0; i < n; i++) {
+                    const uint32_t x = p[i][0], y = p[i][1], pw = p[i][2], ph = p[i][3];
+                    area += (unsigned long long)pw * ph;
+                    if(x + pw > w || y + ph > h || pw == 0 || ph == 0) bad++;
+                    else if(p4fake_bypass_differs(pw, ph, bits)) bad++;
+                    /* Thinner than 16 only where the block itself is. */
+                    else if(n > 1 && ((pw < 16 && pw != w) || (ph < 16 && ph != h))) bad++;
+                    if(cover && x + pw <= w && y + ph <= h) {
+                        for(uint32_t yy = y; yy < y + ph; yy++) {
+                            for(uint32_t xx = x; xx < x + pw; xx++) {
+                                const uint32_t k = yy * w + xx;
+                                if(seen[k / 8] & (1u << (k % 8))) bad++;
+                                seen[k / 8] |= (uint8_t)(1u << (k % 8));
+                            }
+                        }
+                    }
+                }
+                if(area != (unsigned long long)w * h) {
+                    if(bad == 0) {
+                        bw = w;
+                        bh = h;
+                    }
+                    bad++;
+                }
+            }
+        }
+        g_cases++;
+        char what[240];
+        snprintf(what, sizeof(what), "PPA cut, every size to 1300x1300 at %u bits: %ld cut up, at most %d pieces, "
+                 "%.2f%% of sizes (%.3f%% of pixels) left to the CPU", (unsigned)bits, cut_up, worst,
+                 100.0 * cpu / sizes, 100.0 * cpu_px / px);
+        if(bad == 0 && worst <= 6 && cpu * 100 < sizes && cut_up > 0) printf("  ok    %s\n", what);
+        else {
+            g_failures++;
+            printf("  FAIL  %s -- %ld wrong (first %ux%u)\n", what, bad, (unsigned)bw, (unsigned)bh);
+        }
+    }
+}
+
 /* The PPA stops answering in the middle of a screen, as the P4's does in the
  * faults of esp-idf #19023, #19096 and #19108. Nothing may hang: the wait
  * gives up, the CPU turns from then on, the PPA is not used again, and the
  * screen drawn again is right. Run last: a stuck PPA stays stuck. */
+static char g_stall_text[2048];
+static void stall_line(const char * line, void * user)
+{
+    (void)user;
+    const size_t used = strlen(g_stall_text);
+    snprintf(g_stall_text + used, sizeof(g_stall_text) - used, "          %s\n", line);
+}
+
 static void check_ppa_stall(int32_t nw, int32_t nh, lv_display_rotation_t rot)
 {
     const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
@@ -623,6 +708,17 @@ static void check_ppa_stall(int32_t nw, int32_t nh, lv_display_rotation_t rot)
     lv_draw_ortho_reset_stats();
     lv_refr_now(nat->disp);
     const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+    /* What lvgl_ortho logs: the transaction that never finished, whole. */
+    g_stall_text[0] = 0;
+    lv_draw_ortho_ppa_describe_stall(stall_line, NULL);
+    g_cases++;
+    if(strstr(g_stall_text, "turning engine") && strstr(g_stall_text, "never finished #") &&
+       strstr(g_stall_text, "turned 270") && strstr(g_stall_text, "bypass v5.5/master"))
+        printf("  ok    ...and the stall is described, as lvgl_ortho logs it:\n%s", g_stall_text);
+    else {
+        g_failures++;
+        printf("  FAIL  ...and the stall is not described: \"%s\"\n", g_stall_text);
+    }
     diffs_t d;
     const long nd = count_diffs(nat, want, cf, &d);
     g_cases++;
@@ -1974,6 +2070,7 @@ int main(int argc, char ** argv)
         }
     }
     check_fake_ppa_against_the_board();
+    check_ppa_cut();
     {
         g_photo = image_of(97, 61, LV_COLOR_FORMAT_RGB565, 1);
         g_alpha = image_of(80, 50, LV_COLOR_FORMAT_ARGB8888, 2);
