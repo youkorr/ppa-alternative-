@@ -124,6 +124,9 @@ void LvglOrtho::setup() {
                                        LV_DISPLAY_RENDER_MODE_DIRECT);
   }
   lv_display_set_flush_cb(this->disp_, flush_cb_);
+  // Counted against the screens shown: a refresh that draws without being
+  // shown is a picture turned for nothing.
+  lv_display_add_event_cb(this->disp_, render_start_cb_, LV_EVENT_RENDER_START, nullptr);
   lv_display_set_rotation(this->disp_, lv_rotation(this->degrees_));
   lv_display_set_matrix_rotation(this->disp_, true);
   if (this->degrees_ != 0 && !lv_display_get_matrix_rotation(this->disp_)) {
@@ -246,6 +249,12 @@ void LvglOrtho::read_cb_(lv_indev_t *indev, lv_indev_data_t *data) {
       lv_display_rotate_point(g_self->disp_, &data->point);
     return;
   }
+}
+
+void LvglOrtho::render_start_cb_(lv_event_t *e) {
+  (void) e;
+  if (g_self != nullptr)
+    g_self->renders_++;
 }
 
 void LvglOrtho::flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
@@ -468,6 +477,13 @@ void LvglOrtho::loop() {
                  this->presents_ ? (float) st->images_turned / this->presents_ : 0.0f,
                  st->images_turned ? st->bytes_turned_images / 1024.0f / st->images_turned : 0.0f,
                  tiles_out / 1024.0f / s, st->bytes_read_back / 1024.0f / s);
+        // Where a second picture a screen comes from: the same frame turned
+        // again, a picture drawn into one of LVGL's layers and then again
+        // as the layer, or refreshes that are drawn and never shown.
+        if (st->images_turned > 0) {
+          ESP_LOGI(TAG, "    pictures: %.1f/s, %.1f/s the same one again, %.1f/s into a layer; %.1f refreshes/s drawn",
+                   st->images_turned / s, st->images_again / s, st->images_in_layer / s, this->renders_ / s);
+        }
       }
       // Pictures copied out of the cache instead of turned again, and how
       // much it holds: a wallpaper redrawn shows up here.
@@ -490,7 +506,7 @@ void LvglOrtho::loop() {
       lv_draw_ortho_reset_stats();
     }
     this->last_report_ = now;
-    this->video_us_ = this->video_frames_ = this->flush_us_ = this->flush_rows_ = this->presents_ = 0;
+    this->video_us_ = this->video_frames_ = this->flush_us_ = this->flush_rows_ = this->presents_ = this->renders_ = 0;
   }
 }
 

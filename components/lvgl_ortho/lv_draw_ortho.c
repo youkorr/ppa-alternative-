@@ -91,6 +91,7 @@ static lv_draw_ortho_turn_cb_t g_turn;
 static lv_draw_ortho_wait_cb_t g_wait;
 static lv_draw_ortho_fill_cb_t g_fill;
 static uint32_t g_last;
+static const void * g_last_picture;   /* the pixels of the last picture turned, for images_again */
 static bool g_turner_failed;
 
 /* A turner writes by DMA, and its output has to start on a cache line: the
@@ -1637,6 +1638,9 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
     fence();   /* the picture is the application's again when the task is finished */
     g_stats.images_turned++;
     g_stats.bytes_turned_images += g_stats.bytes_turned - before;
+    if(img->data == g_last_picture) g_stats.images_again++;
+    g_last_picture = img->data;
+    if(target->parent) g_stats.images_in_layer++;
     return true;
 }
 

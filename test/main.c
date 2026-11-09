@@ -1447,6 +1447,32 @@ static void check_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int3
                        st->images_turned, (unsigned long long)want_bytes, (unsigned long long)st->bytes_turned,
                        (unsigned long long)st->bytes_read_back);
             }
+            g_cases++;
+            if(st->images_again == 0) {
+                printf("  ok    %s: a new frame is not counted as the same picture again\n", what);
+            }
+            else {
+                g_failures++;
+                printf("  FAIL  %s: a new frame counted as the same picture again (%u)\n", what, st->images_again);
+            }
+        }
+        if(!native) {
+            /* The canvas redrawn with the frame it already shows: the
+             * board's report must call that the same picture again. */
+            lv_draw_ortho_reset_stats();
+            lv_obj_invalidate(g_cam_canvas);
+            lv_refr_now(s->disp);
+            const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+            g_cases++;
+            if(st->images_turned == 1 && st->images_again == 1 && st->images_in_layer == 0) {
+                printf("  ok    camera %dx%d at %s: the same frame drawn again is counted as such\n", (int)cw, (int)ch,
+                       rot_name(rot));
+            }
+            else {
+                g_failures++;
+                printf("  FAIL  camera %dx%d at %s: the same frame drawn again: %u turned, %u again, %u in a layer\n",
+                       (int)cw, (int)ch, rot_name(rot), st->images_turned, st->images_again, st->images_in_layer);
+            }
         }
         drop_screen(s);
     }

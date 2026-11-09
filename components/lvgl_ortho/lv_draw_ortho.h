@@ -105,6 +105,10 @@ typedef struct {
                                        LVGL is here, once per frame shown when nothing draws it twice */
     uint64_t bytes_read_back;  /**< of bytes_turned, what was under a tile, turned back into it before
                                     the tile was drawn; the rest of bytes_turned is tiles going out */
+    uint32_t images_again;     /**< of images_turned, the same picture (same pixels in memory) as the one
+                                    turned just before it: a camera frame drawn a second time */
+    uint32_t images_in_layer;  /**< of images_turned, those turned into a layer of LVGL's (a widget drawn
+                                    apart, then drawn again as a whole) rather than the screen */
 } lv_draw_ortho_stats_t;
 
 /** Called with a straight (unturned) copy so a platform can hand it to DMA.
