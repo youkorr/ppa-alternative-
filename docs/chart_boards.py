@@ -12,6 +12,7 @@ rotation (lvgl_bench's ms per frame, as 1000 / ms). Standard library only:
     python3 docs/chart_boards.py
 """
 import csv
+import math
 import os
 from xml.sax.saxutils import escape
 
@@ -34,12 +35,13 @@ def main():
         r["ppa_alternative"] = float(r["ppa_alternative"])
     groups = [g for g in TITLES if any(r["groupe"] == g for r in rows)]
 
-    W, left, right = 940, 190, 40
+    W, left, right = 940, 250, 40
     top, bar, gap, case_gap, title_h, group_gap = 96, 16, 3, 16, 30, 22
     case_h = 2 * bar + gap
     H = top + sum(title_h + sum(case_h + case_gap for r in rows if r["groupe"] == g) + group_gap
                   for g in groups) + 20
-    vmax = 25.0
+    # Room past the longest bar for its label, in steps of 5 /s.
+    vmax = 5.0 * math.ceil(max(r[k] for r in rows for k in ("reference", "ppa_alternative")) * 1.2 / 5)
     x = lambda v: left + (W - left - right) * v / vmax
 
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
