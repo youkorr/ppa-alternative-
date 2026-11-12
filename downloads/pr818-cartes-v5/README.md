@@ -79,7 +79,7 @@ fuite de 88 octets malgré des mutex équilibrés, tas corrompu, échec Unity et
 petite variation bornée. Retirer le seuil cumulé doit être détecté.
 
 Les images sont compilées pour les cartes et leurs segments de flash sont
-contrôlés. **La validation physique de V5 reste attendue.** Ce kit de test ne
+contrôlés. **Le Waveshare V5 a terminé ses 64 cycles avec zéro perte mémoire et 64 mutex créés/libérés.** Le Tab5 confirme la libération des 88 octets, puis s’arrête au deuxième cycle sur un relevé de 33 128 octets. La suite est le [banc Tab5 V5.1](../pr818-tab5-v5_1/README.md), qui attend la récupération des tâches avant le contrôle mémoire, sans augmenter les seuils. Ce kit de test ne
 publie pas encore les nouveaux correctifs dans la PR818.
 
 ## Provenance et reconstruction
