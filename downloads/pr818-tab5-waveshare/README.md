@@ -1,31 +1,32 @@
-# Kit PR818 V2 — Tab5 et Waveshare 7B
+# PR818 V2 — firmwares individuels Tab5 et Waveshare 7B
 
-[Télécharger le kit V2 complet (2,4 Mo)](https://github.com/youkorr/ppa-alternative-/raw/refs/heads/test/pr818-card-firmwares-20261112/downloads/pr818-tab5-waveshare/pr818-cartes-v2.zip)
+Un blocage antivirus Windows a été signalé lors du téléchargement du ZIP V2.
+La cause et le nom de la détection restent à établir. Ne désactivez pas la protection
+et n’ajoutez pas d’exclusion. Les vérifications d’intégrité ne constituent pas un verdict antivirus.
 
-[Guide de flash et d’analyse en français](GUIDE-V2.md) · [Résultats des premiers essais](RESULTATS-V1.md)
+Les images suivantes sont **identiques à celles du ZIP V2**, publiées séparément
+pour isoler l’élément concerné, sans archive ni scripts du kit à installer :
 
-La V2 utilise le correctif `9db972e7008d4c5adab0fde59dc3b0b1343dac4c` de la PR Espressif #818 :
-verrou limité au dessin du texte, hauteur du cache PPA corrigée et suppression
-unique des threads LVGL FreeRTOS. Les tests logiciels et les compilations passent ;
-les FPS et la stabilité de la V2 restent à mesurer sur vos cartes.
+- [Tab5 d’origine — tab5-after_v2.bin](https://github.com/youkorr/ppa-alternative-/raw/refs/heads/test/pr818-card-firmwares-20261112/downloads/pr818-tab5-waveshare/firmwares/tab5-after_v2.bin)
+- [Waveshare 7B — waveshare-7b-after_v2.bin](https://github.com/youkorr/ppa-alternative-/raw/refs/heads/test/pr818-card-firmwares-20261112/downloads/pr818-tab5-waveshare/firmwares/waveshare-7b-after_v2.bin)
+- [SHA256 des deux images](firmwares/SHA256SUMS.txt)
+- [Notice Windows et flash USB](firmwares/LIRE-MOI-WINDOWS.md)
 
-Les références **before** restent identiques. Vous pouvez réutiliser vos anciens
-journaux before et flasher seulement `after_v2`. Les 16 cycles de démarrage/arrêt
-viennent après les mesures pour préserver leur état initial.
+Si Windows signale aussi un fichier individuel, conservez le blocage et relevez
+le détail dans l’historique de protection. Nous n’avons pas de conclusion de faux positif.
 
-Le ZIP contient les quatre firmwares (before et after_v2 pour chaque carte),
-les sources, les outils USB et d’analyse, ainsi que les résultats structurés du premier kit.
-La scène mobile mesure l’affichage de frames en RAM ; les capteurs caméra ne sont pas utilisés.
+Ces images ciblent les ESP32-P4 v0.x/v1.x jusqu’à v1.99. Flash **USB à 0x0** sur le P4
+avec votre outil habituel. Le C6 n’est pas flashé ; l’application du P4 est remplacée
+pendant le test. Ce ne sont pas des images OTA ESPHome.
 
-Cartes : Tab5 d’origine ILI9881C 720×1280 à 270°, Waveshare ESP32-P4-WIFI6-Touch-LCD-7B
-EK79007 1024×600 à 180°, silicium v0.x/v1.x jusqu’à v1.99.
-Images fusionnées à flasher en USB sur le P4 à **0x0**, avec sauvegarde optionnelle.
+La source V2 est le commit `9db972e7008d4c5adab0fde59dc3b0b1343dac4c` de
+[la PR Espressif #818](https://github.com/espressif/esp-iot-solution/pull/818) : mutex autour
+du texte, hauteur du cache PPA corrigée et suppression unique des threads LVGL.
+Les tests logiciels et compilations passent ; les mesures et la stabilité V2 sur les cartes
+restent à vérifier. Les références before du premier kit sont conservées.
 
-SHA256 du ZIP V2 :
+[Guide complet V2](GUIDE-V2.md) · [Résultats matériels du premier kit](RESULTATS-V1.md)
 
-```text
-abf8e2c1e444f72fb2a9bb4befac0b89aab51ae01298550f72b3b99b21e7f2cf
-```
-
-Le premier kit `pr818-cartes.zip` reste présent pour reproduction historique.
-Ses mesures ont révélé une régression de l’interface et des défauts corrigés par V2.
+Les archives précédentes restent présentes pour reproduction historique. L’alerte Windows
+sur `pr818-cartes-v2.zip` n’est pas encore diagnostiquée. Son SHA256 attendu est
+`abf8e2c1e444f72fb2a9bb4befac0b89aab51ae01298550f72b3b99b21e7f2cf`.
