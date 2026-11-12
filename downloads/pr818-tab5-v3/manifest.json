@@ -1,0 +1,34 @@
+{
+  "board": "tab5",
+  "revision": "after_v3",
+  "commit": "9db972e7008d4c5adab0fde59dc3b0b1343dac4c",
+  "fixtures_commit": "6cf0eed1277032489fd0281890b9a326c93f063f",
+  "rotation": 270,
+  "logical_size": [
+    1280,
+    720
+  ],
+  "flash_size": "16MB",
+  "cpu_mhz": 360,
+  "psram_mhz": 200,
+  "l2_cache_kib": 128,
+  "cache_budget_kib": 4096,
+  "sensor_capture": false,
+  "ppa_workaround": "espressif_bypass",
+  "hardware_validation": "pending",
+  "stops_after_unity_failure": true,
+  "stall_log_independent_of_lvgl_logging": true,
+  "ppa_original_sha256": "e562ff0080f6ccf7402891bd4f4b176a9bf05a296f3a452d1442055df86b6a4f",
+  "ppa_override_sha256": "71d68490843b9153495ed214fe3a03c1f8ad497acf29ea2d5f941ed45771d9c4",
+  "workaround_reference": "components/display/tools/esp_lvgl_adapter/0001-bugfix-ppa-Temporary-fix-for-the-PPA-hang-issue.patch",
+  "esp_idf": "5.5.6",
+  "lvgl": "9.6.0",
+  "flash_offset": "0x0",
+  "firmware_size": 2856224,
+  "firmware_sha256": "db603c01dbe0daeee061c6816ec7f4d1ed4d9bf127fd2c3ff2e5396b0d3b7e24",
+  "flash_settings": {
+    "flash_mode": "dio",
+    "flash_size": "16MB",
+    "flash_freq": "40m"
+  }
+}
