@@ -1,5 +1,7 @@
 # Tab5 V3 — suivi du blocage pendant le test V2
 
+> **Résultat matériel :** V3 atteint `PR818_ABORT` pendant la préparation du cache. Le contournement PPA ne suffit pas. La suite est le [test V4 avec préparation en petits blocs](../pr818-tab5-v4/README.md), à valider sur la carte.
+
 Firmware de test pour le **M5Stack Tab5 d’origine, écran ILI9881C 720×1280**,
 ESP32-P4 v0/v1. Il remplace l’application du P4, sans modifier le C6.
 
