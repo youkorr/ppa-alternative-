@@ -1,6 +1,6 @@
 # PR818 V2 — firmwares individuels Tab5 et Waveshare 7B
 
-> **Suivi matériel :** le Waveshare V5 termine 64 cycles avec zéro perte mémoire et des mutex équilibrés. Le Tab5 V5 s’arrête au contrôle du deuxième cycle ; poursuivre avec le [banc Tab5 V5.1](../pr818-tab5-v5_1/README.md), qui attend la récupération des tâches avant de mesurer le tas. Les seuils restent inchangés et la validation Tab5 V5.1 est attendue.
+> **Suivi matériel :** le Waveshare V5 termine 64 cycles avec zéro perte mémoire. Le Tab5 V5.1 conserve une tâche supplémentaire après 200 ms ; poursuivre avec le [test Tab5 V5.2](../pr818-tab5-v5_2/README.md), qui synchronise l’arrêt des threads avant suppression. Les seuils restent inchangés ; la validation matérielle de V5.2 est attendue.
 
 Un blocage antivirus Windows a été signalé lors du téléchargement du ZIP V2.
 La cause et le nom de la détection restent à établir. Ne désactivez pas la protection

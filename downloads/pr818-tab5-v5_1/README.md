@@ -72,7 +72,7 @@ et débordement du compteur de ticks. Tous les cas passent. Retirer l’attente
 fait échouer le cas de récupération différée.
 
 Le programme Tab5 est compilé et ses segments de flash sont contrôlés.
-**La validation physique V5.1 sur le Tab5 reste attendue.** Le résultat du
+**Le Tab5 V5.1 s’arrête : 7 tâches au lieu de 6 après 200 ms, sans récupération observée pendant cette attente.** La suite est le [test Tab5 V5.2](../pr818-tab5-v5_2/README.md), qui synchronise l’arrêt du thread avant sa suppression. La validation physique de V5.2 reste attendue. Le résultat du
 Waveshare V5 reste conservé. Aucun nouveau correctif n’est publié dans la
 PR818 par ce kit.
 
