@@ -1,0 +1,17 @@
+{
+  "script_sha256": "193b7dfdce799a2248882dc6d06aeed79bf83ebb9d9fb8fe90e72ddfe84da9fb",
+  "results": [
+    {
+      "lvgl": "95",
+      "idempotent": true,
+      "hardlinked_cache_unchanged": true,
+      "unknown_layout_rejected_without_writes": true
+    },
+    {
+      "lvgl": "96",
+      "idempotent": true,
+      "hardlinked_cache_unchanged": true,
+      "unknown_layout_rejected_without_writes": true
+    }
+  ]
+}

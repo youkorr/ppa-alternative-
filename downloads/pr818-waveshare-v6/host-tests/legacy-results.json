@@ -1,0 +1,22 @@
+{
+  "cpu": {
+    "returncode": 0,
+    "passed": 342,
+    "cases": 342,
+    "failures": [],
+    "mutex_lifecycle": [],
+    "archive_sha256": "4ce7b616990b638b69716bc716029d25002cc0177bd1410429f1f010dae367d9"
+  },
+  "pthread": {
+    "returncode": 0,
+    "passed": 353,
+    "cases": 353,
+    "failures": [],
+    "mutex_lifecycle": [
+      "  ok    lv_deinit releases all OS mutexes (7 created, 7 deleted)"
+    ],
+    "archive_sha256": "6c09abdf2b01ace7084550ec9bfffa1babbd6be2dca94e8688933c536013d401"
+  },
+  "source_sha256": "9f7cfe263358ebe796ba74160a2fbf9fee1cf140e11849a9aa17ff2bffa06d8b",
+  "note": "Target displays explicitly select software object layers; reference displays retain default false. pthread lv_init.o has adapter OS_MUTEX_CLEANUP flag; all structure-dependent objects were previously fully rebuilt."
+}

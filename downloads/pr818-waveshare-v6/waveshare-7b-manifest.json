@@ -1,0 +1,52 @@
+{
+  "board": "waveshare-7b",
+  "revision": "transforms_v6",
+  "base_pr_head": "9db972e7008d4c5adab0fde59dc3b0b1343dac4c",
+  "fixtures_commit": "6cf0eed1277032489fd0281890b9a326c93f063f",
+  "flash_size": "32MB",
+  "cpu_mhz": 360,
+  "psram_mhz": 200,
+  "l2_cache_kib": 128,
+  "rotations": [
+    180,
+    90,
+    270,
+    0
+  ],
+  "native_size": [
+    1024,
+    600
+  ],
+  "test_mode": "object_transforms_visual_and_heap_integrity",
+  "cycles": 2,
+  "scenes_per_rotation": 16,
+  "expected_scene_logs": 128,
+  "hardware_validation": "pending",
+  "software_object_transforms": "per-display, explicit opt-in",
+  "thread_shutdown_barrier": true,
+  "os_mutex_cleanup": true,
+  "ppa_cache_prepare_max_bytes": 131072,
+  "sensor_capture": false,
+  "reference_lvgl": "9.6.0",
+  "automatic_hardware_pixel_equality": false,
+  "candidate_patch_sha256": "e120ab5d7d1431a9f373e5b86841ac1cdb88edf66b00424cf735400be3843bc4",
+  "esp_idf": "5.5.6",
+  "lvgl": "9.6.0",
+  "flash_offset": "0x0",
+  "flash_settings": {
+    "flash_mode": "dio",
+    "flash_size": "32MB",
+    "flash_freq": "40m"
+  },
+  "firmware_sha256": "66bf6aeb088ba557bd87688386e7a012546f3d5747275d557bf561821ddee765",
+  "firmware_size": 2500160,
+  "reference_asset_sha256": "a83ce7f0e5488ce64d045e4c3fefb498d482a2f63ccdf6717eb9502ace7ea886",
+  "elf_reference_asset_verified": true,
+  "flash_segments_verified": true,
+  "patched_lvgl_sha256": {
+    "src/core/lv_refr.c": "c6d2c3c6961a80b9ec07d73d9612f3498804fd2b287a1591b0406c246f124d98",
+    "src/display/lv_display.c": "69004bdd54d271785957ea50893edea12b0aa78b4e5c1738e36f066d1395e909",
+    "src/display/lv_display_private.h": "1f700430e3aa30c940bd4ec6672da45f73fcfd9da87844692b2bfcea77e9009a",
+    "include/lvgl/display/lv_display.h": "37211b3588ea5757afa8c4d979890d7801d74e054e030dc9ef3663dd24f7af8a"
+  }
+}

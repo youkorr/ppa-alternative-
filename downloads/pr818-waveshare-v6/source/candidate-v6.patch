@@ -1,0 +1,1294 @@
+diff --git a/components/display/tools/esp_lvgl_adapter/CMakeLists.txt b/components/display/tools/esp_lvgl_adapter/CMakeLists.txt
+index cb960e5..548cebb 100644
+--- a/components/display/tools/esp_lvgl_adapter/CMakeLists.txt
++++ b/components/display/tools/esp_lvgl_adapter/CMakeLists.txt
+@@ -127,45 +127,21 @@ function(esp_lv_adapter_ensure_lvgl_freertos_thread_exit_hook)
+     if(NOT CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW OR NOT lvgl_comp_dir OR lvgl_ver VERSION_LESS "9.0.0")
+         return()
+     endif()
+-    # The patch may remain in a managed component after reconfiguration. Keep
+-    # its behavior conditional so disabling ROTATE_IN_DRAW restores upstream.
++    idf_build_get_property(_adapter_python PYTHON)
++    execute_process(
++        COMMAND "${_adapter_python}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tools/patch_lvgl_thread_shutdown.py"
++                "${lvgl_comp_dir}/src/osal/lv_freertos.c"
++        RESULT_VARIABLE _thread_shutdown_result
++        OUTPUT_VARIABLE _thread_shutdown_status
++        ERROR_VARIABLE _thread_shutdown_error
++        OUTPUT_STRIP_TRAILING_WHITESPACE)
++    if(NOT _thread_shutdown_result EQUAL 0)
++        message(FATAL_ERROR "esp_lvgl_adapter: cannot safely configure LVGL thread ownership: ${_thread_shutdown_error}")
++    endif()
++    # Managed sources may be reused when the option is disabled. Both the
++    # callback-return and delete barriers remain conditional on this flag.
+     target_compile_definitions(${lvgl_comp_lib} PRIVATE ESP_LVGL_ADAPTER_THREAD_OWNER_DELETE=1)
+-    set(_lv_freertos "${lvgl_comp_dir}/src/osal/lv_freertos.c")
+-    if(NOT EXISTS "${_lv_freertos}")
+-        return()
+-    endif()
+-    file(READ "${_lv_freertos}" _content)
+-    string(FIND "${_content}" "esp_lvgl_adapter: owner deletes completed threads" _ready)
+-    if(NOT _ready EQUAL -1)
+-        return()
+-    endif()
+-    # LVGL's SW-unit destructor signals exit and then deletes the thread.
+-    # A callback returning on the other core must not self-delete first:
+-    # vTaskDelete(handle) would then use a freed TCB (observed at lv_deinit).
+-    set(_old [[    pxThread->pvStartRoutine((void *)pxThread->pTaskArg);
+-
+-    vTaskDelete(NULL);]])
+-    set(_new [[    pxThread->pvStartRoutine((void *)pxThread->pTaskArg);
+-
+-#if defined(ESP_PLATFORM) && defined(ESP_LVGL_ADAPTER_THREAD_OWNER_DELETE)
+-    /* esp_lvgl_adapter: owner deletes completed threads. Keep the TCB and
+-     * caps-allocated stack valid until lv_thread_delete() releases them. */
+-    for(;;) {
+-        vTaskSuspend(NULL);
+-    }
+-#else
+-    vTaskDelete(NULL);
+-#endif]])
+-    string(FIND "${_content}" "${_old}" _found)
+-    if(_found EQUAL -1)
+-        # An upstream backend may already have changed its exit ownership.
+-        # Do not rewrite an unrecognized implementation.
+-        message(WARNING "esp_lvgl_adapter: LVGL FreeRTOS thread-return layout not recognized; check completed-thread ownership")
+-        return()
+-    endif()
+-    string(REPLACE "${_old}" "${_new}" _content "${_content}")
+-    file(WRITE "${_lv_freertos}" "${_content}")
+-    message(STATUS "esp_lvgl_adapter: configured LVGL FreeRTOS completed-thread ownership")
++    message(STATUS "esp_lvgl_adapter: LVGL thread shutdown ${_thread_shutdown_status}")
+ endfunction()
+ 
+ if(CONFIG_ESP_LVGL_ADAPTER_ENABLE_FREETYPE)
+@@ -233,6 +209,48 @@ endif()
+ 
+ esp_lv_adapter_ensure_lvgl_freertos_thread_exit_hook()
+ 
++if(CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW AND lvgl_comp_dir AND
++   lvgl_comp_lib AND lvgl_ver VERSION_GREATER_EQUAL "9.0.0")
++    # Screen matrices are signed permutations; object-style transforms can
++    # be general affine matrices which neither ortho nor SW can execute.
++    # Install an explicit, default-off per-display policy. The display manager
++    # opts only its software DOUBLE_DIRECT RGB/DSI displays into bitmap layers.
++    idf_build_get_property(_adapter_python PYTHON)
++    execute_process(
++        COMMAND "${_adapter_python}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/patch_lvgl_object_transforms.py"
++                "${lvgl_comp_dir}"
++        RESULT_VARIABLE _object_transform_result
++        OUTPUT_VARIABLE _object_transform_status
++        ERROR_VARIABLE _object_transform_error
++        OUTPUT_STRIP_TRAILING_WHITESPACE)
++    if(NOT _object_transform_result EQUAL 0)
++        message(FATAL_ERROR "esp_lvgl_adapter: cannot configure object transform layers: ${_object_transform_error}")
++    endif()
++    message(STATUS "esp_lvgl_adapter: LVGL object-transform policy ${_object_transform_status}")
++endif()
++
++if(CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW AND lvgl_comp_dir AND
++   lvgl_comp_lib AND lvgl_ver VERSION_GREATER_EQUAL "9.0.0")
++    # LVGL 9.5/9.6 create a global OS mutex in lv_os_init(), but do not
++    # release it in lv_deinit(). FreeRTOS loses one semaphore per restart.
++    # Keep the inserted code conditional if a managed copy is later reused
++    # with ROTATE_IN_DRAW disabled; recognize an upstream cleanup and skip it.
++    idf_build_get_property(_adapter_python PYTHON)
++    execute_process(
++        COMMAND "${_adapter_python}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/patch_lvgl_os_cleanup.py"
++                "${lvgl_comp_dir}/src/lv_init.c"
++        RESULT_VARIABLE _os_cleanup_result
++        OUTPUT_VARIABLE _os_cleanup_status
++        ERROR_VARIABLE _os_cleanup_error
++        OUTPUT_STRIP_TRAILING_WHITESPACE)
++    if(_os_cleanup_result EQUAL 0)
++        target_compile_definitions(${lvgl_comp_lib} PRIVATE ESP_LVGL_ADAPTER_OS_MUTEX_CLEANUP=1)
++        message(STATUS "esp_lvgl_adapter: LVGL OS cleanup ${_os_cleanup_status}")
++    else()
++        message(WARNING "esp_lvgl_adapter: LVGL OS cleanup was not installed: ${_os_cleanup_error}")
++    endif()
++endif()
++
+ function(esp_lv_adapter_target_compile_definitions target_name visibility)
+     if("${target_name}" STREQUAL "")
+         return()
+diff --git a/components/display/tools/esp_lvgl_adapter/src/display/display_manager.c b/components/display/tools/esp_lvgl_adapter/src/display/display_manager.c
+index be87a1c..f8f21a9 100644
+--- a/components/display/tools/esp_lvgl_adapter/src/display/display_manager.c
++++ b/components/display/tools/esp_lvgl_adapter/src/display/display_manager.c
+@@ -1111,6 +1111,16 @@ static bool display_manager_init_node(esp_lv_adapter_display_node_t *node)
+     cfg->lv_disp = disp;
+ 
+ #if ESP_LV_ADAPTER_ROTATE_IN_DRAW
++    /* Object-style transforms need LVGL's bitmap-layer path: the ortho unit
++     * only handles the display's signed-permutation matrix. Keep this local
++     * to software DOUBLE_DIRECT RGB/DSI displays, including rotation zero;
++     * other displays retain their matrix-capable backend's original path. */
++    if (pub->tear_avoid_mode == ESP_LV_ADAPTER_TEAR_AVOID_MODE_DOUBLE_DIRECT &&
++            pub->profile.mono_layout == ESP_LV_ADAPTER_MONO_LAYOUT_NONE &&
++            (pub->profile.interface == ESP_LV_ADAPTER_PANEL_IF_RGB ||
++             pub->profile.interface == ESP_LV_ADAPTER_PANEL_IF_MIPI_DSI)) {
++        lv_display_set_software_object_transforms(disp, true);
++    }
+     if (draw_rotation != ESP_LV_ADAPTER_ROTATE_0) {
+         display_manager_setup_rotate_in_draw(disp, draw_rotation);
+     }
+diff --git a/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.c b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.c
+index eda651a..ea097c7 100644
+--- a/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.c
++++ b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.c
+@@ -1493,7 +1493,29 @@ static bool cache_fill(cached_t * c, const ortho_t * o, const lv_image_dsc_t * i
+     c->nat = tile_aligned(a);
+     c->bytes = bytes;
+     g_cache_bytes += bytes;
+-    turn_or_cpu(o, c->cf, px, c->nat, (int32_t)row, &room, (uint8_t *)img->data, sstride, up, whole, true);
++    /* A cold flash image can take longer than the PPA's no-progress timeout
++     * as one full-screen transaction. Normal partial refreshes turn smaller
++     * bands, but the cache builder used to submit the whole image at once.
++     * Bound each preparation step to 128 KiB and wait between steps, so a
++     * large image makes observable progress without relaxing stall detection.
++     * Cut in source coordinates to keep consecutive source rows together. */
++    const int32_t max_pixels = (128 * 1024) / px;
++    const int32_t band_width = LV_MIN(lv_area_get_width(up), max_pixels);
++    for (int32_t x = up->x1; x <= up->x2; x += band_width) {
++        const int32_t w = LV_MIN(band_width, up->x2 - x + 1);
++        int32_t band_rows = max_pixels / w;
++        if (band_rows >= 16) {
++            band_rows &= ~15;
++        }
++        for (int32_t y = up->y1; y <= up->y2; y += band_rows) {
++            const lv_area_t band = {x, y, x + w - 1, LV_MIN(y + band_rows - 1, up->y2)};
++            lv_area_t native;
++            ortho_area(o, &band, &native);
++            turn_or_cpu(o, c->cf, px, c->nat, (int32_t)row, &room, (uint8_t *)img->data, sstride,
++                        up, &native, true);
++            fence();
++        }
++    }
+     g_stats.image_cache_builds++;
+     g_stats.image_cache_bytes = (uint32_t)g_cache_bytes;
+     return true;
+diff --git a/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.c b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.c
+index dbbdb90..11fdfda 100644
+--- a/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.c
++++ b/components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.c
+@@ -655,9 +655,11 @@ void lv_draw_ortho_ppa_describe_stall(lv_draw_ortho_ppa_line_cb_t line, void * u
+         return;
+     }
+     const uint8_t want = g_stuck_engine == 2 ? 2 : 0xFF;   /* 0xFF: either turn kind */
+-    char buf[120];
+-    snprintf(buf, sizeof(buf), "the %s engine: %u handed to it, %u finished", g_stuck_engine == 2 ? "fill" : "turning",
+-             (unsigned)g_stuck_queued, (unsigned)g_stuck_done);
++    char buf[180];
++    const uint32_t done_now = g_stuck_engine == 2 ? g_fill_done : g_done;
++    snprintf(buf, sizeof(buf), "the %s engine: %u handed to it, %u finished at the %u ms deadline, %u finished now",
++             g_stuck_engine == 2 ? "fill" : "turning", (unsigned)g_stuck_queued, (unsigned)g_stuck_done,
++             (unsigned)LV_DRAW_ORTHO_PPA_TIMEOUT_MS, (unsigned)done_now);
+     line(buf, user);
+     const uint32_t first = g_trail_n > TRAIL ? g_trail_n - TRAIL : 0;
+     const trail_t * last_done = NULL;
+diff --git a/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/README.md b/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/README.md
+index 828d5fd..4c858e2 100644
+--- a/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/README.md
++++ b/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/README.md
+@@ -27,8 +27,33 @@ checks the additional FIFO margin, reproduces the exact-depth stall, and checks
+ CPU fallback after a timeout. A font callback spy checks concurrent calls;
+ `lv_deinit()` must release cached pixels.
+ 
++The OS-mutex cleanup uses the same patch helper as the IDF CMake integration.
++In the threaded suite, linker wrappers count successful mutex creation/deletion
++in the actual LVGL library. Teardown must balance those counts; removing the
++global-mutex release must fail that check. A recognized upstream OS cleanup is
++left unchanged, and the inserted code is conditional on the adapter's build
++definition so a reused managed component retains upstream behavior when disabled.
++
++`check_freertos_shutdown.py --lvgl /path/to/lvgl` compiles the actual patched
++FreeRTOS delete/callback bodies with a deterministic scheduler model. It forces
++the remote callback to suspend itself after deletion was queued for idle cleanup,
++which can move its TCB out of the termination list. Owner suspension plus a wait
++for remote execution to stop must prevent the orphan. The old deletion path and
++a wait-skipping mutation must fail. Tests cover ordinary/caps-backed deletion,
++the stack-caps hook applied before or after the shutdown hook, disabled guards,
++single/multiple cores, delayed eviction and invalid handles. These tests validate
++the specific lifecycle interleaving; they are not a full FreeRTOS emulator.
++
++The 1280x720 RGB565 cache test simulates a finite 460 ms whole-image transfer
++under the unchanged 250 ms no-progress deadline. Cache preparation must finish
++in operations of at most 128 KiB, keep making progress and match every reference
++pixel at 90/180/270 degrees. This checks transaction sizing and timeout handling,
++not physical PPA timing. A firmware stall report also prints the live completion
++count so a slow operation completing later can be distinguished from one that
++still has not completed.
++
+ `--mutants` temporarily removes each of the font guard, FIFO margin, padded-cache
+-geometry fix and cache cleanup in the **staged test copy** and requires the corresponding regression
++geometry fix, bounded cache preparation, cache cleanup and OS-mutex cleanup in the **staged test copy** and requires the corresponding regression
+ to fail. Repository sources remain unchanged. `--sanitize` enables AddressSanitizer
+ and UndefinedBehaviorSanitizer; fixture-wide leak detection is disabled because
+ the historical scene suite retains test images, while the explicit cache teardown
+diff --git a/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/check_freertos_shutdown.py b/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/check_freertos_shutdown.py
+new file mode 100644
+index 0000000..12b0d23
+--- /dev/null
++++ b/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/check_freertos_shutdown.py
+@@ -0,0 +1,522 @@
++#!/usr/bin/env python3
++"""Compile real LVGL shutdown functions against a deterministic FreeRTOS model.
++
++Only temporary copies of LVGL are patched. The scheduler model reproduces the
++ESP-IDF SMP list race: deleting a remote current task queues it for termination,
++but its final self-suspend can move its TCB onto the suspended list before idle
++reclaims it. A forced interleaving exercises that window without timing or sleeps.
++This verifies the adapter patch and its stack-caps hook, not the FreeRTOS kernel.
++
++Example from the repository:
++    python3 check_freertos_shutdown.py --lvgl /path/to/lvgl
++"""
++from __future__ import annotations
++
++import argparse
++import hashlib
++from pathlib import Path
++import re
++import shutil
++import subprocess
++import tempfile
++import types
++
++
++MODEL = r'''
++#include <setjmp.h>
++#include <stdbool.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++typedef int BaseType_t;
++typedef int lv_result_t;
++enum { pdFALSE = 0, pdTRUE = 1, LV_RESULT_OK = 0, LV_RESULT_INVALID = 1 };
++enum list_state { READY, BLOCKED, SUSPENDED, TERMINATION, FREED };
++typedef struct task {
++    enum list_state list;
++    size_t bytes;
++    unsigned reclaimed;
++} task;
++typedef task * TaskHandle_t;
++typedef struct {
++    void (*pvStartRoutine)(void *);
++    void *pTaskArg;
++    TaskHandle_t xTaskHandle;
++} lv_thread_t;
++
++static task owner, target;
++static TaskHandle_t current[configNUMBER_OF_CORES];
++static lv_thread_t thread;
++static int active_core, remote_core, eviction_after;
++static int yields, core_queries, owner_suspends, self_suspends;
++static int callback_calls, normal_deletes, caps_deletes, queued_deletes;
++static int immediate_deletes, cases;
++static bool callback_pending, in_wrapper;
++static jmp_buf callback_exit;
++
++#define CHECK(cond) do { if(!(cond)) { \
++    fprintf(stderr, "FAIL at line %d: %s\n", __LINE__, #cond); exit(1); \
++} } while(0)
++
++static void prvRunThread(void *);
++static void run_callback(void);
++static void vTaskSuspend(TaskHandle_t);
++static void vTaskDelete(TaskHandle_t);
++static void vTaskDeleteWithCaps(TaskHandle_t);
++static TaskHandle_t xTaskGetCurrentTaskHandle(void);
++static TaskHandle_t xTaskGetCurrentTaskHandleForCore(BaseType_t);
++static void model_yield(void);
++#define taskYIELD() model_yield()
++
++@DELETE@
++
++@WRAPPER@
++
++static bool running(TaskHandle_t handle)
++{
++    for(int i = 0; i < configNUMBER_OF_CORES; i++)
++        if(current[i] == handle) return true;
++    return false;
++}
++
++static void reclaim(TaskHandle_t handle)
++{
++    CHECK(handle->list != FREED);
++    CHECK(handle->reclaimed == 0);
++    handle->list = FREED;
++    handle->reclaimed++;
++    handle->bytes = 0;
++}
++
++static void idle_cleanup(void)
++{
++    if(target.list == TERMINATION && !running(&target)) reclaim(&target);
++}
++
++static TaskHandle_t xTaskGetCurrentTaskHandle(void)
++{
++    CHECK(active_core >= 0 && active_core < configNUMBER_OF_CORES);
++    return current[active_core];
++}
++
++static TaskHandle_t xTaskGetCurrentTaskHandleForCore(BaseType_t core)
++{
++    CHECK(core >= 0 && core < configNUMBER_OF_CORES);
++    core_queries++;
++    return current[core];
++}
++
++static void vTaskSuspend(TaskHandle_t handle)
++{
++    bool self = handle == NULL;
++    if(self) handle = xTaskGetCurrentTaskHandle();
++    CHECK(handle != NULL && handle->list != FREED);
++    /* FreeRTOS removes xStateListItem from its present list before inserting
++     * it into xSuspendedTaskList. This can rescue a queued termination TCB. */
++    handle->list = SUSPENDED;
++    if(self) {
++        self_suspends++;
++        CHECK(in_wrapper);
++        longjmp(callback_exit, 1);
++    }
++    CHECK(handle == &target);
++    owner_suspends++;
++    /* The remote CPU can remain in the callback until a later context switch.
++     * Suspending a task therefore does not immediately clear its current slot. */
++}
++
++static void delete_task(TaskHandle_t handle, bool caps)
++{
++    if(handle == NULL) handle = xTaskGetCurrentTaskHandle();
++    CHECK(handle != NULL && handle->list != FREED);
++    if(caps) caps_deletes++;
++    else normal_deletes++;
++    if(running(handle)) {
++        bool self = handle == xTaskGetCurrentTaskHandle();
++        handle->list = TERMINATION;
++        queued_deletes++;
++        /* Forced race: the other CPU returns from its callback only after
++         * vTaskDelete has queued this still-current TCB for idle cleanup. */
++        if(!self && callback_pending) run_callback();
++        if(self) {
++            current[active_core] = NULL;
++            CHECK(in_wrapper);
++            longjmp(callback_exit, 1);
++        }
++    }
++    else {
++        immediate_deletes++;
++        reclaim(handle);
++    }
++}
++
++static void vTaskDelete(TaskHandle_t handle) { delete_task(handle, false); }
++static void vTaskDeleteWithCaps(TaskHandle_t handle) { delete_task(handle, true); }
++
++static void callback(void *arg)
++{
++    CHECK(arg == &target);
++    callback_calls++;
++}
++
++static void run_callback(void)
++{
++    int previous_core = active_core;
++    CHECK(!in_wrapper);
++    CHECK(current[remote_core] == &target);
++    active_core = remote_core;
++    callback_pending = false;
++    in_wrapper = true;
++    if(setjmp(callback_exit) == 0) {
++        prvRunThread(&thread);
++        CHECK(false); /* A FreeRTOS task wrapper must never return. */
++    }
++    in_wrapper = false;
++    active_core = previous_core;
++}
++
++static void model_yield(void)
++{
++    CHECK(active_core == 0);
++    yields++;
++    CHECK(yields < 100); /* A broken wait must fail instead of hanging. */
++    if(callback_pending) run_callback();
++    if(yields >= eviction_after) {
++        for(int i = 1; i < configNUMBER_OF_CORES; i++)
++            if(current[i] == &target) current[i] = NULL;
++    }
++}
++
++static void reset(int running_core, int delay)
++{
++    owner = (task){ READY, 0, 0 };
++    target = (task){ BLOCKED, 33128, 0 };
++    memset(current, 0, sizeof(current));
++    current[0] = &owner;
++    active_core = 0;
++    remote_core = running_core < 0 ? 0 : running_core;
++    eviction_after = delay;
++    yields = core_queries = owner_suspends = self_suspends = 0;
++    callback_calls = normal_deletes = caps_deletes = queued_deletes = 0;
++    immediate_deletes = 0;
++    callback_pending = in_wrapper = false;
++    thread = (lv_thread_t){ callback, &target, &target };
++    if(running_core >= 0) {
++        current[running_core] = &target;
++        target.list = READY;
++        callback_pending = true;
++    }
++}
++
++static void require_reclaimed(void)
++{
++    idle_cleanup();
++    if(target.list == SUSPENDED && target.bytes == 33128 &&
++       target.reclaimed == 0 && queued_deletes > 0 && self_suspends > 0) {
++        fprintf(stderr, "ORPHAN: 33128 bytes and 1 task remain on suspended list; "
++                "termination list is empty\n");
++        exit(1);
++    }
++    CHECK(target.list == FREED);
++    CHECK(target.reclaimed == 1 && target.bytes == 0);
++    CHECK(owner.reclaimed == 0);
++}
++
++static void require_delete_api(void)
++{
++#if defined(ESP_PLATFORM) && defined(LV_FREERTOS_TASK_STACK_ALLOC_CAPS)
++    CHECK(caps_deletes == 1 && normal_deletes == 0);
++#else
++    CHECK(normal_deletes == 1 && caps_deletes == 0);
++#endif
++}
++
++#if defined(ESP_PLATFORM) && defined(ESP_LVGL_ADAPTER_THREAD_OWNER_DELETE)
++static void test_blocked_and_double_delete(void)
++{
++    reset(-1, 0);
++    CHECK(lv_thread_delete(&thread) == LV_RESULT_OK);
++    require_reclaimed();
++    CHECK(thread.xTaskHandle == NULL);
++    CHECK(owner_suspends == 1 && yields == 0);
++    CHECK(immediate_deletes == 1 && queued_deletes == 0);
++    require_delete_api();
++    CHECK(lv_thread_delete(&thread) == LV_RESULT_INVALID);
++    CHECK(owner_suspends == 1 && target.reclaimed == 1);
++    require_delete_api();
++    cases += 2;
++}
++
++static void test_invalid_handles(void)
++{
++    reset(-1, 0);
++    thread.xTaskHandle = NULL;
++    CHECK(lv_thread_delete(&thread) == LV_RESULT_INVALID);
++    CHECK(thread.xTaskHandle == NULL);
++    CHECK(owner_suspends == 0 && normal_deletes == 0 && caps_deletes == 0);
++    CHECK(target.bytes == 33128 && owner.reclaimed == 0);
++    thread.xTaskHandle = &owner;
++    CHECK(lv_thread_delete(&thread) == LV_RESULT_INVALID);
++    CHECK(thread.xTaskHandle == &owner);
++    CHECK(owner_suspends == 0 && normal_deletes == 0 && caps_deletes == 0);
++    CHECK(owner.list == READY && owner.reclaimed == 0);
++    cases += 2;
++}
++
++static void test_completed_callback(void)
++{
++    int core = configNUMBER_OF_CORES > 1 ? 1 : 0;
++    reset(core, 1);
++    run_callback();
++    CHECK(target.list == SUSPENDED && target.bytes == 33128);
++    CHECK(callback_calls == 1 && self_suspends == 1);
++    CHECK(normal_deletes == 0 && caps_deletes == 0);
++    current[core] = NULL;
++    current[0] = &owner;
++    CHECK(lv_thread_delete(&thread) == LV_RESULT_OK);
++    require_reclaimed();
++    CHECK(thread.xTaskHandle == NULL);
++    require_delete_api();
++    cases++;
++}
++
++static void test_remote(int core, int delay)
++{
++    reset(core, delay);
++    CHECK(lv_thread_delete(&thread) == LV_RESULT_OK);
++    /* Let the remote CPU settle and idle run, even with the wait mutated out.
++     * A suspended orphan remains allocated after arbitrary idle opportunities. */
++    current[core] = NULL;
++    for(int i = 0; i < 10; i++) idle_cleanup();
++    require_reclaimed();
++    CHECK(thread.xTaskHandle == NULL);
++    CHECK(callback_calls == 1 && self_suspends == 1);
++    CHECK(yields >= delay && core_queries > 0);
++    CHECK(owner_suspends == 1 && queued_deletes == 0);
++    CHECK(immediate_deletes == 1);
++    require_delete_api();
++    cases++;
++}
++#else
++static void test_unguarded(void)
++{
++    reset(-1, 0);
++    CHECK(lv_thread_delete(&thread) == LV_RESULT_OK);
++    require_reclaimed();
++    CHECK(thread.xTaskHandle == &target); /* Preserve upstream guard-off API. */
++    CHECK(owner_suspends == 0 && yields == 0);
++    require_delete_api();
++    reset(configNUMBER_OF_CORES > 1 ? 1 : 0, 1);
++    run_callback();
++    for(int i = 0; i < configNUMBER_OF_CORES; i++)
++        if(current[i] == &target) current[i] = NULL;
++    current[0] = &owner;
++    require_reclaimed();
++    CHECK(callback_calls == 1 && self_suspends == 0);
++    CHECK(normal_deletes == 1 && caps_deletes == 0);
++    CHECK(queued_deletes == 1);
++    cases += 2;
++}
++#endif
++
++int main(int argc, char **argv)
++{
++#if defined(ESP_PLATFORM) && defined(ESP_LVGL_ADAPTER_THREAD_OWNER_DELETE)
++#if configNUMBER_OF_CORES > 1
++    if(argc == 2 && strcmp(argv[1], "--race-only") == 0) {
++        test_remote(1, 1);
++        return 0;
++    }
++#else
++    (void)argc; (void)argv;
++#endif
++    test_blocked_and_double_delete();
++    test_invalid_handles();
++    test_completed_callback();
++#if configNUMBER_OF_CORES > 1
++    for(int core = 1; core < configNUMBER_OF_CORES; core++) {
++        test_remote(core, 1);
++        test_remote(core, 5);
++    }
++#endif
++#else
++    (void)argc; (void)argv;
++    test_unguarded();
++#endif
++    printf("PASS: %d scheduler scenarios\n", cases);
++    return 0;
++}
++'''
++
++
++def extract_function(source: str, name: str) -> str:
++    """Extract a function definition, skipping prototypes and comment braces."""
++    match = re.search(
++        rf'^(?:static void|lv_result_t) {name}\([^;]*?\)\s*\{{', source, re.M)
++    if not match:
++        raise AssertionError(f'Function definition missing: {name}')
++    start = match.start()
++    opening = source.index('{', start)
++    token = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\{ | \}', re.S | re.X)
++    depth = 0
++    for item in token.finditer(source, opening):
++        if item.group() == '{':
++            depth += 1
++        elif item.group() == '}':
++            depth -= 1
++            if depth == 0:
++                return source[start:item.end()]
++    raise AssertionError(f'Unterminated function: {name}')
++
++
++def command(args: list[str], *, expect_orphan: bool = False) -> str:
++    result = subprocess.run(args, text=True, capture_output=True, timeout=15)
++    output = result.stdout + result.stderr
++    if expect_orphan:
++        if result.returncode == 0 or 'ORPHAN: 33128 bytes and 1 task' not in output:
++            raise AssertionError(f'Regression was not detected: {args}\n{output}')
++    elif result.returncode:
++        raise AssertionError(f'Command failed ({result.returncode}): {args}\n{output}')
++    return output.strip()
++
++
++def load_patch(helper: Path):
++    # Loading text avoids creating __pycache__ beside the production helper.
++    module = types.ModuleType('shutdown_patch_under_test')
++    exec(compile(helper.read_text(), str(helper), 'exec'), module.__dict__)
++    return module.patch
++
++
++def without_owner_guard(deletion: str) -> str:
++    """Recover the original API call from an already-patched real function."""
++    kept = []
++    depth = 0
++    for line in deletion.splitlines(keepends=True):
++        if depth:
++            if re.match(r'\s*#\s*(?:if|ifdef|ifndef)\b', line):
++                depth += 1
++            elif re.match(r'\s*#\s*endif\b', line):
++                depth -= 1
++        elif re.match(r'\s*#\s*if\b.*ESP_LVGL_ADAPTER_THREAD_OWNER_DELETE', line):
++            depth = 1
++        else:
++            kept.append(line)
++    if depth:
++        raise AssertionError('Unbalanced owner-delete guard')
++    return ''.join(kept)
++
++
++def add_caps(source: str, cmake: str) -> str:
++    """Use the actual production CMake stack-caps deletion hook verbatim."""
++    match = re.search(r'set\(_lv_thread_delete_hook \[\[(.*?)\]\]\)', cmake, re.S)
++    if not match:
++        raise AssertionError('Production CMake stack-caps deletion hook missing')
++    before = '    vTaskDelete(pxThread->xTaskHandle);'
++    if source.count(before) != 1:
++        raise AssertionError('Expected one upstream thread-delete API call')
++    return source.replace(before, match.group(1), 1)
++
++
++def run_suite(lvgl: Path, helper: Path, cmake_path: Path, compiler: str) -> int:
++    source_path = lvgl if lvgl.is_file() else lvgl / 'src/osal/lv_freertos.c'
++    original = source_path.read_text()
++    cmake = cmake_path.read_text()
++    patch = load_patch(helper)
++    count = 0
++    with tempfile.TemporaryDirectory(prefix='lvgl-shutdown-') as directory:
++        temporary = Path(directory)
++        for variant in ('plain', 'caps-before', 'caps-after'):
++            file = temporary / f'{variant}-lv_freertos.c'
++            before_patch = add_caps(original, cmake) if variant == 'caps-before' else original
++            file.write_text(before_patch)
++            patch(file)
++            patched = file.read_text()
++            patch(file)
++            if patched != file.read_text():
++                raise AssertionError('Patch must be byte-for-byte idempotent')
++            if variant == 'caps-after':
++                patched = add_caps(patched, cmake)
++                file.write_text(patched)
++                patch(file)
++                if patched != file.read_text():
++                    raise AssertionError('Patch must preserve a subsequent caps hook')
++            deletion = extract_function(patched, 'lv_thread_delete')
++            wrapper = extract_function(patched, 'prvRunThread')
++            # Compilation consumes actual production bodies, not model copies.
++            source = MODEL.replace('@DELETE@', deletion).replace('@WRAPPER@', wrapper)
++            definitions = ['-DESP_PLATFORM=1', '-DESP_LVGL_ADAPTER_THREAD_OWNER_DELETE=1']
++            if variant != 'plain':
++                definitions += ['-DLV_FREERTOS_TASK_STACK_ALLOC_CAPS=1']
++            configs = [('smp2', definitions, 2), ('smp3', definitions, 3),
++                       ('single-core', definitions, 1),
++                       ('owner-guard-off', [d for d in definitions if 'OWNER_DELETE' not in d], 2),
++                       ('platform-guard-off', [d for d in definitions if 'ESP_PLATFORM' not in d], 2)]
++            for label, flags, cores in configs:
++                c_file = temporary / f'{variant}-{label}.c'
++                executable = c_file.with_suffix('')
++                c_file.write_text(source)
++                command([compiler, '-std=c11', '-Wall', '-Wextra', '-Werror',
++                         '-Wno-unused-function', f'-DconfigNUMBER_OF_CORES={cores}',
++                         *flags, str(c_file), '-o', str(executable)])
++                command([str(executable)])
++                count += 1
++
++            # The targeted mutant retains owner suspend and every other guard;
++            # skipping just the core-quiescence wait must recover the orphan.
++            mutant, replacements = re.subn(r'if\s*\(\s*!running\s*\)\s*break;',
++                                           'if((void)running, 1) break;', deletion)
++            if replacements != 1:
++                raise AssertionError('Could not uniquely mutate the quiescence wait')
++            mutant_source = MODEL.replace('@DELETE@', mutant).replace('@WRAPPER@', wrapper)
++            # This remains valid when the supplied LVGL tree was patched by a
++            # prior CMake configure: strip only the added owner guard and keep
++            # the actual backend's original normal/caps API selection.
++            old_delete = without_owner_guard(deletion)
++            old_source = MODEL.replace('@DELETE@', old_delete).replace('@WRAPPER@', wrapper)
++            for label, regression in [('wait-mutant', mutant_source), ('old-delete', old_source)]:
++                c_file = temporary / f'{variant}-{label}.c'
++                executable = c_file.with_suffix('')
++                c_file.write_text(regression)
++                command([compiler, '-std=c11', '-Wall', '-Wextra', '-Werror',
++                         '-Wno-unused-function', '-DconfigNUMBER_OF_CORES=2',
++                         *definitions, str(c_file), '-o', str(executable)])
++                command([str(executable), '--race-only'], expect_orphan=True)
++                count += 1
++            print(f'PASS {source_path}: {variant}: five configurations; '
++                  'old deletion and wait mutant both reproduce the 33128-byte orphan')
++    return count
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--lvgl', type=Path, action='append',
++                        help='LVGL source root (or lv_freertos.c); repeat for several versions')
++    parser.add_argument('--helper', type=Path, help='Production patch_lvgl_thread_shutdown.py')
++    parser.add_argument('--cmake', type=Path, help='Adapter CMakeLists.txt with the caps hook')
++    parser.add_argument('--cc', default='cc', help='Host C compiler (default: cc)')
++    args = parser.parse_args()
++    default_helper = Path(__file__).resolve().parents[2] / 'tools/patch_lvgl_thread_shutdown.py'
++    helper = args.helper or default_helper
++    if not helper.is_file():
++        parser.error(f'Helper missing: {helper}; provide --helper')
++    cmake = args.cmake or helper.parent.parent / 'CMakeLists.txt'
++    if not cmake.is_file():
++        parser.error(f'CMakeLists.txt missing: {cmake}; provide --cmake')
++    if not args.lvgl:
++        parser.error('Provide --lvgl /path/to/lvgl (may be repeated)')
++    compiler = shutil.which(args.cc)
++    if not compiler:
++        parser.error(f'C compiler not found: {args.cc}')
++    inputs = [helper, cmake] + [p if p.is_file() else p / 'src/osal/lv_freertos.c' for p in args.lvgl]
++    digests = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
++    count = sum(run_suite(lvgl, helper, cmake, compiler) for lvgl in args.lvgl)
++    for path, before in digests.items():
++        if hashlib.sha256(path.read_bytes()).hexdigest() != before:
++            raise AssertionError(f'Production input changed during test: {path}')
++    print(f'PASS: {count} compiled programs; production inputs unchanged; '
++          'all expected-failure controls detected')
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/run.py b/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/run.py
+index 152ddc3..d4785f9 100644
+--- a/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/run.py
++++ b/components/display/tools/esp_lvgl_adapter/test_apps/host_ortho/run.py
+@@ -9,6 +9,7 @@ controls; the fake PPA and font regression use the newer board-tested source.
+ """
+ 
+ import argparse
++import importlib.util
+ import io
+ import os
+ from pathlib import Path
+@@ -21,9 +22,93 @@ FIXTURES = '6cf0eed1277032489fd0281890b9a326c93f063f'
+ CACHE_SUITE = '9db8952fc7f06438819fd4aaf28f5fb8a35a56b7'
+ ADAPTER = Path(__file__).resolve().parents[2]
+ UNIT = ADAPTER / 'src/display/rotate_in_draw'
++_cleanup_spec = importlib.util.spec_from_file_location('patch_lvgl_os_cleanup', ADAPTER / 'tools/patch_lvgl_os_cleanup.py')
++_cleanup = importlib.util.module_from_spec(_cleanup_spec)
++_cleanup_spec.loader.exec_module(_cleanup)
++
++MUTEX_SPY = r"""
++#if LV_USE_OS != LV_OS_NONE
++#include <stdatomic.h>
++#include "src/osal/lv_os_private.h"
++static _Atomic unsigned s_os_mutex_inits, s_os_mutex_deletes;
++lv_result_t __real_lv_mutex_init(lv_mutex_t *mutex);
++lv_result_t __real_lv_mutex_delete(lv_mutex_t *mutex);
++lv_result_t __wrap_lv_mutex_init(lv_mutex_t *mutex)
++{
++    const lv_result_t result = __real_lv_mutex_init(mutex);
++    if(result == LV_RESULT_OK) s_os_mutex_inits++;
++    return result;
++}
++lv_result_t __wrap_lv_mutex_delete(lv_mutex_t *mutex)
++{
++    const lv_result_t result = __real_lv_mutex_delete(mutex);
++    if(result == LV_RESULT_OK) s_os_mutex_deletes++;
++    return result;
++}
++#endif
++"""
+ 
+ CLEANUP_CASE = r"""
+ extern int g_p4_bad_geometry;
++extern uint32_t g_p4_slow_out_width, g_p4_slow_out_height, g_p4_slow_max_bytes;
++
++static void check_cache_progress(void)
++{
++    const lv_display_rotation_t rotations[] = {
++        LV_DISPLAY_ROTATION_90, LV_DISPLAY_ROTATION_180, LV_DISPLAY_ROTATION_270
++    };
++    for(unsigned k = 0; k < sizeof(rotations) / sizeof(rotations[0]); k++) {
++        const lv_display_rotation_t rot = rotations[k];
++        const bool quarter = rot != LV_DISPLAY_ROTATION_180;
++        const int nw = quarter ? 720 : 1280, nh = quarter ? 1280 : 720;
++        lv_draw_ortho_set_window(NULL, NULL);
++        lv_draw_ortho_ppa_init();
++        lv_draw_ortho_set_image_cache(4 * 1024 * 1024);
++        g_wall = image_of(1280, 720, LV_COLOR_FORMAT_RGB565, 29);
++        g_wall_constant = true;
++        lv_draw_ortho_set_image_constant_cb(wall_constant);
++        screen_t *screen = make_screen(nw, nh, LV_COLOR_FORMAT_RGB565, rot, true, true);
++        lv_obj_t *image = lv_image_create(lv_display_get_screen_active(screen->disp));
++        lv_image_set_src(image, g_wall);
++        lv_obj_set_pos(image, 0, 0);
++        /* Only a full-height output is the new cache, not the small partial
++         * display bands. At 4 bytes/us the full 1.8 MiB job needs 460 ms;
++         * bounded bands finish well inside the unchanged 250 ms watchdog. */
++        g_p4_slow_out_width = (uint32_t)nw;
++        g_p4_slow_out_height = (uint32_t)nh;
++        g_p4_slow_max_bytes = 0;
++        for(int i = 0; i < 3; i++) {
++            lv_obj_invalidate(image);
++            lv_refr_now(screen->disp);
++        }
++        const lv_draw_ortho_stats_t st = *lv_draw_ortho_get_stats();
++        uint8_t *expected = malloc((size_t)screen->stride * nh);
++        turn_buffer(g_wall->data, expected, 1280, 720, g_wall->header.stride,
++                    screen->stride, rot, LV_COLOR_FORMAT_RGB565);
++        const bool pixels_ok = memcmp(expected, screen->buf, (size_t)screen->stride * nh) == 0;
++        g_cases++;
++        if(!st.turner_failed && st.images_cached > 0 && pixels_ok &&
++           g_p4_slow_max_bytes > 0 && g_p4_slow_max_bytes <= 128 * 1024)
++            printf("  ok    cache preparation at %d: slow transactions make progress, peak %u bytes, pixels match\n",
++                   (int)rot, g_p4_slow_max_bytes);
++        else {
++            printf("  FAIL  cache preparation progress at %d: failed=%u peak=%u cached=%u pixels=%d\n",
++                   (int)rot, st.turner_failed, g_p4_slow_max_bytes, st.images_cached, pixels_ok);
++            g_failures++;
++        }
++        g_p4_slow_out_height = 0;
++        if(st.turner_failed) p4fake_reset(); /* discard a mutant's timed-out DMA before freeing its buffers */
++        free(expected);
++        drop_screen(screen);
++        lv_draw_ortho_set_image_cache(0);
++        lv_draw_ortho_set_image_constant_cb(NULL);
++        lv_draw_ortho_ppa_deinit();
++        free((void *)g_wall->data);
++        free(g_wall);
++        g_wall = NULL;
++        g_wall_constant = false;
++    }
++}
+ 
+ static void check_padded_cache_geometry(void)
+ {
+@@ -78,6 +163,15 @@ static void check_cache_deinit(void)
+     const bool held = lv_draw_ortho_get_stats()->image_cache_bytes > 0;
+     drop_screen(screen);
+     lv_deinit();
++#if LV_USE_OS != LV_OS_NONE
++    g_cases++;
++    if(s_os_mutex_inits == s_os_mutex_deletes)
++        printf("  ok    lv_deinit releases all OS mutexes (%u created, %u deleted)\n", s_os_mutex_inits, s_os_mutex_deletes);
++    else {
++        printf("  FAIL  OS mutex lifecycle: %u created, %u deleted\n", s_os_mutex_inits, s_os_mutex_deletes);
++        g_failures++;
++    }
++#endif
+     g_cases++;
+     if(held && lv_draw_ortho_get_stats()->image_cache_bytes == 0)
+         printf("  ok    lv_deinit releases cached pixel allocations\n");
+@@ -121,6 +215,37 @@ def stage(reference, work):
+     assert code.count(before) == 1
+     code = code.replace(before, 'if((size_t)op->out.pic_w * op->out.pic_h * px > op->out.buffer_size) { g_p4_bad_geometry++; return ESP_ERR_INVALID_ARG; }')
+     code = code.replace('esp_err_t ppa_do_scale_rotate_mirror(', 'int g_p4_bad_geometry;\n\nesp_err_t ppa_do_scale_rotate_mirror(', 1)
++    original_delay = '''void esp_rom_delay_us(uint32_t us)
++{
++    (void)us;
++    finish_one();
++}'''
++    timed_delay = '''uint32_t g_p4_slow_out_width, g_p4_slow_out_height, g_p4_slow_max_bytes;
++static int g_slow_qid;
++static uint32_t g_slow_remaining;
++
++void esp_rom_delay_us(uint32_t us)
++{
++    if(g_p4_slow_out_height && g_count && !g_queue[g_head].is_fill &&
++       g_queue[g_head].op.out.pic_w >= g_p4_slow_out_width &&
++       g_queue[g_head].op.out.pic_h >= g_p4_slow_out_height &&
++       g_queue[g_head].op.rotation_angle != PPA_SRM_ROTATION_ANGLE_0) {
++        const ppa_srm_oper_config_t *op = &g_queue[g_head].op;
++        const uint32_t bytes = op->in.block_w * op->in.block_h * 2;
++        if(bytes > g_p4_slow_max_bytes) g_p4_slow_max_bytes = bytes;
++        if(g_slow_qid != g_queue[g_head].qid) {
++            g_slow_qid = g_queue[g_head].qid;
++            g_slow_remaining = bytes / 4;
++        }
++        if(g_slow_remaining > us) {
++            g_slow_remaining -= us;
++            return;
++        }
++    }
++    finish_one();
++}'''
++    assert code.count(original_delay) == 1
++    code = code.replace(original_delay, timed_delay)
+     fake.write_text(code)
+     current = git(reference, 'show', f"{FIXTURES}:test/main.c").decode()
+     main = git(reference, 'show', f"{CACHE_SUITE}:test/main.c").decode()
+@@ -130,7 +255,7 @@ def stage(reference, work):
+     font = font.replace('    lv_draw_ortho_set_tile_width(256);\n', '')
+     font = font.replace('    lv_draw_ortho_set_tile_width(0);\n', '')
+     main = main.replace('/* The same scenes with the PPA', font + '/* The same scenes with the PPA', 1)
+-    main = main.replace('int main(int argc, char ** argv)', CLEANUP_CASE + '\nint main(int argc, char ** argv)', 1)
++    main = main.replace('int main(int argc, char ** argv)', MUTEX_SPY + CLEANUP_CASE + '\nint main(int argc, char ** argv)', 1)
+     # The fixture deliberately submits unsafe transfers to validate its fake
+     # hardware. Count only the adapter's submissions after that calibration.
+     main = main.replace('    check_fake_ppa_against_the_board();', '    check_fake_ppa_against_the_board();\n    g_p4_short = 0;', 1)
+@@ -139,6 +264,7 @@ def stage(reference, work):
+ #if LV_USE_OS != LV_OS_NONE
+     if(g_two_cores) check_font_one_core();
+ #endif
++    check_cache_progress();
+     check_padded_cache_geometry();
+     g_cases++;
+     if(lv_draw_ortho_ppa_dig734(464, 70, LV_DISPLAY_ROTATION_90, 16, 1, 1) && g_p4_short == 0)
+@@ -155,11 +281,16 @@ def stage(reference, work):
+     (work / 'test/main.c').write_text(main)
+ 
+ 
+-def build(work, lvgl, mode, sanitize):
++def build(work, lvgl, mode, sanitize, patch_os=True):
+     flags = '-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' if sanitize else '-O2 -g'
+     if mode == 'mt':
+-        flags += ' -DLV_USE_OS=1'
++        flags += ' -DLV_USE_OS=1 -Wl,--wrap=lv_mutex_init -Wl,--wrap=lv_mutex_delete'
++    flags += ' -DESP_LVGL_ADAPTER_OS_MUTEX_CLEANUP=1'
+     folder = 'build-' + mode + ('-asan' if sanitize else '')
++    subprocess.run(['make', '-C', str(work / 'test'), f"LVGL={lvgl}", f"BUILD={folder}",
++                    f"{folder}/lvgl-src/.patched"], check=True)
++    if patch_os:
++        _cleanup.patch(work / 'test' / folder / 'lvgl-src/src/lv_init.c')
+     subprocess.run(['make', '-C', str(work / 'test'), '-j2', f"LVGL={lvgl}", f"BUILD={folder}",
+                     f"CFLAGS={flags}", f"{folder}/ortho_test"], check=True)
+     return work / 'test' / folder / 'ortho_test'
+@@ -181,6 +312,7 @@ def run_tests(work, args):
+         ('font guard', 'lv_draw_ortho.c', 'const bool text = j->t->type == LV_DRAW_DSC_TYPE_LABEL || j->t->type == LV_DRAW_DSC_TYPE_LETTER;', 'const bool text = false;', 'font was asked'),
+         ('FIFO margin', 'lv_draw_ortho_ppa.c', 'left < 2 * FIFO_BITS', 'left < FIFO_BITS', 'FIFO safety margin'),
+         ('padded cache geometry', 'lv_draw_ortho_ppa.c', 'op.out.pic_h = out_h;', 'op.out.pic_h = dst->h;', 'FAIL  padded cache geometry'),
++        ('cache preparation progress', 'lv_draw_ortho.c', 'const int32_t max_pixels = (128 * 1024) / px;', 'const int32_t max_pixels = INT32_MAX / px;', 'FAIL  cache preparation progress'),
+         ('cache teardown', 'lv_draw_ortho.c', '    lv_draw_ortho_image_cache_drop(NULL);\n    if (g_helper.on)', '    if (g_helper.on)', 'cached pixel allocations survive'),
+     ]
+     for name, filename, before, after, expected in mutations:
+@@ -196,6 +328,23 @@ def run_tests(work, args):
+         if result.returncode == 0 or expected not in result.stdout:
+             raise RuntimeError(f"Regression test did not catch {name}: {result.stdout[-1500:]}")
+         print(f"caught mutant: {name}", flush=True)
++    # Exercise the shipped LVGL init/deinit, not a model of its resource use.
++    init = work / 'test' / ('build-mt-asan' if args.sanitize else 'build-mt') / 'lvgl-src/src/lv_init.c'
++    original = init.read_text()
++    needle = '    lv_mutex_delete(&LV_GLOBAL_DEFAULT()->lv_general_mutex);'
++    assert original.count(needle) == 1
++    (unit / 'lv_draw_ortho.c').write_text(source)
++    (unit / 'lv_draw_ortho_ppa.c').write_text(ppa)
++    try:
++        init.write_text(original.replace(needle, '    /* mutant: global mutex leaked */'))
++        binary = build(work, args.lvgl, 'mt', args.sanitize, patch_os=False)
++        result = subprocess.run([str(binary), '--cores'], capture_output=True, text=True, env=env,
++                                timeout=120, cwd=work / 'test')
++        if result.returncode == 0 or 'FAIL  OS mutex lifecycle' not in result.stdout:
++            raise RuntimeError('Regression test did not catch global OS mutex leak: ' + result.stdout[-1500:])
++        print('caught mutant: global OS mutex cleanup', flush=True)
++    finally:
++        init.write_text(original)
+ 
+ 
+ def main():
+diff --git a/components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_object_transforms.py b/components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_object_transforms.py
+new file mode 100644
+index 0000000..5648d7a
+--- /dev/null
++++ b/components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_object_transforms.py
+@@ -0,0 +1,162 @@
++# SPDX-FileCopyrightText: 2026 youkorr
++# SPDX-License-Identifier: MIT
++"""Add a per-display software-layer policy for object-style transforms.
++
++This compatibility patch is for LVGL 9.5/9.6. It preserves the default matrix
++path, including GPU backends, unless the application explicitly opts a display
++into software object transforms. Screen matrix rotation remains independent.
++The software bitmap path supports the rotation/scale styles of this test set;
++this patch does not add skew or arbitrary custom-matrix software support.
++"""
++import argparse
++import os
++from pathlib import Path
++import re
++import tempfile
++
++SET_DECL = 'void lv_display_set_matrix_rotation(lv_display_t * disp, bool enable);'
++POLICY_DECL = '''
++/**
++ * Render object-style rotation and scale through software bitmap layers.
++ * Use this compatibility path with renderers that cannot apply general affine
++ * matrices to draw tasks. Matrix-based screen rotation is not changed.
++ * The default is false, preserving the matrix path for capable renderers.
++ * The software layers can require additional memory and rendering time.
++ * This does not add software support for skew or arbitrary custom matrices.
++ * Set the policy before rendering, or invalidate the display after changing it.
++ * @param disp      pointer to a display (NULL to use the default display)
++ * @param enable    true: use software object layers; false: use the matrix path
++ */
++void lv_display_set_software_object_transforms(lv_display_t * disp, bool enable);
++
++/**
++ * Get whether object-style transforms use the software-layer compatibility path.
++ * @param disp      pointer to a display (NULL to use the default display)
++ * @return          true: software layers selected; false: matrix path selected
++ */
++bool lv_display_get_software_object_transforms(lv_display_t * disp);
++'''
++
++FIELD_ANCHOR = '''#if LV_USE_MEM_MONITOR
++    lv_obj_t * mem_label;
++#endif
++'''
++POLICY_FIELD = '\n    bool software_object_transforms; /**< Object-style transforms use software layers*/'
++
++SOURCE_ANCHOR = 'void lv_display_set_theme(lv_display_t * disp, lv_theme_t * th)'
++POLICY_IMPL = '''void lv_display_set_software_object_transforms(lv_display_t * disp, bool enable)
++{
++    if(disp == NULL) disp = lv_display_get_default();
++    if(disp == NULL) return;
++    disp->software_object_transforms = enable;
++}
++
++bool lv_display_get_software_object_transforms(lv_display_t * disp)
++{
++    if(disp == NULL) disp = lv_display_get_default();
++    if(disp == NULL) return false;
++    return disp->software_object_transforms;
++}
++
++'''
++
++CORE_ANCHOR = '    else if(opa_layered >= LV_OPA_MAX && !refr_check_obj_clip_overflow(layer, obj)) {'
++CORE_POLICY = '''    /* A display can keep screen matrix rotation while using the existing
++     * bitmap-layer path for object-style rotation/scale. A task-level refusal
++     * is too late: the software draw unit does not apply general matrices. */
++    else if(!lv_display_get_software_object_transforms(disp_refr) &&
++            opa_layered >= LV_OPA_MAX && !refr_check_obj_clip_overflow(layer, obj)) {'''
++
++
++def insert_after(source, anchor, addition, label):
++    if addition in source:
++        if source.count(addition) != 1:
++            raise ValueError(f'Duplicate {label}; refusing to modify LVGL')
++        return source
++    if 'software_object_transforms' in source:
++        raise ValueError(f'Unrecognized or incomplete {label}; refusing to modify LVGL')
++    if source.count(anchor) != 1:
++        raise ValueError(f'Unrecognized LVGL {label} layout')
++    return source.replace(anchor, anchor + '\n' + addition, 1)
++
++
++def patch(lvgl_root):
++    """Patch a component root, validating every supported layout before writes."""
++    root = Path(lvgl_root)
++    version_candidates = (root / 'include/lvgl/lv_version.h', root / 'lv_version.h')
++    version_source = next((p.read_text() for p in version_candidates
++                           if p.is_file() and '#define LVGL_VERSION_MAJOR' in p.read_text()), None)
++    if version_source is None:
++        raise ValueError('Cannot identify LVGL version; object transforms were not changed')
++    version = []
++    for part in ('MAJOR', 'MINOR'):
++        found = re.search(r'^\s*#define\s+LVGL_VERSION_' + part + r'\s+(\d+)\b', version_source, re.M)
++        if not found:
++            raise ValueError('Cannot identify LVGL version; object transforms were not changed')
++        version.append(int(found.group(1)))
++    if tuple(version) not in ((9, 5), (9, 6)):
++        raise ValueError(f'Unsupported LVGL {version[0]}.{version[1]}; expected 9.5 or 9.6')
++
++    header_candidates = (root / 'include/lvgl/display/lv_display.h', root / 'src/display/lv_display.h')
++    headers = [p for p in header_candidates if p.is_file() and SET_DECL in p.read_text()]
++    if not headers:
++        raise ValueError('Unrecognized LVGL public display header layout')
++    edits = {}
++    for header in headers:
++        source = header.read_text()
++        edits[header] = insert_after(source, SET_DECL, POLICY_DECL, 'object-transform declarations')
++
++    private = root / 'src/display/lv_display_private.h'
++    source = private.read_text()
++    edits[private] = insert_after(source, FIELD_ANCHOR, POLICY_FIELD, 'display policy field')
++
++    display = root / 'src/display/lv_display.c'
++    source = display.read_text()
++    if POLICY_IMPL in source:
++        if source.count(POLICY_IMPL) != 1:
++            raise ValueError('Duplicate object-transform policy implementation')
++        edits[display] = source
++    else:
++        if 'software_object_transforms' in source or source.count(SOURCE_ANCHOR) != 1:
++            raise ValueError('Unrecognized LVGL display policy implementation layout')
++        edits[display] = source.replace(SOURCE_ANCHOR, POLICY_IMPL + SOURCE_ANCHOR, 1)
++
++    core = root / 'src/core/lv_refr.c'
++    source = core.read_text()
++    if CORE_POLICY in source:
++        if source.count(CORE_POLICY) != 1:
++            raise ValueError('Duplicate object-transform refresh policy')
++        edits[core] = source
++    else:
++        if 'software_object_transforms' in source or source.count(CORE_ANCHOR) != 1:
++            raise ValueError('Unrecognized LVGL object-matrix refresh layout')
++        edits[core] = source.replace(CORE_ANCHOR, CORE_POLICY, 1)
++
++    # LVGL zeroes a new display, so the policy starts false without changing
++    # behavior or requiring an additional allocation.
++    create = re.search(r'lv_display_t \* lv_display_create\([^\n]+\)\n\{.*?\n\}',
++                       display.read_text(), re.S)
++    if not create or create.group(0).count('    lv_memzero(disp, sizeof(lv_display_t));') != 1:
++        raise ValueError('Unrecognized LVGL display allocation; cannot guarantee the default policy')
++
++    changed = [(path, text) for path, text in edits.items() if path.read_text() != text]
++    # Managed components can be hard-linked to the component cache. Replace
++    # directory entries instead of writing through those shared hard links.
++    for path, text in changed:
++        mode = path.stat().st_mode & 0o777
++        with tempfile.NamedTemporaryFile('w', dir=path.parent, delete=False) as output:
++            temporary = Path(output.name)
++            output.write(text)
++        try:
++            temporary.chmod(mode)
++            os.replace(temporary, path)
++        finally:
++            temporary.unlink(missing_ok=True)
++    return 'patched' if changed else 'already patched'
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('lvgl_root', type=Path, help='LVGL component source directory')
++    args = parser.parse_args()
++    print(patch(args.lvgl_root))
+diff --git a/components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_os_cleanup.py b/components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_os_cleanup.py
+new file mode 100644
+index 0000000..677cb66
+--- /dev/null
++++ b/components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_os_cleanup.py
+@@ -0,0 +1,35 @@
++# SPDX-FileCopyrightText: 2026 youkorr
++# SPDX-License-Identifier: MIT
++"""Release LVGL 9's OS mutex before its memory/global state is discarded."""
++import argparse
++from pathlib import Path
++import re
++
++MARKER = "esp_lvgl_adapter: release the global OS mutex"
++BEFORE = "    lv_mem_deinit();"
++AFTER = """#if LV_USE_OS != LV_OS_NONE && defined(ESP_LVGL_ADAPTER_OS_MUTEX_CLEANUP)
++    /* esp_lvgl_adapter: release the global OS mutex after all users stop. */
++    lv_mutex_delete(&LV_GLOBAL_DEFAULT()->lv_general_mutex);
++#endif
++
++    lv_mem_deinit();"""
++
++
++def patch(path):
++    source = path.read_text()
++    if MARKER in source:
++        return 'already patched'
++    if re.search(r'\blv_os_deinit\s*\(', source) or re.search(
++            r'lv_mutex_delete\s*\([^;]*lv_general_mutex', source):
++        return 'upstream cleanup present'
++    if source.count(BEFORE) != 1:
++        raise ValueError('Unrecognized LVGL deinit layout; OS cleanup was not changed')
++    path.write_text(source.replace(BEFORE, AFTER, 1))
++    return 'patched'
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('lv_init', type=Path)
++    args = parser.parse_args()
++    print(patch(args.lv_init))
+diff --git a/components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_thread_shutdown.py b/components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_thread_shutdown.py
+new file mode 100644
+index 0000000..9be151d
+--- /dev/null
++++ b/components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_thread_shutdown.py
+@@ -0,0 +1,96 @@
++# SPDX-FileCopyrightText: 2026 youkorr
++# SPDX-License-Identifier: MIT
++"""Keep LVGL thread-return ownership and delete only after remote execution stops."""
++import argparse
++from pathlib import Path
++import re
++
++RETURN_MARKER = 'esp_lvgl_adapter: owner deletes completed threads'
++DELETE_MARKER = 'esp_lvgl_adapter: stop remote execution before deleting'
++RETURN_OLD = '''    pxThread->pvStartRoutine((void *)pxThread->pTaskArg);
++
++    vTaskDelete(NULL);'''
++RETURN_NEW = '''    pxThread->pvStartRoutine((void *)pxThread->pTaskArg);
++
++#if defined(ESP_PLATFORM) && defined(ESP_LVGL_ADAPTER_THREAD_OWNER_DELETE)
++    /* esp_lvgl_adapter: owner deletes completed threads. Keep the TCB and
++     * caps-allocated stack valid until lv_thread_delete() releases them. */
++    for(;;) {
++        vTaskSuspend(NULL);
++    }
++#else
++    vTaskDelete(NULL);
++#endif'''
++DELETE_GUARD = '''#if defined(ESP_PLATFORM) && defined(ESP_LVGL_ADAPTER_THREAD_OWNER_DELETE)
++    /* esp_lvgl_adapter: stop remote execution before deleting. A callback
++     * returning on another core can still call vTaskSuspend(NULL). If it
++     * does so after vTaskDelete queued its TCB for idle cleanup, it moves
++     * that TCB out of the termination list and leaves an orphan task.
++     * Suspending first prevents new scheduling; waiting for all current
++     * handles to change ensures that the last self-suspend has finished. */
++    if(pxThread->xTaskHandle == NULL || pxThread->xTaskHandle == xTaskGetCurrentTaskHandle())
++        return LV_RESULT_INVALID;
++    vTaskSuspend(pxThread->xTaskHandle);
++#if configNUMBER_OF_CORES > 1
++    for(;;) {
++        BaseType_t running = pdFALSE;
++        for(BaseType_t core = 0; core < configNUMBER_OF_CORES; core++) {
++            if(xTaskGetCurrentTaskHandleForCore(core) == pxThread->xTaskHandle) {
++                running = pdTRUE;
++                break;
++            }
++        }
++        if(!running) break;
++        taskYIELD();
++    }
++#endif
++#endif
++'''
++DELETE_FINISH = '''#if defined(ESP_PLATFORM) && defined(ESP_LVGL_ADAPTER_THREAD_OWNER_DELETE)
++    pxThread->xTaskHandle = NULL;
++#endif
++
++'''
++INCLUDE = '''#if defined(ESP_PLATFORM) && defined(ESP_LVGL_ADAPTER_THREAD_OWNER_DELETE)
++    #include <freertos/idf_additions.h>
++#endif
++'''
++
++
++def patch(path):
++    original = path.read_text()
++    source = original
++    if RETURN_MARKER not in source:
++        if source.count(RETURN_OLD) != 1:
++            raise ValueError('Unrecognized LVGL FreeRTOS callback-return layout')
++        source = source.replace(RETURN_OLD, RETURN_NEW, 1)
++    if DELETE_MARKER not in source:
++        match = re.search(r'lv_result_t lv_thread_delete\(lv_thread_t \* pxThread\)\n\{\n.*?\n\}', source, re.S)
++        if not match:
++            raise ValueError('Unrecognized LVGL FreeRTOS thread-delete layout')
++        body = match.group(0)
++        if not re.search(r'vTaskDelete(?:WithCaps)?\(pxThread->xTaskHandle\);', body):
++            raise ValueError('LVGL thread deletion does not use a recognized FreeRTOS API')
++        if body.count('    return LV_RESULT_OK;') != 1:
++            raise ValueError('Unrecognized LVGL thread-delete return path')
++        body = body.replace('{\n', '{\n' + DELETE_GUARD, 1)
++        body = body.replace('    return LV_RESULT_OK;', DELETE_FINISH + '    return LV_RESULT_OK;', 1)
++        source = source[:match.start()] + body + source[match.end():]
++    if '#include <freertos/idf_additions.h>' not in source:
++        anchor = '#if LV_USE_OS == LV_OS_FREERTOS\n'
++        if source.count(anchor) != 1:
++            raise ValueError('Unrecognized LVGL FreeRTOS source guard')
++        # Use angle brackets: the independent stack-caps hook recognizes its
++        # own quoted include, and must not mistake this one for a partial hook.
++        source = source.replace(anchor, anchor + '\n' + INCLUDE, 1)
++    if source == original:
++        return 'already patched'
++    path.write_text(source)
++    return 'patched'
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('lv_freertos', type=Path)
++    args = parser.parse_args()
++    print(patch(args.lv_freertos))

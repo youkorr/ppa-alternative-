@@ -1,0 +1,9 @@
+{
+  "main/test_esp_lvgl_adapter_features.c": "a3154886f74ffa8b8be6c2862955071e21fd7366f3e77f4e65d3c494cdb6444e",
+  "main/transform_bench.inc.c": "b4deb23482b1b65a5c0fa1ea656d9afa592287f753576424e18093abac5e8c88",
+  "main/v6_reference.rgb565": "a83ce7f0e5488ce64d045e4c3fefb498d482a2f63ccdf6717eb9502ace7ea886",
+  "main/v6_reference_config.h": "604ac7eb751c2f9640bbddda06cb7249c93db85c352d80835e8f42446847f708",
+  "components/hw_init/hw_init.h": "aba3ce6b3e030c8377e921eff9dd6e564efc4b460048b5167edfd33775124a4b",
+  "components/hw_init/lcd/lcd_init_mipi_dsi.c": "1a9054799d932f4dd2872fcbf87b6fb8b38b50de7518cf87a45bab965f5d00f7",
+  "sdkconfig": "efdaed468d660e2f91e5f9fb3afd0789647d964236a905ab23b9e68c6716b437"
+}

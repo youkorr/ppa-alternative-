@@ -1,0 +1,26 @@
+esptool.py v4.13.0
+File size: 22592 (bytes)
+Image version: 1
+Entry point: 4ff29eda
+3 segments
+
+Segment 1: len 0x014d0 load 0x4ff33ce0 file_offs 0x00000018 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Segment 2: len 0x00df8 load 0x4ff29ed0 file_offs 0x000014f0 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Segment 3: len 0x03524 load 0x4ff2cbd0 file_offs 0x000022f0 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Checksum: 14 (valid)
+Validation Hash: ab3c60a48287b5fda947463c8de1e4a07720e63f875cbbedb86c05a1100f162c (valid)
+
+esptool.py v4.13.0
+File size: 2369088 (bytes)
+Image version: 1
+Entry point: 4ff0040e
+6 segments
+
+Segment 1: len 0x19d344 load 0x40090020 file_offs 0x00000018 [DROM,IROM]
+Segment 2: len 0x00070 load 0x30100000 file_offs 0x0019d364 []
+Segment 3: len 0x02c34 load 0x4ff00000 file_offs 0x0019d3dc [DRAM,BYTE_ACCESSIBLE,IRAM]
+Segment 4: len 0x8f410 load 0x40000020 file_offs 0x001a0018 [DROM,IROM]
+Segment 5: len 0x107ac load 0x4ff02c34 file_offs 0x0022f430 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Segment 6: len 0x02a24 load 0x4ff13400 file_offs 0x0023fbe4 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Checksum: eb (valid)
+Validation Hash: 5dbe464a710a60dcdb5ef83e4c815adc5a55f8e4090c79f4674017abdf6dde4d (valid)

@@ -1,0 +1,175 @@
+{
+  "genuine_per_display_policy": true,
+  "full_lvgl_library_rebuilds": true,
+  "hardware": false,
+  "native_channel_tolerance": "RGB565 channels5/6/5bits, XRGB8888 channels8bits; at most1 native code value per channel",
+  "versions": {
+    "9.5.0": {
+      "cpu": {
+        "all": {
+          "cases": 256,
+          "render_failures": 0,
+          "rgb_exact": 210,
+          "within_one_native_channel_level": 252
+        },
+        "direct": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 116,
+          "within_one_native_channel_level": 128
+        },
+        "partial": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 94,
+          "within_one_native_channel_level": 124
+        }
+      },
+      "fake-ppa": {
+        "all": {
+          "cases": 256,
+          "render_failures": 0,
+          "rgb_exact": 210,
+          "within_one_native_channel_level": 252
+        },
+        "direct": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 116,
+          "within_one_native_channel_level": 128
+        },
+        "partial": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 94,
+          "within_one_native_channel_level": 124
+        }
+      },
+      "pthread": {
+        "all": {
+          "cases": 256,
+          "render_failures": 0,
+          "rgb_exact": 221,
+          "within_one_native_channel_level": 252
+        },
+        "direct": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 127,
+          "within_one_native_channel_level": 128
+        },
+        "partial": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 94,
+          "within_one_native_channel_level": 124
+        }
+      }
+    },
+    "9.6.0": {
+      "cpu": {
+        "all": {
+          "cases": 256,
+          "render_failures": 0,
+          "rgb_exact": 218,
+          "within_one_native_channel_level": 254
+        },
+        "direct": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 128,
+          "within_one_native_channel_level": 128
+        },
+        "partial": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 90,
+          "within_one_native_channel_level": 126
+        }
+      },
+      "ppa": {
+        "all": {
+          "cases": 256,
+          "render_failures": 0,
+          "rgb_exact": 218,
+          "within_one_native_channel_level": 254
+        },
+        "direct": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 128,
+          "within_one_native_channel_level": 128
+        },
+        "partial": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 90,
+          "within_one_native_channel_level": 126
+        }
+      },
+      "pthread": {
+        "all": {
+          "cases": 256,
+          "render_failures": 0,
+          "rgb_exact": 218,
+          "within_one_native_channel_level": 254
+        },
+        "direct": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 128,
+          "within_one_native_channel_level": 128
+        },
+        "partial": {
+          "cases": 128,
+          "render_failures": 0,
+          "rgb_exact": 90,
+          "within_one_native_channel_level": 126
+        }
+      }
+    }
+  },
+  "lvgl96_legacy_regression": {
+    "cpu": {
+      "returncode": 0,
+      "passed": 342,
+      "cases": 342,
+      "failures": [],
+      "mutex_lifecycle": [],
+      "archive_sha256": "4ce7b616990b638b69716bc716029d25002cc0177bd1410429f1f010dae367d9"
+    },
+    "pthread": {
+      "returncode": 0,
+      "passed": 353,
+      "cases": 353,
+      "failures": [],
+      "mutex_lifecycle": [
+        "  ok    lv_deinit releases all OS mutexes (7 created, 7 deleted)"
+      ],
+      "archive_sha256": "6c09abdf2b01ace7084550ec9bfffa1babbd6be2dca94e8688933c536013d401"
+    },
+    "source_sha256": "9f7cfe263358ebe796ba74160a2fbf9fee1cf140e11849a9aa17ff2bffa06d8b",
+    "note": "Target displays explicitly select software object layers; reference displays retain default false. pthread lv_init.o has adapter OS_MUTEX_CLEANUP flag; all structure-dependent objects were previously fully rebuilt."
+  },
+  "patch_io_validation": {
+    "script_sha256": "193b7dfdce799a2248882dc6d06aeed79bf83ebb9d9fb8fe90e72ddfe84da9fb",
+    "results": [
+      {
+        "lvgl": "95",
+        "idempotent": true,
+        "hardlinked_cache_unchanged": true,
+        "unknown_layout_rejected_without_writes": true
+      },
+      {
+        "lvgl": "96",
+        "idempotent": true,
+        "hardlinked_cache_unchanged": true,
+        "unknown_layout_rejected_without_writes": true
+      }
+    ]
+  },
+  "new_render_cases": 1536,
+  "new_render_failures": 0,
+  "lvgl96_direct_exact_cases": 384,
+  "legacy_passed": 695
+}

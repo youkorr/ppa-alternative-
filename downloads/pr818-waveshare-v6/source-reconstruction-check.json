@@ -1,0 +1,17 @@
+{
+  "status": "pass",
+  "byte_identical_files": [
+    "CMakeLists.txt",
+    "src/display/display_manager.c",
+    "src/display/rotate_in_draw/lv_draw_ortho.c",
+    "src/display/rotate_in_draw/lv_draw_ortho_ppa.c",
+    "tools/patch_lvgl_object_transforms.py",
+    "tools/patch_lvgl_os_cleanup.py",
+    "tools/patch_lvgl_thread_shutdown.py",
+    "test_apps/lvgl9/main/test_esp_lvgl_adapter_features.c",
+    "test_apps/lvgl9/main/transform_bench.inc.c",
+    "test_apps/lvgl9/main/CMakeLists.txt",
+    "test_apps/lvgl9/main/v6_reference.rgb565",
+    "test_apps/lvgl9/main/v6_reference_config.h"
+  ]
+}
