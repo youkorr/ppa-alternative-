@@ -1,0 +1,105 @@
+{
+  "file_sha256": "d0f22f19fb9c5d18ca28f36b7224dc88d0a9327411410f6faceeb2f516d73a21",
+  "completed": 128,
+  "all_heap_integrity_ok": true,
+  "done": [
+    "PR818_V6_DONE completed=128 expected=128 heap_ok=1 pixel_equality=VISUAL_CHECK_REQUIRED"
+  ],
+  "rotations": {
+    "180": {
+      "count": 32,
+      "render_ms_min": 63.664,
+      "render_ms_median": 75.98,
+      "render_ms_max": 79.965
+    },
+    "90": {
+      "count": 32,
+      "render_ms_min": 65.584,
+      "render_ms_median": 76.9165,
+      "render_ms_max": 80.779
+    },
+    "270": {
+      "count": 32,
+      "render_ms_min": 65.726,
+      "render_ms_median": 77.0005,
+      "render_ms_max": 80.801
+    },
+    "0": {
+      "count": 32,
+      "render_ms_min": 83.452,
+      "render_ms_median": 89.054,
+      "render_ms_max": 106.434
+    }
+  },
+  "rotation_ends": [
+    {
+      "cycle": 1,
+      "rotation": 180,
+      "free": 34080503,
+      "internal": 532643,
+      "tasks": 6,
+      "heap_ok": 1
+    },
+    {
+      "cycle": 1,
+      "rotation": 90,
+      "free": 34080503,
+      "internal": 532643,
+      "tasks": 6,
+      "heap_ok": 1
+    },
+    {
+      "cycle": 1,
+      "rotation": 270,
+      "free": 34080503,
+      "internal": 532643,
+      "tasks": 6,
+      "heap_ok": 1
+    },
+    {
+      "cycle": 1,
+      "rotation": 0,
+      "free": 34080503,
+      "internal": 532643,
+      "tasks": 6,
+      "heap_ok": 1
+    },
+    {
+      "cycle": 2,
+      "rotation": 180,
+      "free": 34080503,
+      "internal": 532643,
+      "tasks": 6,
+      "heap_ok": 1
+    },
+    {
+      "cycle": 2,
+      "rotation": 90,
+      "free": 34080503,
+      "internal": 532643,
+      "tasks": 6,
+      "heap_ok": 1
+    },
+    {
+      "cycle": 2,
+      "rotation": 270,
+      "free": 34080503,
+      "internal": 532643,
+      "tasks": 6,
+      "heap_ok": 1
+    },
+    {
+      "cycle": 2,
+      "rotation": 0,
+      "free": 34080503,
+      "internal": 532643,
+      "tasks": 6,
+      "heap_ok": 1
+    }
+  ],
+  "all_rotation_ends_identical_free": true,
+  "all_rotation_ends_identical_internal": true,
+  "all_rotation_ends_tasks_six": true,
+  "user_confirmed_visual_match": true,
+  "test_scope": "Short hardware stability and visual correctness test; not a before/after performance benchmark"
+}

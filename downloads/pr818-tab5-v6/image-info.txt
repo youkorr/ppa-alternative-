@@ -1,0 +1,27 @@
+esptool.py v4.13.0
+File size: 22592 (bytes)
+Image version: 1
+Entry point: 4ff29eda
+3 segments
+
+Segment 1: len 0x014d0 load 0x4ff33ce0 file_offs 0x00000018 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Segment 2: len 0x00df8 load 0x4ff29ed0 file_offs 0x000014f0 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Segment 3: len 0x03524 load 0x4ff2cbd0 file_offs 0x000022f0 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Checksum: 10 (valid)
+Validation Hash: a3e942e2e4139aef7585ff2fd4c782a85f9e810983315c9448a9c58299beb8c9 (valid)
+
+esptool.py v4.13.0
+File size: 2415168 (bytes)
+Image version: 1
+Entry point: 4ff0040e
+7 segments
+
+Segment 1: len 0x1a106c load 0x400a0020 file_offs 0x00000018 [DROM,IROM]
+Segment 2: len 0x00070 load 0x30100000 file_offs 0x001a108c []
+Segment 3: len 0x0ef0c load 0x4ff00000 file_offs 0x001a1104 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Segment 4: len 0x960e0 load 0x40000020 file_offs 0x001b0018 [DROM,IROM]
+Segment 5: len 0x04a30 load 0x4ff0ef0c file_offs 0x00246100 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Segment 6: len 0x02ea8 load 0x4ff13980 file_offs 0x0024ab38 [DRAM,BYTE_ACCESSIBLE,IRAM]
+Segment 7: len 0x00020 load 0x50108080 file_offs 0x0024d9e8 [RTC_IRAM,RTC_DRAM]
+Checksum: c7 (valid)
+Validation Hash: 6e65af6a6e791078aba53b181aa247f174170af6db58ea33366a8cbdb05f9dba (valid)

@@ -1,0 +1,57 @@
+{
+  "board": "tab5",
+  "board_model": "M5Stack Tab5 original, ILI9881C",
+  "revision": "transforms_v6",
+  "base_pr_head": "9db972e7008d4c5adab0fde59dc3b0b1343dac4c",
+  "fixtures_commit": "6cf0eed1277032489fd0281890b9a326c93f063f",
+  "flash_size": "16MB",
+  "cpu_mhz": 360,
+  "psram_mhz": 200,
+  "l2_cache_kib": 128,
+  "rotations": [
+    270,
+    90,
+    180,
+    0
+  ],
+  "final_rotation": 270,
+  "native_size": [
+    720,
+    1280
+  ],
+  "default_logical_size": [
+    1280,
+    720
+  ],
+  "test_mode": "object_transforms_visual_and_heap_integrity",
+  "cycles": 2,
+  "scenes_per_rotation": 16,
+  "expected_scene_logs": 128,
+  "hardware_validation": "pending",
+  "software_object_transforms": "per-display, explicit opt-in",
+  "thread_shutdown_barrier": true,
+  "os_mutex_cleanup": true,
+  "ppa_cache_prepare_max_bytes": 131072,
+  "sensor_capture": false,
+  "reference_lvgl": "9.6.0",
+  "automatic_hardware_pixel_equality": false,
+  "esp_idf": "5.5.6",
+  "lvgl": "9.6.0",
+  "flash_offset": "0x0",
+  "flash_settings": {
+    "flash_mode": "dio",
+    "flash_size": "16MB",
+    "flash_freq": "40m"
+  },
+  "firmware_sha256": "13e03aaa8fb54f37aec00a3b652e3e86385b9f70d2f5783fa5a999d47aa2b061",
+  "firmware_size": 2546240,
+  "reference_asset_sha256": "a83ce7f0e5488ce64d045e4c3fefb498d482a2f63ccdf6717eb9502ace7ea886",
+  "elf_reference_asset_verified": true,
+  "flash_segments_verified": true,
+  "patched_lvgl_sha256": {
+    "src/core/lv_refr.c": "c6d2c3c6961a80b9ec07d73d9612f3498804fd2b287a1591b0406c246f124d98",
+    "src/display/lv_display.c": "69004bdd54d271785957ea50893edea12b0aa78b4e5c1738e36f066d1395e909",
+    "src/display/lv_display_private.h": "1f700430e3aa30c940bd4ec6672da45f73fcfd9da87844692b2bfcea77e9009a",
+    "include/lvgl/display/lv_display.h": "37211b3588ea5757afa8c4d979890d7801d74e054e030dc9ef3663dd24f7af8a"
+  }
+}

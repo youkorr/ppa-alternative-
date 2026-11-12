@@ -1,0 +1,82 @@
+{
+  "reconstruction": "fresh stage, no build",
+  "production_and_app_exact_match": true,
+  "checked_files": {
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/test_esp_lvgl_adapter_features.c": {
+      "exact_match": true,
+      "sha256": "5dd2ea0adeebf7c33f6d5510b02f6c30716f149bd6d3cf485c7bce3890bf4a76"
+    },
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/transform_bench.inc.c": {
+      "exact_match": true,
+      "sha256": "ec84df1f5b48a40eb507efbcb81e9a1b80939eeef8dc022d652f706d747b12e7"
+    },
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/v6_reference_config.h": {
+      "exact_match": true,
+      "sha256": "604ac7eb751c2f9640bbddda06cb7249c93db85c352d80835e8f42446847f708"
+    },
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/v6_board_config.h": {
+      "exact_match": true,
+      "sha256": "8b1308dc49f822cef8b0e06d0df3ad061b8331a6111290786466958071a77118"
+    },
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/v6_reference.rgb565": {
+      "exact_match": true,
+      "sha256": "a83ce7f0e5488ce64d045e4c3fefb498d482a2f63ccdf6717eb9502ace7ea886"
+    },
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/v6-reference-manifest.json": {
+      "exact_match": true,
+      "sha256": "4c9fde175349c708a5560a9880c8bb86764d4c802e8b552f9b8ba4c3b5c3b99a"
+    },
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/task_settle.h": {
+      "exact_match": true,
+      "sha256": "5266f7ea73d7778d2c365ae0b40d817740e73e72435715f08bb4fbf06fab2007"
+    },
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/main/CMakeLists.txt": {
+      "exact_match": true,
+      "sha256": "7182c3bd8da3b7c18740df4ef78ad020fe0c9746944d608ab2cf567ecbc394b6"
+    },
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/components/hw_init/hw_init.h": {
+      "exact_match": true,
+      "sha256": "4680eadf3f1352d7b6895209a9838bc488051c85a7f4079f5eff6f11f5428a69"
+    },
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/components/hw_init/lcd/lcd_init_mipi_dsi.c": {
+      "exact_match": true,
+      "sha256": "f7043d751044d32962e80c4625bdd8c0d544be9bdb1386422bdc8b1ffa566d05"
+    },
+    "components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/sdkconfig.bench": {
+      "exact_match": true,
+      "sha256": "c9d02287e6bdb04d95ffe07169a188a4b90fd088c335144c79d5125b560acf99"
+    },
+    "components/display/tools/esp_lvgl_adapter/CMakeLists.txt": {
+      "exact_match": true,
+      "sha256": "49b3f8088d997a373af276f1c89efe866bc09ee493152e6c8f64f04f79553fac"
+    },
+    "components/display/tools/esp_lvgl_adapter/src/display/display_manager.c": {
+      "exact_match": true,
+      "sha256": "4f2b787f8b6b6d87390aaf70328dcaeb25f842ae621399ca79e707de4a80a100"
+    },
+    "components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_object_transforms.py": {
+      "exact_match": true,
+      "sha256": "193b7dfdce799a2248882dc6d06aeed79bf83ebb9d9fb8fe90e72ddfe84da9fb"
+    },
+    "components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho.c": {
+      "exact_match": true,
+      "sha256": "be51368deb0e38b7ba8d76a74272ae5ccbffd4abe0bfbedd00b501b1928bb37f"
+    },
+    "components/display/tools/esp_lvgl_adapter/src/display/rotate_in_draw/lv_draw_ortho_ppa.c": {
+      "exact_match": true,
+      "sha256": "6adcd8111aea9226bbe9bb5a235a07a0d31617642f27f46f43be7715e4de2ab2"
+    },
+    "components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_os_cleanup.py": {
+      "exact_match": true,
+      "sha256": "12adeabb839b5d814eca732d8dd56f70811057001f91973dfd92b40ce72e01e9"
+    },
+    "components/display/tools/esp_lvgl_adapter/tools/patch_lvgl_thread_shutdown.py": {
+      "exact_match": true,
+      "sha256": "c854e9fec06c14aae9a2fd9225b866d57ae41074db92d8df1b38da983d202348"
+    }
+  },
+  "dependencies_lock_exact_after_stage_path_normalization": true,
+  "nonempty_output_rejected_without_modification": true,
+  "private_workspace_paths_in_packet": false,
+  "hardware_pixel_equality": "visual check required, not asserted"
+}

@@ -1,0 +1,71 @@
+{
+  "board": "tab5",
+  "board_label": "M5Stack Tab5",
+  "native_size": [
+    720,
+    1280
+  ],
+  "default_logical_size": [
+    1280,
+    720
+  ],
+  "rotations": [
+    270,
+    90,
+    180,
+    0
+  ],
+  "final_rotation": 270,
+  "reference_lvgl": "9.6.0",
+  "matrix_object_transforms": false,
+  "source_native_size": [
+    320,
+    480
+  ],
+  "source_screen_rotation": 0,
+  "crop": [
+    40,
+    160,
+    240,
+    200
+  ],
+  "format": "RGB565 little-endian",
+  "scenes": [
+    "control",
+    "image-rot30",
+    "image-rot90",
+    "image-scale",
+    "image-rot30-scale",
+    "object-rot30",
+    "object-rot90",
+    "object-scale",
+    "object-rot30-scale",
+    "parent-rot30",
+    "parent-scale",
+    "nested-rotations",
+    "nested-scales",
+    "layered-object-rot30",
+    "layered-parent-child",
+    "clipped-object-rot30"
+  ],
+  "source_uncompressed_sha256": {
+    "control": "8d023a86cdf0b1f95d92dd5917eb0f9242e2fe929fca9717aaa653b0ed86efb2",
+    "image-rot30": "8663a1c9e4ffc3ad31a9222d4ca473757ed91511acfb1ffbacd669c6af51bde3",
+    "image-rot90": "92adb336b3ddd59671bfba57b5cf4e713f783524c55cae1d30a57acc9307f410",
+    "image-scale": "8a998300d74e3e389e996cf7b18e319179dd974d10b90780c41455e1c301eb9e",
+    "image-rot30-scale": "d6bd5fb7d03fb228e68e5236fc4d245bebfd51794b95f84307c3369f832cbe51",
+    "object-rot30": "61bf1b1bcacae96a6b28aa57de2470ae6ba95500dfbb2c8fc545d8e8feaf1736",
+    "object-rot90": "bf99fb530b38f1a91d21d84e002961a42d73fe39fb331b3ed8a6d622a03ca9f4",
+    "object-scale": "ec73ab4e0dfc73e9894021d5a4f9454d0f907cb7569c2850d9543324892ada32",
+    "object-rot30-scale": "86caa3c078711e04a3db5b1504a0bb3af503a3599aea630c9c1b7bd76652dc07",
+    "parent-rot30": "efd1905c91db682be1ae87223a93cb275bc285d4d2a5e01f2e62bf96b18374f7",
+    "parent-scale": "c966cb76b4a9e66b493b6b82a4d3418a2f4b2cdccfff3a63331cf9d6a521ec76",
+    "nested-rotations": "01b7547745b424411105ced65cce9e08430ab0665db11eb46d0f71f9c9b5e121",
+    "nested-scales": "96d021feb67a5b981c93c6363303d59650c2bff94534fa8cfbc0ef0369bf56a5",
+    "layered-object-rot30": "c4e4273e3d703bb97b0bf119295465cff74b0432bba24944f2711c70a6246cfd",
+    "layered-parent-child": "30731da83458aba0f7fad7803e9b023dda8bbdf2cdb621f17ebd9bb0a195240b",
+    "clipped-object-rot30": "3c9114b954ee02895b8635a09307479be17cccf1f640afe7552eb4251540cf3a"
+  },
+  "embedded_asset_sha256": "a83ce7f0e5488ce64d045e4c3fefb498d482a2f63ccdf6717eb9502ace7ea886",
+  "automatic_pixel_equality": false
+}
