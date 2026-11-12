@@ -70,7 +70,7 @@ sur Windows. Garder la protection Windows active.
   géométrie du cache, préparation en blocs et libération du cache.
 - La compilation ESP-IDF et les segments réels de flash sont contrôlés.
 
-**L’exécution sur votre Tab5 reste à valider.** Les temps du simulateur
+**Le Tab5 V4 a terminé le benchmark et ses 16 cycles : PASS, sans échec PPA signalé.** Le journal reçu contient 17 mesures complètes et une ligne d’interface tronquée. Une perte de 1 420 octets pendant les réinitialisations reste à examiner avec le [test mémoire V5](../pr818-cartes-v5/README.md). Les temps du simulateur
 ne sont pas des mesures du matériel. Aucun gain FPS du Tab5 ne peut être
 retenu à partir des phases V2/V3 ayant `failed=1`.
 

@@ -1,0 +1,38 @@
+{
+  "board": "waveshare-7b",
+  "revision": "after_v5",
+  "commit": "9db972e7008d4c5adab0fde59dc3b0b1343dac4c",
+  "fixtures_commit": "6cf0eed1277032489fd0281890b9a326c93f063f",
+  "rotation": 180,
+  "logical_size": [
+    1024,
+    600
+  ],
+  "flash_size": "32MB",
+  "cpu_mhz": 360,
+  "psram_mhz": 200,
+  "l2_cache_kib": 128,
+  "cache_budget_kib": 4096,
+  "sensor_capture": false,
+  "rendering_patch": "source/candidate-v5.patch",
+  "rendering_patch_sha256": "8d30dfb636c984de21d2eb9d5b72d55fce47c4aa079c2ea8b1276fdf3e2594d8",
+  "ppa_workaround": "stock",
+  "cache_prepare_max_bytes": 131072,
+  "ppa_no_progress_timeout_ms": 250,
+  "memory_cycles": 64,
+  "memory_warmups": 4,
+  "memory_cumulative_budget_bytes": 256,
+  "os_mutex_cleanup": true,
+  "test_mode": "restart_memory_only",
+  "hardware_validation": "pending",
+  "esp_idf": "5.5.6",
+  "lvgl": "9.6.0",
+  "flash_offset": "0x0",
+  "firmware_size": 2197824,
+  "firmware_sha256": "7f6f01932ddaedeae249fdc3cdb2a1d5eb7fb5df3a6f16daa5bb97a675dc396f",
+  "flash_settings": {
+    "flash_mode": "dio",
+    "flash_size": "32MB",
+    "flash_freq": "40m"
+  }
+}

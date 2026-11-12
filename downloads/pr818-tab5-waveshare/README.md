@@ -1,6 +1,6 @@
 # PR818 V2 — firmwares individuels Tab5 et Waveshare 7B
 
-> **Suivi matériel Tab5 :** V2 échoue pendant la préparation du cache puis redémarre ; V3 s’arrête proprement mais dépasse encore le délai PPA. Utiliser le [test Tab5 V4](../pr818-tab5-v4/README.md), qui prépare le cache en blocs bornés, avec le pilote d’origine. Sa validation matérielle reste attendue. Le Waveshare V2 termine ses 18 mesures avec `failed=0` et ses 16 cycles de création/destruction.
+> **Suivi matériel :** le Tab5 V4 termine le benchmark et ses 16 cycles, avec une perte mémoire cumulée à examiner. La suite est le [test mémoire V5 pour Tab5 et Waveshare](../pr818-cartes-v5/README.md) : 64 cycles et bilan cumulé, sans refaire le long benchmark. La validation physique de V5 reste attendue.
 
 Un blocage antivirus Windows a été signalé lors du téléchargement du ZIP V2.
 La cause et le nom de la détection restent à établir. Ne désactivez pas la protection
