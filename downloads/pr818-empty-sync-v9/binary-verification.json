@@ -1,0 +1,20 @@
+[
+  {
+    "board": "tab5",
+    "firmware": "results/tab5/native64/tab5-empty-sync-v9-native64.bin",
+    "sha256": "bf9427d47cd88162793aa1e0f0e892ecc96a2786242fd91107db19c4ab385a28",
+    "bytes": 2808832,
+    "source_config_asset_verified": true,
+    "protocol": 9,
+    "hardware_result": "pending"
+  },
+  {
+    "board": "waveshare-7b",
+    "firmware": "results/waveshare-7b/native64/waveshare-7b-empty-sync-v9-native64.bin",
+    "sha256": "53474d3f44f8b874e95750cd39802b84d9e993a9d1fc381ba7ad6f2894b7c663",
+    "bytes": 2147280,
+    "source_config_asset_verified": true,
+    "protocol": 9,
+    "hardware_result": "pending"
+  }
+]

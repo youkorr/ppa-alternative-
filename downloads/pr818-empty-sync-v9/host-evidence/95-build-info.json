@@ -1,0 +1,15 @@
+{
+  "version": "95",
+  "archive": "/workspace/work/pr818-empty-sync/host-tests/95/patched.a",
+  "lvgl": "/workspace/work/pr818-empty-sync/host-tests/95/lvgl",
+  "flags": [
+    "cc",
+    "-O2",
+    "-DLV_CONF_INCLUDE_SIMPLE",
+    "-I/workspace/work/pr818-empty-sync/host-tests/95",
+    "-I/workspace/work/pr818-empty-sync/host-tests/95/lvgl",
+    "-DLV_DRAW_TRANSFORM_USE_MATRIX=0",
+    "-DLV_USE_OS=0",
+    "-DESP_LVGL_ADAPTER_OS_MUTEX_CLEANUP=1"
+  ]
+}

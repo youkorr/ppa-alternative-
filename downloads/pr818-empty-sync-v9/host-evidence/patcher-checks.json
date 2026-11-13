@@ -1,0 +1,14 @@
+[
+  {
+    "version": "96",
+    "idempotent": true,
+    "source_cache_unchanged": true,
+    "bad_layout_rejected_before_writes": true
+  },
+  {
+    "version": "95",
+    "idempotent": true,
+    "source_cache_unchanged": true,
+    "bad_layout_rejected_before_writes": true
+  }
+]

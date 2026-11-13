@@ -1,0 +1,1 @@
+PASS LVGL9.5: 864 pixel-exact frame comparisons; automatic refresh/events/other timer; 1/2/3 buffers; 4 rotations; partial/full/direct; async flush wait; default/NULL/isolation/recreation

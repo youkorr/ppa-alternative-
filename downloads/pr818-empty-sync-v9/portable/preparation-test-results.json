@@ -1,0 +1,17 @@
+{
+  "fresh_preparation_passed": true,
+  "protocol": 9,
+  "sync_modes": [
+    "eager",
+    "deferred"
+  ],
+  "source_commit": "f8ce296abfe2f6cc1fa38fc5ef1928361f1dc3a7",
+  "source_tree": "88fec6fe91b499dfd9ab62face91a2673ff429a0",
+  "private_wait_observer": {
+    "test_only": true,
+    "algorithm_changed": false,
+    "source_sha256": "6adcd8111aea9226bbe9bb5a235a07a0d31617642f27f46f43be7715e4de2ab2",
+    "instrumented_sha256": "d18aab1968f8db2a183a27d35773cea835d0e6835573a98ff4b7e3765fad07d9",
+    "metric": "inclusive wall time for native wait calls; pending was true at entry, not proof of entire call blocked"
+  }
+}

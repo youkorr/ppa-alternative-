@@ -1,0 +1,16 @@
+[
+  {
+    "lvgl": "96",
+    "passed": true,
+    "frames_exact": 864,
+    "test_source_sha256": "02fc9ca76ab9439e1e65e93961bae39db624fc0c96c051e471c6aa98fdebedf2",
+    "output": "PASS LVGL9.6: 864 pixel-exact frame comparisons; automatic refresh/events/other timer; 1/2/3 buffers; 4 rotations; partial/full/direct; async flush wait; default/NULL/isolation/recreation; custom sync callbacks preserved"
+  },
+  {
+    "lvgl": "95",
+    "passed": true,
+    "frames_exact": 864,
+    "test_source_sha256": "02fc9ca76ab9439e1e65e93961bae39db624fc0c96c051e471c6aa98fdebedf2",
+    "output": "PASS LVGL9.5: 864 pixel-exact frame comparisons; automatic refresh/events/other timer; 1/2/3 buffers; 4 rotations; partial/full/direct; async flush wait; default/NULL/isolation/recreation"
+  }
+]

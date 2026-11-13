@@ -1,0 +1,24 @@
+test_cache_contamination_rejected (__main__.ParserTests.test_cache_contamination_rejected) ... ok
+test_complete_paired_captures_and_same_mode_comparison (__main__.ParserTests.test_complete_paired_captures_and_same_mode_comparison) ... ok
+test_crash_after_done_rejected (__main__.ParserTests.test_crash_after_done_rejected) ... ok
+test_declared_pair_order_enforced (__main__.ParserTests.test_declared_pair_order_enforced) ... ok
+test_duplicate_capture_rejected (__main__.ParserTests.test_duplicate_capture_rejected) ... ok
+test_duplicate_cost_cell_rejected (__main__.ParserTests.test_duplicate_cost_cell_rejected) ... ok
+test_failed_or_impossible_cost_rejected (__main__.ParserTests.test_failed_or_impossible_cost_rejected) ... ok
+test_incomplete_mode_or_duplicate_row_rejected (__main__.ParserTests.test_incomplete_mode_or_duplicate_row_rejected) ... ok
+test_inconsistent_fps_or_mean_rejected (__main__.ParserTests.test_inconsistent_fps_or_mean_rejected) ... ok
+test_invalid_scanout_or_heap_rejected (__main__.ParserTests.test_invalid_scanout_or_heap_rejected) ... ok
+test_log_fields_match_real_firmware_source (__main__.ParserTests.test_log_fields_match_real_firmware_source) ... ok
+test_manual_count_rejected (__main__.ParserTests.test_manual_count_rejected) ... ok
+test_missing_completion_rejected (__main__.ParserTests.test_missing_completion_rejected) ... ok
+test_mixed_identity_and_configuration_rejected (__main__.ParserTests.test_mixed_identity_and_configuration_rejected) ... ok
+test_tick_mismatch_rejected (__main__.ParserTests.test_tick_mismatch_rejected) ... ok
+test_timer_override_rejected (__main__.ParserTests.test_timer_override_rejected) ... ok
+test_timing_sum_and_call_counts_rejected (__main__.ParserTests.test_timing_sum_and_call_counts_rejected) ... ok
+test_two_boards_kept_separate (__main__.ParserTests.test_two_boards_kept_separate) ... ok
+test_wrong_engine_policy_rejected (__main__.ParserTests.test_wrong_engine_policy_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 19 tests in 0.051s
+
+OK
