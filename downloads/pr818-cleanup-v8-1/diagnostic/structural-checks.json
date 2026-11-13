@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "measured_phase_path_identical": true,
+  "scene_and_trace_functions_identical": true,
+  "existing_protocol_rows_identical": true,
+  "cleanup_call_order_preserved": true,
+  "observer_arms_only_after_final_official_phase": true,
+  "observer_mux_contains_no_cleanup_or_logging": true,
+  "pinned_source_guard_and_repeat_rejection": true,
+  "input_unchanged": true,
+  "patch": {
+    "diagnostic": "8.1",
+    "test_only": true,
+    "source_sha256": "05b46f6c62b895327b433cc43c280382cb9353447ee13d6e04e78d3e3b24d9be",
+    "instrumented_sha256": "652a4637d6fafe59f4ea502e1373fb5bee573936a978db0dbeeac03a9b1f63d3",
+    "measured_work_changed": false,
+    "cleanup_operations_reordered": false,
+    "observer": "best-effort task created after final official AB_COST; no abort or recovery action",
+    "observer_console": "IDF panic_print_str output helper only; UART plus USB secondary, explicit USB packet flush; no panic handler",
+    "watch_threshold_ms": 5000,
+    "watch_interval_ms": 1000
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "board": "waveshare-7b",
+  "variant": "official",
+  "source_commit": "da53cfaa90b63085ef21f721f7593b5e2747d448",
+  "source_tree": "30143f7007ff8234c352b4c72c3ba9308441a81e",
+  "pristine_lvgl_core": {
+    "src/lv_init.c": "1efcd8adce5bba9ba79aa3ad8eb3f8431c616b95316616bcccca375562f29b73",
+    "src/core/lv_refr.c": "397171ec16a0a3496f415c192bea702fdb4c57e0be56acab830434da021f37ef",
+    "src/display/lv_display.c": "010d404e564ec9a4498a618903bd39691b247bfc3ddbee409745b8facfda052f",
+    "src/display/lv_display_private.h": "44dfb0e8207917c437de3a0f2777b147e7d7f232ed90a6ed7af2c4282960eddc",
+    "src/osal/lv_freertos.c": "1636081fb032de0da2bf46787621d1ae4ed0076e9ebafe8f2e5be19945abc2af",
+    "include/lvgl/display/lv_display.h": "1fa21227d6a50ac4abbc39a7270b663927bba50eaf20de63c5949968334f9f48"
+  },
+  "flash_size": "32MB",
+  "protocol": "V8",
+  "measured_frames_per_mode": 64,
+  "rounds": 2,
+  "timer_modes": [
+    "legacy",
+    "strict"
+  ],
+  "timings_inclusive": true,
+  "production_algorithm_changed": false,
+  "firmware_sha256": "cf990bea5cedd5573aa6d2b122c13ecebaab9ee42b46346fb2b32dd903d983ca",
+  "firmware_bytes": 2118784,
+  "flash_address": "0x0",
+  "hardware_measurement": "pending",
+  "probe_component": "/workspace/work/board-test-kit/stage/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9/components/esp_lcd",
+  "ortho_compile_command": null,
+  "firmware_file": "waveshare-7b-cleanup-v8-1-official.bin",
+  "linker_wrap_symbols_verified": [
+    "__wrap_esp_lcd_panel_draw_bitmap",
+    "ab_scanout_latched_from_isr",
+    "__wrap_lv_draw_buf_copy",
+    "__wrap_esp_cache_msync",
+    "__wrap_ppa_do_scale_rotate_mirror",
+    "__wrap_ppa_do_fill",
+    "__wrap_ppa_do_blend"
+  ],
+  "cache_wrapper_iram_symbol": "4ff01c0c T __wrap_esp_cache_msync",
+  "diagnostic_revision": "V8.1",
+  "purpose": "locate post-measurement cleanup stall; no rendering algorithm change",
+  "measurements_identical_to_v8": true
+}

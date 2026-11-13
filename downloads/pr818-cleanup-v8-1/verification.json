@@ -1,0 +1,11 @@
+{
+  "firmware_sha256": "cf990bea5cedd5573aa6d2b122c13ecebaab9ee42b46346fb2b32dd903d983ca",
+  "firmware_bytes": 2118784,
+  "merged_segments_verified_by_builder": true,
+  "main_source_matches_patch_and_compiled_metadata": true,
+  "timed_loop_byte_identical_to_v8": true,
+  "portable_preparation_matches_compiled_fixture": true,
+  "v8_parser_tests_passed": 18,
+  "cleanup_observer_and_raw_console_linked": true,
+  "hardware_stall_stage": "pending"
+}
