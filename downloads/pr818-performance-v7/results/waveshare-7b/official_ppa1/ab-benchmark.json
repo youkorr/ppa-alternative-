@@ -1,0 +1,32 @@
+{
+  "board": "waveshare-7b",
+  "variant": "official_ppa1",
+  "source_commit": "da53cfaa90b63085ef21f721f7593b5e2747d448",
+  "source_tree": "30143f7007ff8234c352b4c72c3ba9308441a81e",
+  "rotation": 180,
+  "logical_size": [
+    1024,
+    600
+  ],
+  "panel_framebuffers": 3,
+  "tear_mode": "TRIPLE_PARTIAL",
+  "batch_limit": null,
+  "software_draw_units": 1,
+  "stock_ppa_requested": true,
+  "rounds": 3,
+  "warmup_frames": 16,
+  "measured_frames": 128,
+  "dashboard_full_redraw": false,
+  "dpi_scanout_probe_required": true,
+  "hardware_measurement": "pending",
+  "sensor_capture": false,
+  "source_frames": "four PSRAM RGB565 banks precomputed outside timed intervals",
+  "immutable_wallpaper_sha256": "1085e094c1b2f2ac075137eca0b37c307676ca336fc33d450fe6f80dbaef4e72",
+  "fixture_sha256": {
+    "ab_main.c": "67a38a2352c3cae46d40e3e9fe5263eaf350390acb6ea07cf29884409f1d428d",
+    "ab_scanout_probe.c": "4ed68056ee0da6bb40900bc7acbc40be810974ee2b4d54c8625ca5f444c9bc11",
+    "ab_scanout_probe.h": "d8cd1c124724461194afa8ec11f64d36914e07d5d76eb2402b64fa86c9265b8b",
+    "patch_dpi_probe.py": "a245d18a9eb6e3521ee3b0fff3c775106984854f9e9001bc18efa24430b3184b"
+  },
+  "comparison_rule": "same board, source pixels, CPU/PSRAM/L2/tick rates and 3 panel buffers; stock TRIPLE_PARTIAL versus intentional native DOUBLE_DIRECT architecture change"
+}

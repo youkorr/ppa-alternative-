@@ -1,0 +1,14 @@
+{
+  "plain": {
+    "returncode": 0,
+    "summary": [
+      "342 of 342 cases passed"
+    ]
+  },
+  "mt": {
+    "returncode": 0,
+    "summary": [
+      "353 of 353 cases passed"
+    ]
+  }
+}

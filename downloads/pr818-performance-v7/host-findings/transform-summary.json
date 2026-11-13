@@ -1,0 +1,57 @@
+{
+  "lvgl": "9.6.0",
+  "hardware": false,
+  "independent_oracle_object_matrix": false,
+  "subject_object_matrix": true,
+  "full_library_rebuilds": false,
+  "style_cases_per_variant": 256,
+  "style_variants": 3,
+  "custom_matrix_renders": 32,
+  "policy_default_and_isolation": "pass",
+  "negative_controls": {
+    "disabled_policy_direct_different_pixels": 6741,
+    "disabled_policy_partial_returncode": 0,
+    "disabled_policy_partial_bounds_error": false,
+    "disabled_policy_partial_different_pixels": 0
+  },
+  "fake_ppa_statistics": {
+    "frames": 256,
+    "ppa_transactions": 742,
+    "ppa_fills": 434,
+    "ppa_pixels": 15085968
+  },
+  "source_sha256": "ad307428cb6138f77d83f8a68ff3e1dafb775358a606121392c61f0e89132d4c",
+  "counts": {
+    "cpu": {
+      "exact": 218,
+      "within_sampling_bounds": 256,
+      "direct_exact": 128
+    },
+    "fake-ppa": {
+      "exact": 218,
+      "within_sampling_bounds": 256,
+      "direct_exact": 128
+    },
+    "pthread": {
+      "exact": 218,
+      "within_sampling_bounds": 256,
+      "direct_exact": 128
+    }
+  },
+  "lvgl_archives_reused": {
+    "oracle": {
+      "path": "/workspace/work/pr818-upstream-tests96/test/transform-build/oracle.a",
+      "sha256": "90a7a0abb431baf3090f3d4a34a3d192c395def2185d6209a680d40225663e93"
+    },
+    "cpu": {
+      "path": "/workspace/work/pr818-upstream-tests96/test/transform-build/cpu.a",
+      "sha256": "6bb4cff2f1d64551d1ca525802ec68cb6b4cbf28dd22cd2cf6fdfb557e0629d5"
+    },
+    "pthread": {
+      "path": "/workspace/work/pr818-upstream-tests96/test/transform-build/pthread.a",
+      "sha256": "4c153f79373485976619fd324e8ea1a823429368e701c52fc206058dc146da2e"
+    }
+  },
+  "rationale": "Only the draw-unit MAX_BATCH compile-time macro changes; matched LVGL9.6 libraries and identical lv_conf.h reused. Every subject executable recompiles the actual draw unit with MAX_BATCH=128.",
+  "max_batch": 128
+}

@@ -1,0 +1,58 @@
+[
+  {
+    "board": "tab5",
+    "variant": "native128",
+    "config_verified": true,
+    "wallpaper_exact_bytes_offset": 199352,
+    "firmware_sha256": "9fd58038a4b33cec5444802a12abc2156e7e4c832b5e741b0ddf124614894960"
+  },
+  {
+    "board": "tab5",
+    "variant": "native64",
+    "config_verified": true,
+    "wallpaper_exact_bytes_offset": 199352,
+    "firmware_sha256": "3a243d1ab3be3021be1a5c075624bcbc1a591b17320c52b1d5de1b864b4174db"
+  },
+  {
+    "board": "tab5",
+    "variant": "official",
+    "config_verified": true,
+    "wallpaper_exact_bytes_offset": 198120,
+    "firmware_sha256": "aee7bf8932245104087d4a97b33144e1190392a9ed64f8cb255b8dde56082a78"
+  },
+  {
+    "board": "tab5",
+    "variant": "official_ppa1",
+    "config_verified": true,
+    "wallpaper_exact_bytes_offset": 198040,
+    "firmware_sha256": "2082ac47e447477a44b8e54c96ddf5e9e11df6397b29a1a826363680791b3d49"
+  },
+  {
+    "board": "waveshare-7b",
+    "variant": "native128",
+    "config_verified": true,
+    "wallpaper_exact_bytes_offset": 190848,
+    "firmware_sha256": "62dfe5b78596363f65435936223fe213cc72a400ac499dbbf542b2f84cea2610"
+  },
+  {
+    "board": "waveshare-7b",
+    "variant": "native64",
+    "config_verified": true,
+    "wallpaper_exact_bytes_offset": 190848,
+    "firmware_sha256": "f8cea3f599ef0888c1fe5b3d86a42cb0d9eab72045da3a607ddf0d172eb707f8"
+  },
+  {
+    "board": "waveshare-7b",
+    "variant": "official",
+    "config_verified": true,
+    "wallpaper_exact_bytes_offset": 189624,
+    "firmware_sha256": "916edbe9ed8f2af7c6168d7304d38f3c2cf87550b5e5ca4aa331f8816525ebd0"
+  },
+  {
+    "board": "waveshare-7b",
+    "variant": "official_ppa1",
+    "config_verified": true,
+    "wallpaper_exact_bytes_offset": 189544,
+    "firmware_sha256": "e7aa807a7063f105ab4bfd7cc63abd0615b9f6b513abeb9e8eaf3270d6c40118"
+  }
+]

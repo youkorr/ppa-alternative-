@@ -1,0 +1,181 @@
+{
+  "experimental_compile_macro": "LV_DRAW_ORTHO_MAX_BATCH=128",
+  "production_source_modified": false,
+  "source_revision": "4dfac1c4c0e727aaf0a4d772599e732ca359968c",
+  "hardware": false,
+  "work_counters": {
+    "hardware": false,
+    "native_size": [
+      720,
+      1280
+    ],
+    "logical_size": [
+      1280,
+      720
+    ],
+    "screen_rotation": 90,
+    "format": "RGB565",
+    "backend": "fake PPA",
+    "note": "Work-counter comparison only; not physical speed. Last-cover prototype uses existing opaque-fill covers predicate after tile reach is known.",
+    "results": [
+      {
+        "variant": "base64",
+        "scene": "48-card dashboard",
+        "batches": 3,
+        "tiles": 30,
+        "unread": 15,
+        "general": 193,
+        "bytes_drawn": 6524624,
+        "bytes_turned": 4394792,
+        "wait_requests": 39,
+        "different_pixels": 0,
+        "frame_sha256": "0e1db7134088d2b5b7a800c2da26bc275d19cddc76fab7b6fd265fb5666acd1e"
+      },
+      {
+        "variant": "base64",
+        "scene": "dashboard plus opaque overlay",
+        "batches": 4,
+        "tiles": 42,
+        "unread": 15,
+        "general": 197,
+        "bytes_drawn": 11089752,
+        "bytes_turned": 7465772,
+        "wait_requests": 62,
+        "different_pixels": 0,
+        "frame_sha256": "46fbb0a1904559570813061b15d2c24450ffa1c7b1ceda18c74c59abe2a70ade"
+      },
+      {
+        "variant": "batch128",
+        "scene": "48-card dashboard",
+        "batches": 2,
+        "tiles": 22,
+        "unread": 15,
+        "general": 193,
+        "bytes_drawn": 6524624,
+        "bytes_turned": 3088336,
+        "wait_requests": 26,
+        "different_pixels": 0,
+        "frame_sha256": "0e1db7134088d2b5b7a800c2da26bc275d19cddc76fab7b6fd265fb5666acd1e",
+        "rotation_traffic_reduction_percent": 29.727
+      },
+      {
+        "variant": "batch128",
+        "scene": "dashboard plus opaque overlay",
+        "batches": 2,
+        "tiles": 28,
+        "unread": 15,
+        "general": 197,
+        "bytes_drawn": 11089752,
+        "bytes_turned": 5060144,
+        "wait_requests": 38,
+        "different_pixels": 0,
+        "frame_sha256": "46fbb0a1904559570813061b15d2c24450ffa1c7b1ceda18c74c59abe2a70ade",
+        "rotation_traffic_reduction_percent": 32.222
+      },
+      {
+        "variant": "last-cover",
+        "scene": "48-card dashboard",
+        "batches": 3,
+        "tiles": 30,
+        "unread": 15,
+        "general": 193,
+        "bytes_drawn": 6524624,
+        "bytes_turned": 4394792,
+        "wait_requests": 39,
+        "different_pixels": 0,
+        "frame_sha256": "0e1db7134088d2b5b7a800c2da26bc275d19cddc76fab7b6fd265fb5666acd1e"
+      },
+      {
+        "variant": "last-cover",
+        "scene": "dashboard plus opaque overlay",
+        "batches": 4,
+        "tiles": 42,
+        "unread": 15,
+        "general": 197,
+        "bytes_drawn": 11089752,
+        "bytes_turned": 7465772,
+        "wait_requests": 62,
+        "different_pixels": 0,
+        "frame_sha256": "46fbb0a1904559570813061b15d2c24450ffa1c7b1ceda18c74c59abe2a70ade"
+      }
+    ]
+  },
+  "legacy": {
+    "plain": {
+      "returncode": 0,
+      "summary": [
+        "342 of 342 cases passed"
+      ]
+    },
+    "mt": {
+      "returncode": 0,
+      "summary": [
+        "353 of 353 cases passed"
+      ]
+    }
+  },
+  "transforms": {
+    "lvgl": "9.6.0",
+    "hardware": false,
+    "independent_oracle_object_matrix": false,
+    "subject_object_matrix": true,
+    "full_library_rebuilds": false,
+    "style_cases_per_variant": 256,
+    "style_variants": 3,
+    "custom_matrix_renders": 32,
+    "policy_default_and_isolation": "pass",
+    "negative_controls": {
+      "disabled_policy_direct_different_pixels": 6741,
+      "disabled_policy_partial_returncode": 0,
+      "disabled_policy_partial_bounds_error": false,
+      "disabled_policy_partial_different_pixels": 0
+    },
+    "fake_ppa_statistics": {
+      "frames": 256,
+      "ppa_transactions": 742,
+      "ppa_fills": 434,
+      "ppa_pixels": 15085968
+    },
+    "source_sha256": "ad307428cb6138f77d83f8a68ff3e1dafb775358a606121392c61f0e89132d4c",
+    "counts": {
+      "cpu": {
+        "exact": 218,
+        "within_sampling_bounds": 256,
+        "direct_exact": 128
+      },
+      "fake-ppa": {
+        "exact": 218,
+        "within_sampling_bounds": 256,
+        "direct_exact": 128
+      },
+      "pthread": {
+        "exact": 218,
+        "within_sampling_bounds": 256,
+        "direct_exact": 128
+      }
+    },
+    "lvgl_archives_reused": {
+      "oracle": {
+        "path": "/workspace/work/pr818-upstream-tests96/test/transform-build/oracle.a",
+        "sha256": "90a7a0abb431baf3090f3d4a34a3d192c395def2185d6209a680d40225663e93"
+      },
+      "cpu": {
+        "path": "/workspace/work/pr818-upstream-tests96/test/transform-build/cpu.a",
+        "sha256": "6bb4cff2f1d64551d1ca525802ec68cb6b4cbf28dd22cd2cf6fdfb557e0629d5"
+      },
+      "pthread": {
+        "path": "/workspace/work/pr818-upstream-tests96/test/transform-build/pthread.a",
+        "sha256": "4c153f79373485976619fd324e8ea1a823429368e701c52fc206058dc146da2e"
+      }
+    },
+    "rationale": "Only the draw-unit MAX_BATCH compile-time macro changes; matched LVGL9.6 libraries and identical lv_conf.h reused. Every subject executable recompiles the actual draw unit with MAX_BATCH=128.",
+    "max_batch": 128
+  },
+  "scope_notes": [
+    "No physical throughput gain is measured here.",
+    "CPU bytes_drawn are unchanged in the probes; an implementation limited by CPU painting may gain little despite less modeled rotation traffic.",
+    "The last-cover prototype changed no counter in either representative probe.",
+    "Jobs storage rises by about2304bytes on32-bitP4 from64to128, plus retained task descriptors; real internal tile availability must be checked.",
+    "Wait counts are requests, not blocked microseconds."
+  ]
+}

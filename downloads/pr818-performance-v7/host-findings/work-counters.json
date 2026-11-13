@@ -1,0 +1,95 @@
+{
+  "hardware": false,
+  "native_size": [
+    720,
+    1280
+  ],
+  "logical_size": [
+    1280,
+    720
+  ],
+  "screen_rotation": 90,
+  "format": "RGB565",
+  "backend": "fake PPA",
+  "note": "Work-counter comparison only; not physical speed. Last-cover prototype uses existing opaque-fill covers predicate after tile reach is known.",
+  "results": [
+    {
+      "variant": "base64",
+      "scene": "48-card dashboard",
+      "batches": 3,
+      "tiles": 30,
+      "unread": 15,
+      "general": 193,
+      "bytes_drawn": 6524624,
+      "bytes_turned": 4394792,
+      "wait_requests": 39,
+      "different_pixels": 0,
+      "frame_sha256": "0e1db7134088d2b5b7a800c2da26bc275d19cddc76fab7b6fd265fb5666acd1e"
+    },
+    {
+      "variant": "base64",
+      "scene": "dashboard plus opaque overlay",
+      "batches": 4,
+      "tiles": 42,
+      "unread": 15,
+      "general": 197,
+      "bytes_drawn": 11089752,
+      "bytes_turned": 7465772,
+      "wait_requests": 62,
+      "different_pixels": 0,
+      "frame_sha256": "46fbb0a1904559570813061b15d2c24450ffa1c7b1ceda18c74c59abe2a70ade"
+    },
+    {
+      "variant": "batch128",
+      "scene": "48-card dashboard",
+      "batches": 2,
+      "tiles": 22,
+      "unread": 15,
+      "general": 193,
+      "bytes_drawn": 6524624,
+      "bytes_turned": 3088336,
+      "wait_requests": 26,
+      "different_pixels": 0,
+      "frame_sha256": "0e1db7134088d2b5b7a800c2da26bc275d19cddc76fab7b6fd265fb5666acd1e"
+    },
+    {
+      "variant": "batch128",
+      "scene": "dashboard plus opaque overlay",
+      "batches": 2,
+      "tiles": 28,
+      "unread": 15,
+      "general": 197,
+      "bytes_drawn": 11089752,
+      "bytes_turned": 5060144,
+      "wait_requests": 38,
+      "different_pixels": 0,
+      "frame_sha256": "46fbb0a1904559570813061b15d2c24450ffa1c7b1ceda18c74c59abe2a70ade"
+    },
+    {
+      "variant": "last-cover",
+      "scene": "48-card dashboard",
+      "batches": 3,
+      "tiles": 30,
+      "unread": 15,
+      "general": 193,
+      "bytes_drawn": 6524624,
+      "bytes_turned": 4394792,
+      "wait_requests": 39,
+      "different_pixels": 0,
+      "frame_sha256": "0e1db7134088d2b5b7a800c2da26bc275d19cddc76fab7b6fd265fb5666acd1e"
+    },
+    {
+      "variant": "last-cover",
+      "scene": "dashboard plus opaque overlay",
+      "batches": 4,
+      "tiles": 42,
+      "unread": 15,
+      "general": 197,
+      "bytes_drawn": 11089752,
+      "bytes_turned": 7465772,
+      "wait_requests": 62,
+      "different_pixels": 0,
+      "frame_sha256": "46fbb0a1904559570813061b15d2c24450ffa1c7b1ceda18c74c59abe2a70ade"
+    }
+  ]
+}

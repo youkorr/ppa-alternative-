@@ -1,0 +1,66 @@
+[
+  {
+    "board": "tab5",
+    "variant": "official",
+    "source_files_matched": 108,
+    "source_commit": "da53cfaa90b63085ef21f721f7593b5e2747d448",
+    "source_tree": "30143f7007ff8234c352b4c72c3ba9308441a81e",
+    "success": true
+  },
+  {
+    "board": "tab5",
+    "variant": "official_ppa1",
+    "source_files_matched": 108,
+    "source_commit": "da53cfaa90b63085ef21f721f7593b5e2747d448",
+    "source_tree": "30143f7007ff8234c352b4c72c3ba9308441a81e",
+    "success": true
+  },
+  {
+    "board": "tab5",
+    "variant": "native64",
+    "source_files_matched": 124,
+    "source_commit": "79b87e9e8703e85e66812850414428c4cd978865",
+    "source_tree": "765e2a516a3a42c91d0145150e35e9c5dc41293c",
+    "success": true
+  },
+  {
+    "board": "tab5",
+    "variant": "native128",
+    "source_files_matched": 124,
+    "source_commit": "79b87e9e8703e85e66812850414428c4cd978865",
+    "source_tree": "765e2a516a3a42c91d0145150e35e9c5dc41293c",
+    "success": true
+  },
+  {
+    "board": "waveshare-7b",
+    "variant": "official",
+    "source_files_matched": 108,
+    "source_commit": "da53cfaa90b63085ef21f721f7593b5e2747d448",
+    "source_tree": "30143f7007ff8234c352b4c72c3ba9308441a81e",
+    "success": true
+  },
+  {
+    "board": "waveshare-7b",
+    "variant": "official_ppa1",
+    "source_files_matched": 108,
+    "source_commit": "da53cfaa90b63085ef21f721f7593b5e2747d448",
+    "source_tree": "30143f7007ff8234c352b4c72c3ba9308441a81e",
+    "success": true
+  },
+  {
+    "board": "waveshare-7b",
+    "variant": "native64",
+    "source_files_matched": 124,
+    "source_commit": "79b87e9e8703e85e66812850414428c4cd978865",
+    "source_tree": "765e2a516a3a42c91d0145150e35e9c5dc41293c",
+    "success": true
+  },
+  {
+    "board": "waveshare-7b",
+    "variant": "native128",
+    "source_files_matched": 124,
+    "source_commit": "79b87e9e8703e85e66812850414428c4cd978865",
+    "source_tree": "765e2a516a3a42c91d0145150e35e9c5dc41293c",
+    "success": true
+  }
+]

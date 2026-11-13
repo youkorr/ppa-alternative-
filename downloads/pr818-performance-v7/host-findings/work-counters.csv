@@ -1,0 +1,7 @@
+variant,scene,batches,tiles,unread,general,bytes_drawn,bytes_turned,wait_requests,different_pixels,frame_sha256
+base64,48-card dashboard,3,30,15,193,6524624,4394792,39,0,0e1db7134088d2b5b7a800c2da26bc275d19cddc76fab7b6fd265fb5666acd1e
+base64,dashboard plus opaque overlay,4,42,15,197,11089752,7465772,62,0,46fbb0a1904559570813061b15d2c24450ffa1c7b1ceda18c74c59abe2a70ade
+batch128,48-card dashboard,2,22,15,193,6524624,3088336,26,0,0e1db7134088d2b5b7a800c2da26bc275d19cddc76fab7b6fd265fb5666acd1e
+batch128,dashboard plus opaque overlay,2,28,15,197,11089752,5060144,38,0,46fbb0a1904559570813061b15d2c24450ffa1c7b1ceda18c74c59abe2a70ade
+last-cover,48-card dashboard,3,30,15,193,6524624,4394792,39,0,0e1db7134088d2b5b7a800c2da26bc275d19cddc76fab7b6fd265fb5666acd1e
+last-cover,dashboard plus opaque overlay,4,42,15,197,11089752,7465772,62,0,46fbb0a1904559570813061b15d2c24450ffa1c7b1ceda18c74c59abe2a70ade
