@@ -1,0 +1,8 @@
+{
+  "esp_idf": "5.5.6",
+  "test_only": true,
+  "changes_rendering_algorithm": false,
+  "source_sha256": "a0b13536fec34d3cc4a6324ab64bc9bb62fee4db39dec24133681bc3c17b8373",
+  "instrumented_sha256": "7747b447b62adf16cdb490719b167d0c2c7fd582430d251eef00a9b7ea1d4866",
+  "metric": "distinct application generations selected for DMA scanout, not VSYNC count or optical glass measurement"
+}

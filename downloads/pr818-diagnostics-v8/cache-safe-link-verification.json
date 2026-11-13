@@ -1,0 +1,13 @@
+{
+  "actual_last_elf": "waveshare-7b/native64",
+  "iram_cache_call_path": [
+    "4ff01a42 t begin_token",
+    "4ff01a94 t record",
+    "4ff01c0c T __wrap_esp_cache_msync",
+    "4ff0188a T esp_timer_get_time",
+    "4ff0a284 T xPortEnterCriticalTimeout",
+    "4ff0a4be T vPortExitCriticalMultiCore",
+    "4ff075d4 T esp_cache_msync"
+  ],
+  "object_sections_verified_for_identical_probe_source": true
+}

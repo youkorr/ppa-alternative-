@@ -1,0 +1,7 @@
+4ff01c0c T __wrap_esp_cache_msync
+4000da9e T __wrap_esp_lcd_panel_draw_bitmap
+4000ddee T __wrap_lv_draw_buf_copy
+4000e07c T __wrap_ppa_do_blend
+4000dfc8 T __wrap_ppa_do_fill
+4000df14 T __wrap_ppa_do_scale_rotate_mirror
+4ff019ce T ab_scanout_latched_from_isr

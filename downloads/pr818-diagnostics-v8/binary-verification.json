@@ -1,0 +1,42 @@
+[
+  {
+    "board": "tab5",
+    "variant": "native64",
+    "firmware": "results/tab5/native64/tab5-diagnostics-v8-native64.bin",
+    "sha256": "432353b0e80ac3087f811da485b3840a208d1987d24d57dff3798cb7b74dcd9d",
+    "bytes": 2808608,
+    "protocol_config_asset_source_verified": true,
+    "cache_wrapper_iram": "4ff01c0c T __wrap_esp_cache_msync",
+    "hardware_results": "pending"
+  },
+  {
+    "board": "tab5",
+    "variant": "official",
+    "firmware": "results/tab5/official/tab5-diagnostics-v8-official.bin",
+    "sha256": "9a50654b26eb29074fd311ca312a2deafa70ec59cb13ca9ac41d27158b68dd1d",
+    "bytes": 2777840,
+    "protocol_config_asset_source_verified": true,
+    "cache_wrapper_iram": "4ff01c0c T __wrap_esp_cache_msync",
+    "hardware_results": "pending"
+  },
+  {
+    "board": "waveshare-7b",
+    "variant": "native64",
+    "firmware": "results/waveshare-7b/native64/waveshare-7b-diagnostics-v8-native64.bin",
+    "sha256": "31ab5ea0b528b87f91fa14b83b747b0fe67e0c5e330440f548ea84c077cca57a",
+    "bytes": 2147056,
+    "protocol_config_asset_source_verified": true,
+    "cache_wrapper_iram": "4ff01c0c T __wrap_esp_cache_msync",
+    "hardware_results": "pending"
+  },
+  {
+    "board": "waveshare-7b",
+    "variant": "official",
+    "firmware": "results/waveshare-7b/official/waveshare-7b-diagnostics-v8-official.bin",
+    "sha256": "8f69c16d1e6549ccf54d91418b8fddc1e725af1c07d1e7882e24f9eb54ec1bda",
+    "bytes": 2116320,
+    "protocol_config_asset_source_verified": true,
+    "cache_wrapper_iram": "4ff01c0c T __wrap_esp_cache_msync",
+    "hardware_results": "pending"
+  }
+]

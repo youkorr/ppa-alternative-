@@ -1,0 +1,3 @@
+{"case":"legacy","manual_starts":1,"automatic_starts":1,"automatic_flushes":0,"automatic_copy_calls":1,"automatic_copy_pixel_bytes":153600,"request_callbacks_after_default_resume":2,"paused_after_manual":false,"other_timer_callbacks":16}
+{"case":"strict","manual_starts":1,"automatic_starts":0,"automatic_flushes":0,"automatic_copy_calls":0,"automatic_copy_pixel_bytes":0,"request_callbacks_after_default_resume":2,"paused_after_manual":true,"other_timer_callbacks":16}
+PASS: real LVGL legacy rearm creates empty DIRECT-sync copy; strict suppresses it and preserves other timers

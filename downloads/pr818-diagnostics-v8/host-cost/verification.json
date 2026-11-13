@@ -1,0 +1,14 @@
+{
+  "hardware_results": "pending",
+  "p4_object_compile": "passed -Wall -Wextra -Werror",
+  "object_sections": "cache wrapper and helpers IRAM; state DRAM",
+  "host_counter_model": "passed including 4000 concurrent calls",
+  "native_patch_test": "passed; second patch rejected",
+  "source_sha256": {
+    "ab_cost_probe.c": "8a97644a7847a420be102851d8c223651b0cd96ffccb013ca93a6c92fa53c72f",
+    "ab_cost_probe.h": "752308cb37b76ef720ad4390536579d41187d8df90dc204e0b42f72cff852427",
+    "patch_native_wait_probe.py": "9fbc67edfb99607db667064d4737b72bfecf0e65a305e0527d5877c1fdc8f376",
+    "probe_model_test.c": "04bd6a67aee999be76b78f1d9d686a10f450516e513f147acac3e4a3a0e58ead"
+  },
+  "native_patch_timer_header": "esp_timer.h explicitly included; all native firmware builds and final links passed"
+}

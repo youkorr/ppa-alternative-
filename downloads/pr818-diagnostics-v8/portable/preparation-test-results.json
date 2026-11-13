@@ -1,0 +1,100 @@
+{
+  "results": [
+    {
+      "board": "tab5",
+      "variant": "official",
+      "protocol": 8,
+      "source_files_matched": 108,
+      "source_commit": "da53cfaa90b63085ef21f721f7593b5e2747d448",
+      "source_tree": "30143f7007ff8234c352b4c72c3ba9308441a81e",
+      "fixture_sha256": {
+        "ab_main.c": "05b46f6c62b895327b433cc43c280382cb9353447ee13d6e04e78d3e3b24d9be",
+        "ab_scanout_probe.c": "4ed68056ee0da6bb40900bc7acbc40be810974ee2b4d54c8625ca5f444c9bc11",
+        "ab_scanout_probe.h": "d8cd1c124724461194afa8ec11f64d36914e07d5d76eb2402b64fa86c9265b8b",
+        "ab_cost_probe.c": "8a97644a7847a420be102851d8c223651b0cd96ffccb013ca93a6c92fa53c72f",
+        "ab_cost_probe.h": "752308cb37b76ef720ad4390536579d41187d8df90dc204e0b42f72cff852427",
+        "patch_dpi_probe.py": "a245d18a9eb6e3521ee3b0fff3c775106984854f9e9001bc18efa24430b3184b"
+      },
+      "private_scanout_probe_identical": true,
+      "native_wait_probe": null,
+      "nonempty_output_rejected": true,
+      "success": true
+    },
+    {
+      "board": "tab5",
+      "variant": "native64",
+      "protocol": 8,
+      "source_files_matched": 124,
+      "source_commit": "79b87e9e8703e85e66812850414428c4cd978865",
+      "source_tree": "765e2a516a3a42c91d0145150e35e9c5dc41293c",
+      "fixture_sha256": {
+        "ab_main.c": "05b46f6c62b895327b433cc43c280382cb9353447ee13d6e04e78d3e3b24d9be",
+        "ab_scanout_probe.c": "4ed68056ee0da6bb40900bc7acbc40be810974ee2b4d54c8625ca5f444c9bc11",
+        "ab_scanout_probe.h": "d8cd1c124724461194afa8ec11f64d36914e07d5d76eb2402b64fa86c9265b8b",
+        "ab_cost_probe.c": "8a97644a7847a420be102851d8c223651b0cd96ffccb013ca93a6c92fa53c72f",
+        "ab_cost_probe.h": "752308cb37b76ef720ad4390536579d41187d8df90dc204e0b42f72cff852427",
+        "patch_dpi_probe.py": "a245d18a9eb6e3521ee3b0fff3c775106984854f9e9001bc18efa24430b3184b"
+      },
+      "private_scanout_probe_identical": true,
+      "native_wait_probe": {
+        "test_only": true,
+        "algorithm_changed": false,
+        "source_sha256": "6adcd8111aea9226bbe9bb5a235a07a0d31617642f27f46f43be7715e4de2ab2",
+        "instrumented_sha256": "d18aab1968f8db2a183a27d35773cea835d0e6835573a98ff4b7e3765fad07d9",
+        "metric": "inclusive wall time for native wait calls; pending was true at entry, not proof of entire call blocked"
+      },
+      "nonempty_output_rejected": true,
+      "success": true
+    },
+    {
+      "board": "waveshare-7b",
+      "variant": "official",
+      "protocol": 8,
+      "source_files_matched": 108,
+      "source_commit": "da53cfaa90b63085ef21f721f7593b5e2747d448",
+      "source_tree": "30143f7007ff8234c352b4c72c3ba9308441a81e",
+      "fixture_sha256": {
+        "ab_main.c": "05b46f6c62b895327b433cc43c280382cb9353447ee13d6e04e78d3e3b24d9be",
+        "ab_scanout_probe.c": "4ed68056ee0da6bb40900bc7acbc40be810974ee2b4d54c8625ca5f444c9bc11",
+        "ab_scanout_probe.h": "d8cd1c124724461194afa8ec11f64d36914e07d5d76eb2402b64fa86c9265b8b",
+        "ab_cost_probe.c": "8a97644a7847a420be102851d8c223651b0cd96ffccb013ca93a6c92fa53c72f",
+        "ab_cost_probe.h": "752308cb37b76ef720ad4390536579d41187d8df90dc204e0b42f72cff852427",
+        "patch_dpi_probe.py": "a245d18a9eb6e3521ee3b0fff3c775106984854f9e9001bc18efa24430b3184b"
+      },
+      "private_scanout_probe_identical": true,
+      "native_wait_probe": null,
+      "nonempty_output_rejected": true,
+      "success": true
+    },
+    {
+      "board": "waveshare-7b",
+      "variant": "native64",
+      "protocol": 8,
+      "source_files_matched": 124,
+      "source_commit": "79b87e9e8703e85e66812850414428c4cd978865",
+      "source_tree": "765e2a516a3a42c91d0145150e35e9c5dc41293c",
+      "fixture_sha256": {
+        "ab_main.c": "05b46f6c62b895327b433cc43c280382cb9353447ee13d6e04e78d3e3b24d9be",
+        "ab_scanout_probe.c": "4ed68056ee0da6bb40900bc7acbc40be810974ee2b4d54c8625ca5f444c9bc11",
+        "ab_scanout_probe.h": "d8cd1c124724461194afa8ec11f64d36914e07d5d76eb2402b64fa86c9265b8b",
+        "ab_cost_probe.c": "8a97644a7847a420be102851d8c223651b0cd96ffccb013ca93a6c92fa53c72f",
+        "ab_cost_probe.h": "752308cb37b76ef720ad4390536579d41187d8df90dc204e0b42f72cff852427",
+        "patch_dpi_probe.py": "a245d18a9eb6e3521ee3b0fff3c775106984854f9e9001bc18efa24430b3184b"
+      },
+      "private_scanout_probe_identical": true,
+      "native_wait_probe": {
+        "test_only": true,
+        "algorithm_changed": false,
+        "source_sha256": "6adcd8111aea9226bbe9bb5a235a07a0d31617642f27f46f43be7715e4de2ab2",
+        "instrumented_sha256": "d18aab1968f8db2a183a27d35773cea835d0e6835573a98ff4b7e3765fad07d9",
+        "metric": "inclusive wall time for native wait calls; pending was true at entry, not proof of entire call blocked"
+      },
+      "nonempty_output_rejected": true,
+      "success": true
+    }
+  ],
+  "source_checkout_unchanged": true,
+  "shared_sdk_source_unchanged": true,
+  "dependencies_fetched": false,
+  "firmware_compiled": false
+}

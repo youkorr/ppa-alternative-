@@ -1,0 +1,13 @@
+{
+  "test_suite": "synthetic protocol validation; not hardware measurements",
+  "tests_passed": 18,
+  "real_firmware_log_schema_checked": true,
+  "source_sha256": {
+    "parse_logs.py": "60bc7c1a0b1c2c9991394b6e75226a134fa4ff8c8a59a79832d0739ef2ddf097",
+    "test_parser.py": "d35c8253c5d1b3b46b55dd1add31e539b0b0c8d8560129b6faec6a778c4c13cd",
+    "README-fr.md": "1684004e3853b3d3a4c0a3cb96da1ab4fc8170d40adfe41ac871dae05cb78d5e"
+  },
+  "incomplete_or_invalid_captures_rejected": true,
+  "strict_automatic_refreshes_rejected": true,
+  "cross_mode_native_official_comparisons_prohibited": true
+}

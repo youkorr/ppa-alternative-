@@ -1,0 +1,90 @@
+
+/workspace/work/ab-diagnostics-v8/cost-work/ab_cost_probe.o:     file format elf32-littleriscv
+
+SYMBOL TABLE:
+00000000 l    df *ABS*	00000000 ab_cost_probe.c
+00000000 l    d  .text	00000000 .text
+00000000 l    d  .data	00000000 .data
+00000000 l    d  .bss	00000000 .bss
+00000000 l    d  .iram1.6	00000000 .iram1.6
+00000000 l     F .iram1.6	00000072 begin_token
+00000000 l     O .dram1.0	00000008 s_mux
+00000000 l     O .dram1.4	00000001 s_active
+00000000 l     O .dram1.5	00000001 s_background
+00000000 l     O .dram1.2	00000004 s_epoch
+00000000 l     O .dram1.3	00000004 s_stage
+00000000 l    d  .iram1.7	00000000 .iram1.7
+00000000 l     F .iram1.7	00000190 record
+00000000 l     O .dram1.1	00000a80 s_stats
+00000000 l    d  .rodata.ab_cost_probe_reset.str1.4	00000000 .rodata.ab_cost_probe_reset.str1.4
+00000000 l    d  .text.ab_cost_probe_reset	00000000 .text.ab_cost_probe_reset
+00000000 l     O .rodata.__func__.3	00000014 __func__.3
+00000000 l    d  .rodata.ab_cost_probe_set_stage.str1.4	00000000 .rodata.ab_cost_probe_set_stage.str1.4
+00000000 l    d  .text.ab_cost_probe_set_stage	00000000 .text.ab_cost_probe_set_stage
+00000000 l     O .rodata.__func__.2	00000018 __func__.2
+00000000 l    d  .text.ab_cost_probe_set_background	00000000 .text.ab_cost_probe_set_background
+00000000 l    d  .text.ab_cost_probe_set_active	00000000 .text.ab_cost_probe_set_active
+00000000 l    d  .text.ab_cost_probe_snapshot	00000000 .text.ab_cost_probe_snapshot
+00000000 l    d  .rodata.ab_cost_probe_stage_name.str1.4	00000000 .rodata.ab_cost_probe_stage_name.str1.4
+00000000 l    d  .text.ab_cost_probe_stage_name	00000000 .text.ab_cost_probe_stage_name
+00000000 l     O .rodata.names.1	00000020 names.1
+00000000 l    d  .text.ab_cost_probe_kind_name	00000000 .text.ab_cost_probe_kind_name
+00000000 l     O .rodata.names.0	00000018 names.0
+00000000 l    d  .text.ab_cost_native_wait_begin	00000000 .text.ab_cost_native_wait_begin
+00000000 l    d  .text.ab_cost_native_wait_end	00000000 .text.ab_cost_native_wait_end
+00000000 l    d  .text.__wrap_lv_draw_buf_copy	00000000 .text.__wrap_lv_draw_buf_copy
+00000000 l    d  .iram1.8	00000000 .iram1.8
+00000000 l    d  .text.__wrap_ppa_do_scale_rotate_mirror	00000000 .text.__wrap_ppa_do_scale_rotate_mirror
+00000000 l    d  .text.__wrap_ppa_do_fill	00000000 .text.__wrap_ppa_do_fill
+00000000 l    d  .text.__wrap_ppa_do_blend	00000000 .text.__wrap_ppa_do_blend
+00000000 l    d  .rodata.str1.4	00000000 .rodata.str1.4
+00000000 l    d  .rodata.names.0	00000000 .rodata.names.0
+00000000 l    d  .rodata.names.1	00000000 .rodata.names.1
+00000000 l    d  .rodata.__func__.2	00000000 .rodata.__func__.2
+00000000 l    d  .rodata.__func__.3	00000000 .rodata.__func__.3
+00000000 l    d  .dram1.5	00000000 .dram1.5
+00000000 l    d  .dram1.4	00000000 .dram1.4
+00000000 l    d  .dram1.3	00000000 .dram1.3
+00000000 l    d  .dram1.2	00000000 .dram1.2
+00000000 l    d  .dram1.1	00000000 .dram1.1
+00000000 l    d  .dram1.0	00000000 .dram1.0
+00000000 l    d  .debug_info	00000000 .debug_info
+00000000 l    d  .debug_abbrev	00000000 .debug_abbrev
+00000000 l    d  .debug_loc	00000000 .debug_loc
+00000000 l    d  .debug_aranges	00000000 .debug_aranges
+00000000 l    d  .debug_ranges	00000000 .debug_ranges
+00000000 l    d  .debug_line	00000000 .debug_line
+00000000 l    d  .debug_str	00000000 .debug_str
+00000000 l    d  .note.GNU-stack	00000000 .note.GNU-stack
+00000000 l    d  .comment	00000000 .comment
+00000000 l    d  .debug_frame	00000000 .debug_frame
+00000000 l    d  .riscv.attributes	00000000 .riscv.attributes
+00000000         *UND*	00000000 xPortInIsrContext
+00000000         *UND*	00000000 xPortEnterCriticalTimeout
+00000000         *UND*	00000000 vPortExitCriticalMultiCore
+00000000 g     F .text.ab_cost_probe_reset	000000ac ab_cost_probe_reset
+00000000         *UND*	00000000 __assert_func
+00000000 g     F .text.ab_cost_probe_set_stage	00000072 ab_cost_probe_set_stage
+00000000 g     F .text.ab_cost_probe_set_background	00000048 ab_cost_probe_set_background
+00000000 g     F .text.ab_cost_probe_set_active	00000048 ab_cost_probe_set_active
+00000000 g     F .text.ab_cost_probe_snapshot	00000072 ab_cost_probe_snapshot
+00000000 g     F .text.ab_cost_probe_stage_name	00000020 ab_cost_probe_stage_name
+00000000 g     F .text.ab_cost_probe_kind_name	00000020 ab_cost_probe_kind_name
+00000000 g     F .text.ab_cost_native_wait_begin	00000008 ab_cost_native_wait_begin
+00000000 g     F .text.ab_cost_native_wait_end	00000036 ab_cost_native_wait_end
+00000000 g     F .text.__wrap_lv_draw_buf_copy	0000013a __wrap_lv_draw_buf_copy
+00000000         *UND*	00000000 lv_area_get_width
+00000000         *UND*	00000000 lv_area_get_height
+00000000         *UND*	00000000 lv_color_format_get_bpp
+00000000         *UND*	00000000 esp_timer_get_time
+00000000         *UND*	00000000 __real_lv_draw_buf_copy
+00000000 g     F .iram1.8	000000c6 __wrap_esp_cache_msync
+00000000         *UND*	00000000 __real_esp_cache_msync
+00000000 g     F .text.__wrap_ppa_do_scale_rotate_mirror	000000bc __wrap_ppa_do_scale_rotate_mirror
+00000000         *UND*	00000000 __real_ppa_do_scale_rotate_mirror
+00000000 g     F .text.__wrap_ppa_do_fill	000000bc __wrap_ppa_do_fill
+00000000         *UND*	00000000 __real_ppa_do_fill
+00000000 g     F .text.__wrap_ppa_do_blend	000000bc __wrap_ppa_do_blend
+00000000         *UND*	00000000 __real_ppa_do_blend
+
+

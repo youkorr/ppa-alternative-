@@ -1,0 +1,50 @@
+{
+  "host": true,
+  "lvgl": "9.6.0",
+  "archive_sha256": "90a7a0abb431baf3090f3d4a34a3d192c395def2185d6209a680d40225663e93",
+  "source_sha256": "3c75b458bc2c8aa666d1fa220430c67188b941922c619d21aa210d987b56b958",
+  "compile_command": [
+    "cc",
+    "-O2",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-DLV_CONF_INCLUDE_SIMPLE",
+    "-DLV_DRAW_TRANSFORM_USE_MATRIX=0",
+    "-DLV_USE_OS=0",
+    "-DESP_LVGL_ADAPTER_OS_MUTEX_CLEANUP=1",
+    "-I/workspace/work/ab-diagnostics-v8/timer-host-work",
+    "-I/workspace/work/pr818-upstream-tests96/test/build-plain/lvgl-src",
+    "/workspace/work/ab-diagnostics-v8/timer-host-work/timer_policy.c",
+    "/workspace/work/pr818-upstream-tests96/test/transform-build/oracle.a",
+    "-Wl,--wrap=lv_draw_buf_copy",
+    "-lm",
+    "-o",
+    "/workspace/work/ab-diagnostics-v8/timer-host-work/timer_policy"
+  ],
+  "results": [
+    {
+      "case": "legacy",
+      "manual_starts": 1,
+      "automatic_starts": 1,
+      "automatic_flushes": 0,
+      "automatic_copy_calls": 1,
+      "automatic_copy_pixel_bytes": 153600,
+      "request_callbacks_after_default_resume": 2,
+      "paused_after_manual": false,
+      "other_timer_callbacks": 16
+    },
+    {
+      "case": "strict",
+      "manual_starts": 1,
+      "automatic_starts": 0,
+      "automatic_flushes": 0,
+      "automatic_copy_calls": 0,
+      "automatic_copy_pixel_bytes": 0,
+      "request_callbacks_after_default_resume": 2,
+      "paused_after_manual": true,
+      "other_timer_callbacks": 16
+    }
+  ],
+  "note": "One controlled during-refresh invalidation; real LVGL timerhandler and DIRECT buffers, no adapter/RTOS/PPA. This validates timerbehavior, not hardware speed."
+}
