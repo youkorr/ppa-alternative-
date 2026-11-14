@@ -75,6 +75,9 @@ typedef struct {
     /* What a tile holds: LV_DRAW_ORTHO_TILE_BYTES, or a half or a quarter of
      * it when there are fewer blocks than tiles. */
     size_t tile_bytes;
+    /* One text draw at a time, whichever core it is on (paint_tile). */
+    lv_mutex_t text_mutex;
+    bool text_mutex_ready;
 } ortho_unit_t;
 
 static ortho_unit_t * g_unit;
@@ -769,7 +772,22 @@ static bool prep_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
     return true;
 }
 
-/* No globals of this file in here: it may run on the other core. */
+/* No globals of this file in here but the text mutex: it may run on the
+ * other core.
+ *
+ * A text draw is whole under that mutex, from the font being asked for a
+ * glyph to its bitmap being drawn. A font engine need not be safe on two
+ * cores at once, and ESPHome's is not: esphome::font::Font keeps the last
+ * glyph it looked up in two plain members, so a lookup on one core can hand
+ * the other the wrong glyph, whose bitmap is then written into a buffer sized
+ * for another one. On a Tab5 that was a crash a few minutes into a screen with
+ * a large clock under moving lights. LVGL's own locks do not reach a font.
+ * Only the text waits: fills, borders, shadows and pictures of both tiles are
+ * still drawn at once. (The first guard here drew a whole pair of tiles one
+ * after the other when both held text. Through Espressif's adapter, the
+ * commit carrying it measured a dashboard 12% slower on a Waveshare 7B and 18%
+ * on a Tab5, and the guard was taken for the cause there, not measured apart;
+ * the mutex round each text draw is the fix made there.) */
 static void paint_tile(tile_work_t * w)
 {
     lv_layer_t tl;
@@ -779,7 +797,11 @@ static void paint_tile(tile_work_t * w)
         const job_t * j = &w->jobs[i];
         if(!job_touches(j, &w->tile)) continue;
         if(lv_area_intersect(&clip, &j->t->clip_area, &w->tile)) {
+            const bool text = (j->t->type == LV_DRAW_DSC_TYPE_LABEL || j->t->type == LV_DRAW_DSC_TYPE_LETTER) &&
+                              g_unit && g_unit->text_mutex_ready;
+            if(text) lv_mutex_lock(&g_unit->text_mutex);
             sw_execute_on(j->t, &tl, &j->t->area, &clip);
+            if(text) lv_mutex_unlock(&g_unit->text_mutex);
             if(lv_area_intersect(&drawn, &j->todo, &clip))
                 w->drawn += (uint64_t)lv_area_get_size(&drawn) * (uint64_t)w->px;
         }
@@ -825,8 +847,9 @@ static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
  * their cache) are behind LVGL's own mutexes -- which are real only with an
  * OS. With LV_OS_NONE they compile to nothing, so then there is no second
  * core. youkorr/lvgl_9.5 runs LV_OS_FREERTOS on an ESP32. A font is not
- * behind those mutexes, and ESPHome's is not safe on two cores: text is drawn
- * on one core at a time (draws_text). */
+ * behind those mutexes, and ESPHome's is not safe on two cores: each text
+ * draw is under a mutex of this unit's (paint_tile), and without that mutex
+ * there is no second core either. */
 #if defined(LV_DRAW_ORTHO_SIM_CORES)
 #define ORTHO_HELPER 1   /* the P4 simulation: run where it is joined, counted apart */
 #elif LV_USE_OS == LV_OS_FREERTOS && defined(ESP_PLATFORM)
@@ -900,6 +923,7 @@ static void * helper_main(void * arg)
 
 static bool helper_start_thread(void)
 {
+    if(g_unit == NULL || !g_unit->text_mutex_ready) return false;
 #if ORTHO_HELPER == 1
     return true;
 #elif ORTHO_HELPER == 2
@@ -1002,29 +1026,12 @@ static void helper_paint(tile_work_t * w)
     helper_run(paint_tile_job, w);
 }
 
-/* Whether any job draws text in `rect`. A font engine need not be safe on
- * two cores at once, and ESPHome's is not: esphome::font::Font keeps the last
- * glyph it looked up in two plain members, so a lookup on one core can hand
- * the other the wrong glyph, whose bitmap is then written into a buffer sized
- * for another one. On a Tab5 that was a crash a few minutes into a screen with
- * a large clock under moving lights. LVGL's own locks do not reach a font. */
-static bool draws_text(const job_t * jobs, int32_t n, const lv_area_t * rect)
-{
-    for(int32_t i = 0; i < n; i++) {
-        const lv_draw_task_type_t type = jobs[i].t->type;
-        if((type == LV_DRAW_DSC_TYPE_LABEL || type == LV_DRAW_DSC_TYPE_LETTER) && job_touches(&jobs[i], rect))
-            return true;
-    }
-    return false;
-}
-
 /* Two tiles at once: the second painted by the other core while this one
  * reads back and paints the first. Its read-back goes first so the other
  * core starts as early as it can; the first's read-back then runs while the
  * other core paints. Both are turned out after the join, in order. With four
  * tiles the pairs alternate, so a pair is painted while the PPA turns out
- * the last one. When both tiles draw text, the second is painted here after
- * the first instead: text is drawn by one core at a time (draws_text). */
+ * the last one. */
 static void draw_pair(ortho_unit_t * u, const job_t * jobs, int32_t n, const ortho_t * o, const lv_area_t rect[2])
 {
     int32_t base = 0;
@@ -1034,19 +1041,15 @@ static void draw_pair(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
     }
     tile_work_t w[2];
     bool ok[2];
-    const bool helped = !(draws_text(jobs, n, &rect[0]) && draws_text(jobs, n, &rect[1]));
     wait_ticket(&u->ticket[base + 1]);
     ok[1] = prep_tile(jobs, n, o, &rect[1], u->tile[base + 1], u->tile_bytes, &w[1]);
-    if(ok[1] && helped) helper_paint(&w[1]);
+    if(ok[1]) helper_paint(&w[1]);
     wait_ticket(&u->ticket[base]);
     ok[0] = prep_tile(jobs, n, o, &rect[0], u->tile[base], u->tile_bytes, &w[0]);
     if(ok[0]) paint_tile(&w[0]);
     if(ok[1]) {
-        if(helped) {
-            helper_join();
-            g_stats.tiles_other_core++;
-        }
-        else paint_tile(&w[1]);
+        helper_join();
+        g_stats.tiles_other_core++;
     }
     if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);
     if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);
@@ -1970,6 +1973,10 @@ static int32_t delete_cb(lv_draw_unit_t * draw_unit)
         helper_stop_thread();
         g_helper.on = false;
     }
+    if(u->text_mutex_ready) {
+        lv_mutex_delete(&u->text_mutex);
+        u->text_mutex_ready = false;
+    }
     for(int i = 0; i < 4; i++) {
         if(u->tile_alloc[i]) tile_free(u->tile_alloc[i]);
         u->tile_alloc[i] = NULL;
@@ -1985,6 +1992,7 @@ void lv_draw_ortho_init(void)
 {
     if(g_unit) return;
     ortho_unit_t * u = lv_draw_create_unit(sizeof(ortho_unit_t));
+    u->text_mutex_ready = lv_mutex_init(&u->text_mutex) == LV_RESULT_OK;
     u->base.name = "ORTHO";
     u->base.evaluate_cb = evaluate;
     u->base.dispatch_cb = dispatch;

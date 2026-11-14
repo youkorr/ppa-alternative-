@@ -142,10 +142,11 @@ script:
           lv_obj_set_style_bg_grad_color(page, lv_color_hex(BOTTOM[band]), 0);
 
 font:
+  # "-" for the "--:--" shown until Home Assistant has given the time.
   - file: "gfonts://Montserrat@300"
     id: font_clock
     size: 140
-    glyphs: "0123456789:"
+    glyphs: "0123456789:-"
   - file: "gfonts://Montserrat@500"
     id: font_date
     size: 32
@@ -261,7 +262,7 @@ lvgl:
               - label:
                   align: TOP_MID
                   y: 34
-                  text: ""
+                  text: "\uF008"       # LV_SYMBOL_VIDEO
                   text_font: montserrat_48
                   text_color: 0xFFFFFF
               - label:
@@ -309,7 +310,7 @@ lvgl:
             widgets:
               - label:
                   align: CENTER
-                  text: ""
+                  text: "\uF053"       # LV_SYMBOL_LEFT
                   text_font: montserrat_36
                   text_color: 0xFFFFFF
             on_click:
@@ -331,7 +332,8 @@ lvgl_camera_display:
   id: camera_display
   camera_id: video_camera
   canvas_id: camera_canvas
-  # Off until the button is pressed: the sensor sleeps while home is shown.
+  # Off until the button is pressed: no frame is asked of the camera while
+  # home is shown.
   enabled: false
   # The camera is taken from the main loop: keep it awake while it is shown.
   fast_loop: true
