@@ -1,0 +1,100 @@
+
+Redémarrage de l'appareil…
+[12:41:10]ESP-ROM:esp32p4-eco2-20240710
+[12:41:10]Build:Jul 10 2024
+[12:41:10]rst:0x17 (CHIP_USB_UART_RESET),boot:0xf (SPI_FAST_FLASH_BOOT)
+[12:41:10]Core0 Saved PC:0x4ff103fe
+[12:41:10]Core1 Saved PC:0x4fc058e0
+[12:41:10]SPI mode:DIO, clock div:2
+[12:41:10]load:0x4ff33ce0,len:0x14d0
+[12:41:10]load:0x4ff29ed0,len:0xdf8
+[12:41:10]load:0x4ff2cbd0,len:0x3524
+[12:41:10]entry 0x4ff29eda
+[12:41:10]I (27) boot: ESP-IDF v5.5.6 2nd stage bootloader
+[12:41:10]I (28) boot: compile time Nov 13 2026 10:35:35
+[12:41:10]I (29) boot: chip revision: v1.3
+[12:41:10]I (30) boot.esp32p4: SPI Speed      : 40MHz
+[12:41:10]I (31) boot.esp32p4: SPI Mode       : DIO
+[12:41:10]I (35) boot.esp32p4: SPI Flash Size : 32MB
+[12:41:10]I (39) boot: Partition Table:
+[12:41:10]I (42) boot: ## Label            Usage          Type ST Offset   Length
+[12:41:10]I (48) boot:  0 nvs              WiFi data        01 02 00011000 00006000
+[12:41:10]I (54) boot:  1 phy_init         RF data          01 01 00017000 00001000
+[12:41:10]I (61) boot:  2 factory          factory app      00 00 00020000 00600000
+[12:41:10]I (68) esp_image: segment 0: paddr=00020020 vaddr=40090020 size=147cf0h (1342704) map
+[12:41:10]I (296) esp_image: segment 1: paddr=00167d18 vaddr=30100000 size=00070h (   112) load
+[12:41:10]I (298) esp_image: segment 2: paddr=00167d90 vaddr=4ff00000 size=08288h ( 33416) load
+[12:41:10]I (307) esp_image: segment 3: paddr=00170020 vaddr=40000020 size=8c1c0h (573888) map
+[12:41:10]I (403) esp_image: segment 4: paddr=001fc1e8 vaddr=4ff08288 size=0af94h ( 44948) load
+[12:41:10]I (413) esp_image: segment 5: paddr=00207184 vaddr=4ff13280 size=029b4h ( 10676) load
+[12:41:10]I (421) boot: Loaded app from partition at offset 0x20000
+[12:41:10]I (428) hex_psram: vendor id    : 0x0d (AP)
+[12:41:10]I (429) hex_psram: Latency      : 0x01 (Fixed)
+[12:41:10]I (429) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+[12:41:10]I (430) hex_psram: dev id       : 0x03 (generation 4)
+[12:41:10]I (434) hex_psram: density      : 0x07 (256 Mbit)
+[12:41:10]I (439) hex_psram: good-die     : 0x06 (Pass)
+[12:41:10]I (443) hex_psram: SRF          : 0x02 (Slow Refresh)
+[12:41:10]I (447) hex_psram: BurstType    : 0x00 ( Wrap)
+[12:41:10]I (452) hex_psram: BurstLen     : 0x03 (2048 Byte)
+[12:41:10]I (456) hex_psram: BitMode      : 0x01 (X16 Mode)
+[12:41:10]I (460) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+[12:41:10]I (466) hex_psram: DriveStrength: 0x00 (1/1)
+[12:41:10]I (470) MSPI Timing: Enter psram timing tuning
+[12:41:10]I (642) esp_psram: Found 32MB PSRAM device
+[12:41:10]I (642) esp_psram: Speed: 200MHz
+[12:41:10]I (645) hex_psram: psram CS IO is dedicated
+[12:41:10]I (646) cpu_start: Multicore app
+[12:41:10]I (656) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+[12:41:10]I (657) cpu_start: Pro cpu start user code
+[12:41:10]I (657) cpu_start: cpu freq: 360000000 Hz
+[12:41:10]I (658) app_init: Application information:
+[12:41:10]I (662) app_init: Project name:     test_esp_lvgl_adapter_lvgl9
+[12:41:10]I (668) app_init: App version:      1
+[12:41:10]I (671) app_init: Compile time:     Nov 13 2026 10:39:13
+[12:41:11]I (676) app_init: ELF file SHA256:  08ed167f9...
+[12:41:11]I (680) app_init: ESP-IDF:          v5.5.6
+[12:41:11]I (684) efuse_init: Min chip rev:     v0.0
+[12:41:11]I (688) efuse_init: Max chip rev:     v1.99 
+[12:41:11]I (692) efuse_init: Chip rev:         v1.3
+[12:41:11]I (696) heap_init: Initializing. RAM available for dynamic allocation:
+[12:41:11]I (702) heap_init: At 4FF18390 len 00022C30 (139 KiB): RETENT_RAM
+[12:41:11]I (708) heap_init: At 4FF3AFC0 len 00004BF0 (18 KiB): RAM
+[12:41:11]I (713) heap_init: At 4FF40000 len 00060000 (384 KiB): RAM
+[12:41:11]I (718) heap_init: At 50108080 len 00007F80 (31 KiB): RTCRAM
+[12:41:11]I (724) heap_init: At 30100070 len 00001F90 (7 KiB): SPM
+[12:41:11]I (729) esp_psram: Adding pool of 32768K of PSRAM memory to heap allocator
+[12:41:11]I (737) spi_flash: detected chip: gd
+[12:41:11]I (739) spi_flash: flash io: dio
+[12:41:11]I (742) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+[12:41:11]I (748) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+[12:41:11]I (755) main_task: Started on CPU0
+[12:41:11]I (758) esp_psram: Reserving pool of 32K of internal memory for DMA/internal allocations
+[12:41:11]I (765) main_task: Calling app_main()
+[12:41:11]I (769) ab_bench: AB_READY board=waveshare-7b variant=native64 source_commit=79b87e9e8703e85e66812850414428c4cd978865 source_tree=765e2a516a3a42c91d0145150e35e9c5dc41293c logical=1024x600 rotation=180 panel_buffers=3 cpu_mhz=360 psram_mhz=200 l2_kib=128 batch=64 rounds=3 warmup=16 frames=128 dpi_probe=1 dashboard_full=0 sensor_capture=0 draw_units=2 ppa_draw_requested=0
+[12:41:14]I (3803) hw_lcd_init: Install panel IO
+[12:41:14]I (3803) hw_lcd_init: Install LCD driver of ek79007
+[12:41:14]I (3803) ek79007: version: 2.0.2
+[12:41:14]I (3988) esp_lvgl:adapter: LVGL adapter initialized successfully
+[12:41:14]I (3995) esp_lvgl:disp: rotation 180 drawn in the panel's orientation
+[12:41:14]I (3996) esp_lvgl:bridge_v9: Initializing hardware resources
+[12:41:14]I (3996) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+[12:41:14]I (4003) esp_lvgl:bridge: Initializing hardware resources
+[12:41:14]I (4008) esp_lvgl:bridge: Hardware resources initialized successfully
+[12:41:14]I (4031) esp_lvgl:bridge_v9: three panel buffers: LVGL draws the next frame while the panel waits for its refresh
+[12:41:14]I (4033) esp_lvgl:adapter: LVGL task stack raised from 8192 to 32768 bytes for ROTATE_IN_DRAW
+[12:41:14]I (4040) esp_lvgl:disp: rotate in draw: tiles painted on both cores
+[12:41:14]I (4054) esp_lvgl:adapter: LVGL task started successfully
+[12:41:18]I (8012) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=dashboard round=1 frames=128 produced_us=3326678 submitted_fps=38.4768 refresh_mean_us=21987.23 refresh_median_us=21950 refresh_p95_us=30060 refresh_worst_us=32104 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=3328989 scanout_fps=38.4501 draw_calls=128 scanout_irqs=201 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=661 waits=693 bytes_turned=19388412 free_before=24989115 internal_before=109935 free_after=24989115 internal_after=109935 minimum_free=24970651 minimum_internal=91503 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:41:25]I (15377) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=changing_rgb565 round=1 frames=128 produced_us=6656652 submitted_fps=19.2289 refresh_mean_us=35894.59 refresh_median_us=36953 refresh_p95_us=37497 refresh_worst_us=37667 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=6644729 scanout_fps=19.2634 draw_calls=128 scanout_irqs=402 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=128 waits=384 bytes_turned=173817856 free_before=24991203 internal_before=112023 free_after=24991203 internal_after=112023 minimum_free=24989187 minimum_internal=110039 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:42:01]I (51099) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=fixed_flash_off round=1 frames=128 produced_us=31874660 submitted_fps=4.0157 refresh_mean_us=233102.77 refresh_median_us=234267 refresh_p95_us=234428 refresh_worst_us=234491 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=31866049 scanout_fps=4.0168 draw_calls=128 scanout_irqs=1924 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=128 waits=384 bytes_turned=173817856 free_before=24991203 internal_before=112023 free_after=24991191 internal_after=112011 minimum_free=24989187 minimum_internal=110039 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:42:09]I (58744) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=fixed_flash_warm_cache round=1 frames=128 produced_us=6627675 submitted_fps=19.3130 refresh_mean_us=35856.18 refresh_median_us=36932 refresh_p95_us=37428 refresh_worst_us=37534 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=6625918 scanout_fps=19.3181 draw_calls=128 scanout_irqs=401 invalid_indices=0 failures=0 cache_budget=4194304 cache_hits=256 cache_bytes=1230976 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=128 waits=384 bytes_turned=16531456 free_before=23746015 internal_before=112023 free_after=23746003 internal_after=112011 minimum_free=23743999 minimum_internal=110039 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:42:12]I (62602) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=dashboard round=2 frames=128 produced_us=3321663 submitted_fps=38.5349 refresh_mean_us=21949.52 refresh_median_us=21851 refresh_p95_us=30062 refresh_worst_us=32513 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=3322975 scanout_fps=38.5197 draw_calls=128 scanout_irqs=201 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=661 waits=693 bytes_turned=19388412 free_before=24988879 internal_before=109699 free_after=24988875 internal_after=109695 minimum_free=24970567 minimum_internal=91419 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:42:20]I (69963) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=changing_rgb565 round=2 frames=128 produced_us=6653655 submitted_fps=19.2375 refresh_mean_us=35914.78 refresh_median_us=36961 refresh_p95_us=37509 refresh_worst_us=37586 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=6645732 scanout_fps=19.2605 draw_calls=128 scanout_irqs=402 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=128 waits=384 bytes_turned=173817856 free_before=24991191 internal_before=112011 free_after=24991191 internal_after=112011 minimum_free=24989191 minimum_internal=110043 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:42:56]I (105689) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=fixed_flash_off round=2 frames=128 produced_us=31876672 submitted_fps=4.0155 refresh_mean_us=233104.34 refresh_median_us=234264 refresh_p95_us=234452 refresh_worst_us=234553 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=31868045 scanout_fps=4.0166 draw_calls=128 scanout_irqs=1925 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=128 waits=384 bytes_turned=173817856 free_before=24991191 internal_before=112011 free_after=24991191 internal_after=112011 minimum_free=24989191 minimum_internal=110043 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:43:03]I (113338) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=fixed_flash_warm_cache round=2 frames=128 produced_us=6632673 submitted_fps=19.2984 refresh_mean_us=35876.73 refresh_median_us=36940 refresh_p95_us=37421 refresh_worst_us=37619 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=6626937 scanout_fps=19.3151 draw_calls=128 scanout_irqs=401 invalid_indices=0 failures=0 cache_budget=4194304 cache_hits=256 cache_bytes=1230976 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=128 waits=384 bytes_turned=16531456 free_before=23746003 internal_before=112011 free_after=23746003 internal_after=112011 minimum_free=23744003 minimum_internal=110043 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:43:07]I (117208) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=dashboard round=3 frames=128 produced_us=3324652 submitted_fps=38.5003 refresh_mean_us=21974.09 refresh_median_us=21935 refresh_p95_us=29706 refresh_worst_us=32466 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=3332540 scanout_fps=38.4091 draw_calls=128 scanout_irqs=202 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=661 waits=693 bytes_turned=19388412 free_before=24988887 internal_before=109707 free_after=24988887 internal_after=109707 minimum_free=24970583 minimum_internal=91435 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:43:14]I (124572) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=changing_rgb565 round=3 frames=128 produced_us=6655666 submitted_fps=19.2317 refresh_mean_us=35913.31 refresh_median_us=36946 refresh_p95_us=37469 refresh_worst_us=37541 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=6645292 scanout_fps=19.2618 draw_calls=128 scanout_irqs=402 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=128 waits=384 bytes_turned=173817856 free_before=24991191 internal_before=112011 free_after=24991191 internal_after=112011 minimum_free=24989191 minimum_internal=110043 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:43:50]I (160297) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=fixed_flash_off round=3 frames=128 produced_us=31877654 submitted_fps=4.0154 refresh_mean_us=233083.94 refresh_median_us=234258 refresh_p95_us=234428 refresh_worst_us=234470 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=31867606 scanout_fps=4.0166 draw_calls=128 scanout_irqs=1925 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=128 waits=384 bytes_turned=173817856 free_before=24991191 internal_before=112011 free_after=24991191 internal_after=112011 minimum_free=24989191 minimum_internal=110043 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:43:58]I (167937) ab_bench: AB_RESULT board=waveshare-7b variant=native64 batch=64 scene=fixed_flash_warm_cache round=3 frames=128 produced_us=6624683 submitted_fps=19.3217 refresh_mean_us=35844.40 refresh_median_us=36949 refresh_p95_us=37425 refresh_worst_us=37519 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=6609933 scanout_fps=19.3648 draw_calls=128 scanout_irqs=400 invalid_indices=0 failures=0 cache_budget=4194304 cache_hits=256 cache_bytes=1230976 cores=2 turner_failed=0 native_stats=1 tile_internal=1 tiles_in_turn=4 batches=128 waits=384 bytes_turned=16531456 free_before=23746003 internal_before=112011 free_after=23746003 internal_after=112011 minimum_free=23744003 minimum_internal=110043 largest_internal_before=31744 largest_internal_after=31744 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:43:58]I (168010) ab_bench: AB_DONE board=waveshare-7b variant=native64 rounds=3 hardware_measurement=COMPLETE compare_only_matching_board_and_scene=1

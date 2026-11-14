@@ -1,0 +1,93 @@
+
+Redémarrage de l'appareil…
+[12:35:37]ESP-ROM:esp32p4-eco2-20240710
+[12:35:37]Build:Jul 10 2024
+[12:35:37]rst:0x17 (CHIP_USB_UART_RESET),boot:0xf (SPI_FAST_FLASH_BOOT)
+[12:35:37]Core0 Saved PC:0x4ff11946
+[12:35:37]Core1 Saved PC:0x4fc058e0
+[12:35:37]SPI mode:DIO, clock div:2
+[12:35:37]load:0x4ff33ce0,len:0x14d0
+[12:35:37]load:0x4ff29ed0,len:0xdf8
+[12:35:37]load:0x4ff2cbd0,len:0x3524
+[12:35:37]entry 0x4ff29eda
+[12:35:37]I (27) boot: ESP-IDF v5.5.6 2nd stage bootloader
+[12:35:37]I (28) boot: compile time Nov 13 2026 10:35:35
+[12:35:37]I (29) boot: chip revision: v1.3
+[12:35:37]I (30) boot.esp32p4: SPI Speed      : 40MHz
+[12:35:37]I (31) boot.esp32p4: SPI Mode       : DIO
+[12:35:37]I (35) boot.esp32p4: SPI Flash Size : 32MB
+[12:35:37]I (39) boot: Partition Table:
+[12:35:37]I (42) boot: ## Label            Usage          Type ST Offset   Length
+[12:35:37]I (48) boot:  0 nvs              WiFi data        01 02 00011000 00006000
+[12:35:37]I (54) boot:  1 phy_init         RF data          01 01 00017000 00001000
+[12:35:37]I (61) boot:  2 factory          factory app      00 00 00020000 00600000
+[12:35:37]I (68) esp_image: segment 0: paddr=00020020 vaddr=40090020 size=1472c0h (1340096) map
+[12:35:37]I (295) esp_image: segment 1: paddr=001672e8 vaddr=30100000 size=00070h (   112) load
+[12:35:37]I (297) esp_image: segment 2: paddr=00167360 vaddr=4ff00000 size=08cb8h ( 36024) load
+[12:35:37]I (307) esp_image: segment 3: paddr=00170020 vaddr=40000020 size=85624h (546340) map
+[12:35:37]I (398) esp_image: segment 4: paddr=001f564c vaddr=4ff08cb8 size=0a564h ( 42340) load
+[12:35:38]I (408) esp_image: segment 5: paddr=001ffbb8 vaddr=4ff13280 size=029ach ( 10668) load
+[12:35:38]I (416) boot: Loaded app from partition at offset 0x20000
+[12:35:38]I (423) hex_psram: vendor id    : 0x0d (AP)
+[12:35:38]I (424) hex_psram: Latency      : 0x01 (Fixed)
+[12:35:38]I (424) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+[12:35:38]I (425) hex_psram: dev id       : 0x03 (generation 4)
+[12:35:38]I (429) hex_psram: density      : 0x07 (256 Mbit)
+[12:35:38]I (434) hex_psram: good-die     : 0x06 (Pass)
+[12:35:38]I (438) hex_psram: SRF          : 0x02 (Slow Refresh)
+[12:35:38]I (442) hex_psram: BurstType    : 0x00 ( Wrap)
+[12:35:38]I (447) hex_psram: BurstLen     : 0x03 (2048 Byte)
+[12:35:38]I (451) hex_psram: BitMode      : 0x01 (X16 Mode)
+[12:35:38]I (456) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+[12:35:38]I (461) hex_psram: DriveStrength: 0x00 (1/1)
+[12:35:38]I (465) MSPI Timing: Enter psram timing tuning
+[12:35:38]I (637) esp_psram: Found 32MB PSRAM device
+[12:35:38]I (637) esp_psram: Speed: 200MHz
+[12:35:38]I (641) hex_psram: psram CS IO is dedicated
+[12:35:38]I (641) cpu_start: Multicore app
+[12:35:38]I (651) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+[12:35:38]I (652) cpu_start: Pro cpu start user code
+[12:35:38]I (653) cpu_start: cpu freq: 360000000 Hz
+[12:35:38]I (654) app_init: Application information:
+[12:35:38]I (658) app_init: Project name:     test_esp_lvgl_adapter_lvgl9
+[12:35:38]I (664) app_init: App version:      1
+[12:35:38]I (667) app_init: Compile time:     Nov 13 2026 10:37:27
+[12:35:38]I (672) app_init: ELF file SHA256:  bc45f12d1...
+[12:35:38]I (676) app_init: ESP-IDF:          v5.5.6
+[12:35:38]I (680) efuse_init: Min chip rev:     v0.0
+[12:35:38]I (684) efuse_init: Max chip rev:     v1.99 
+[12:35:38]I (688) efuse_init: Chip rev:         v1.3
+[12:35:38]I (692) heap_init: Initializing. RAM available for dynamic allocation:
+[12:35:38]I (698) heap_init: At 4FF17840 len 00023780 (141 KiB): RETENT_RAM
+[12:35:38]I (704) heap_init: At 4FF3AFC0 len 00004BF0 (18 KiB): RAM
+[12:35:38]I (709) heap_init: At 4FF40000 len 00060000 (384 KiB): RAM
+[12:35:38]I (714) heap_init: At 50108080 len 00007F80 (31 KiB): RTCRAM
+[12:35:38]I (719) heap_init: At 30100070 len 00001F90 (7 KiB): SPM
+[12:35:38]I (725) esp_psram: Adding pool of 32768K of PSRAM memory to heap allocator
+[12:35:38]I (732) spi_flash: detected chip: gd
+[12:35:38]I (734) spi_flash: flash io: dio
+[12:35:38]I (737) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+[12:35:38]I (744) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+[12:35:38]I (751) main_task: Started on CPU0
+[12:35:38]I (754) esp_psram: Reserving pool of 32K of internal memory for DMA/internal allocations
+[12:35:38]I (762) main_task: Calling app_main()
+[12:35:38]I (765) ab_bench: AB_READY board=waveshare-7b variant=official_ppa1 source_commit=da53cfaa90b63085ef21f721f7593b5e2747d448 source_tree=30143f7007ff8234c352b4c72c3ba9308441a81e logical=1024x600 rotation=180 panel_buffers=3 cpu_mhz=360 psram_mhz=200 l2_kib=128 batch=0 rounds=3 warmup=16 frames=128 dpi_probe=1 dashboard_full=0 sensor_capture=0 draw_units=1 ppa_draw_requested=1
+[12:35:41]I (3799) hw_lcd_init: Install panel IO
+[12:35:41]I (3799) hw_lcd_init: Install LCD driver of ek79007
+[12:35:41]I (3799) ek79007: version: 2.0.2
+[12:35:41]I (3984) esp_lvgl:adapter: LVGL adapter initialized successfully
+[12:35:41]I (3990) esp_lvgl:bridge_v9: Initializing hardware resources
+[12:35:41]I (3991) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+[12:35:41]I (3992) esp_lvgl:bridge: Initializing hardware resources
+[12:35:41]I (3997) esp_lvgl:bridge: Hardware resources initialized successfully
+[12:35:41]I (4006) esp_lvgl:adapter: LVGL task started successfully
+[12:35:44]I (6699) ab_bench: AB_RESULT board=waveshare-7b variant=official_ppa1 batch=0 scene=dashboard round=1 frames=128 produced_us=2105749 submitted_fps=60.7860 refresh_mean_us=15975.52 refresh_median_us=16139 refresh_p95_us=16212 refresh_worst_us=16270 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=127 unselected=1 scanout_cohort_us=2105602 scanout_fps=60.3153 draw_calls=128 scanout_irqs=128 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=0 turner_failed=0 native_stats=0 tile_internal=0 tiles_in_turn=0 batches=0 waits=0 bytes_turned=0 free_before=25264227 internal_before=382203 free_after=25264227 internal_after=382203 minimum_free=25253387 minimum_internal=371395 largest_internal_before=212992 largest_internal_after=212992 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:35:55]I (18227) ab_bench: AB_RESULT board=waveshare-7b variant=official_ppa1 batch=0 scene=changing_rgb565 round=1 frames=128 produced_us=10093776 submitted_fps=12.6811 refresh_mean_us=76642.30 refresh_median_us=76678 refresh_p95_us=77108 refresh_worst_us=77369 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=10108104 scanout_fps=12.6631 draw_calls=128 scanout_irqs=611 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=0 turner_failed=0 native_stats=0 tile_internal=0 tiles_in_turn=0 batches=0 waits=0 bytes_turned=0 free_before=25266267 internal_before=384243 free_after=25266267 internal_after=384243 minimum_free=25265207 minimum_internal=383215 largest_internal_before=212992 largest_internal_after=212992 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:36:25]I (47675) ab_bench: AB_RESULT board=waveshare-7b variant=official_ppa1 batch=0 scene=fixed_flash_off round=1 frames=128 produced_us=26023743 submitted_fps=4.9186 refresh_mean_us=201253.48 refresh_median_us=201244 refresh_p95_us=201876 refresh_worst_us=202159 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=26037209 scanout_fps=4.9160 draw_calls=128 scanout_irqs=1573 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=0 turner_failed=0 native_stats=0 tile_internal=0 tiles_in_turn=0 batches=0 waits=0 bytes_turned=0 free_before=25266267 internal_before=384243 free_after=25266267 internal_after=384243 minimum_free=25265207 minimum_internal=383215 largest_internal_before=212992 largest_internal_after=212992 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:36:27]I (50259) ab_bench: AB_RESULT board=waveshare-7b variant=official_ppa1 batch=0 scene=dashboard round=2 frames=128 produced_us=2105712 submitted_fps=60.7870 refresh_mean_us=15986.83 refresh_median_us=16161 refresh_p95_us=16231 refresh_worst_us=16269 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=127 unselected=1 scanout_cohort_us=2105006 scanout_fps=60.3324 draw_calls=128 scanout_irqs=128 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=0 turner_failed=0 native_stats=0 tile_internal=0 tiles_in_turn=0 batches=0 waits=0 bytes_turned=0 free_before=25263951 internal_before=381927 free_after=25263951 internal_after=381927 minimum_free=25253127 minimum_internal=371135 largest_internal_before=212992 largest_internal_after=212992 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:36:39]I (61786) ab_bench: AB_RESULT board=waveshare-7b variant=official_ppa1 batch=0 scene=changing_rgb565 round=2 frames=128 produced_us=10103776 submitted_fps=12.6685 refresh_mean_us=76708.13 refresh_median_us=76714 refresh_p95_us=77232 refresh_worst_us=77432 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=10104470 scanout_fps=12.6677 draw_calls=128 scanout_irqs=611 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=0 turner_failed=0 native_stats=0 tile_internal=0 tiles_in_turn=0 batches=0 waits=0 bytes_turned=0 free_before=25266267 internal_before=384243 free_after=25266267 internal_after=384243 minimum_free=25265207 minimum_internal=383215 largest_internal_before=212992 largest_internal_after=212992 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:37:08]I (91201) ab_bench: AB_RESULT board=waveshare-7b variant=official_ppa1 batch=0 scene=fixed_flash_off round=2 frames=128 produced_us=26008680 submitted_fps=4.9214 refresh_mean_us=201123.43 refresh_median_us=201091 refresh_p95_us=201650 refresh_worst_us=201940 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=26010463 scanout_fps=4.9211 draw_calls=128 scanout_irqs=1571 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=0 turner_failed=0 native_stats=0 tile_internal=0 tiles_in_turn=0 batches=0 waits=0 bytes_turned=0 free_before=25266267 internal_before=384243 free_after=25266267 internal_after=384243 minimum_free=25265207 minimum_internal=383215 largest_internal_before=212992 largest_internal_after=212992 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:37:11]I (93785) ab_bench: AB_RESULT board=waveshare-7b variant=official_ppa1 batch=0 scene=dashboard round=3 frames=128 produced_us=2105723 submitted_fps=60.7867 refresh_mean_us=15983.96 refresh_median_us=16154 refresh_p95_us=16214 refresh_worst_us=16237 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=127 unselected=1 scanout_cohort_us=2105267 scanout_fps=60.3249 draw_calls=128 scanout_irqs=128 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=0 turner_failed=0 native_stats=0 tile_internal=0 tiles_in_turn=0 batches=0 waits=0 bytes_turned=0 free_before=25263951 internal_before=381927 free_after=25263951 internal_after=381927 minimum_free=25253119 minimum_internal=371127 largest_internal_before=212992 largest_internal_after=212992 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:37:22]I (105329) ab_bench: AB_RESULT board=waveshare-7b variant=official_ppa1 batch=0 scene=changing_rgb565 round=3 frames=128 produced_us=10110741 submitted_fps=12.6598 refresh_mean_us=76770.07 refresh_median_us=76781 refresh_p95_us=77244 refresh_worst_us=77517 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=10124278 scanout_fps=12.6429 draw_calls=128 scanout_irqs=612 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=0 turner_failed=0 native_stats=0 tile_internal=0 tiles_in_turn=0 batches=0 waits=0 bytes_turned=0 free_before=25266267 internal_before=384243 free_after=25266267 internal_after=384243 minimum_free=25265207 minimum_internal=383215 largest_internal_before=212992 largest_internal_after=212992 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:37:52]I (134744) ab_bench: AB_RESULT board=waveshare-7b variant=official_ppa1 batch=0 scene=fixed_flash_off round=3 frames=128 produced_us=25995674 submitted_fps=4.9239 refresh_mean_us=201026.19 refresh_median_us=200999 refresh_p95_us=201586 refresh_worst_us=202002 scanout_metric=GENERATION_SELECTED_FOR_DMA selected=128 unselected=0 scanout_cohort_us=26011269 scanout_fps=4.9209 draw_calls=128 scanout_irqs=1571 invalid_indices=0 failures=0 cache_budget=0 cache_hits=0 cache_bytes=0 cores=0 turner_failed=0 native_stats=0 tile_internal=0 tiles_in_turn=0 batches=0 waits=0 bytes_turned=0 free_before=25266267 internal_before=384243 free_after=25266267 internal_after=384243 minimum_free=25265207 minimum_internal=383215 largest_internal_before=212992 largest_internal_after=212992 heap_ok=1 idle_yields=8 tick_hz=1000
+[12:37:52]I (134807) ab_bench: AB_DONE board=waveshare-7b variant=official_ppa1 rounds=3 hardware_measurement=COMPLETE compare_only_matching_board_and_scene=1
