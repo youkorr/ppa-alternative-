@@ -458,9 +458,14 @@ is not safe on two cores: `esphome::font::Font` keeps the last glyph it
 looked up in two plain members, so a lookup on one core can hand the other
 the wrong glyph, written into a buffer sized for another. On a Tab5 that was
 a crash a few minutes into a screen with a large clock under moving lights.
-So when both tiles of a pair draw text, the second is drawn after the first
-on the same core; a test font that counts the cores inside it at once holds
-this to one. Tiles go in pairs, four of them with a PPA so a pair is
+So each text draw is under a mutex, from the font being asked for a glyph to
+its bitmap being drawn, and everything else in both tiles is still drawn at
+once; a test font that counts the cores inside it at once holds this to one.
+(The first guard drew a whole pair of tiles one after the other when both
+held text. Through Espressif's adapter, the commit carrying it measured a
+dashboard 12% slower on a Waveshare 7B and 18% on a Tab5, and the guard was
+taken for the cause there, not measured apart; the mutex round each text draw
+is the fix made there, brought back here.) Tiles go in pairs, four of them with a PPA so a pair is
 drawn while the last pair is turned; where internal RAM has no room for two
 more, the two there are cut in half (no extra RAM, about a quarter more
 drawing, still faster):
