@@ -1089,6 +1089,24 @@ static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
     if(th < 1) th = 1;
 
     const bool two = g_helper.on && u->tile[1];
+    /* The second core paints the second tile of a pair, so an area that fits
+     * in one tile -- a card of a dashboard, a bar, a slider -- was all the
+     * first core's, and so was the odd tile at the end of a larger one. Such
+     * an area is cut into an even number of tiles of equal height instead:
+     * each core draws half of it. Not below LV_DRAW_ORTHO_PAIR_MIN_PX, where
+     * a second turn and a second pass over the tasks cost more than half the
+     * drawing saves. (Through Espressif's adapter on a Waveshare 7B and a
+     * Tab5, a dashboard of three cards drew 5 areas a frame, nearly all of one
+     * tile: this engine at 49 and 35 frames a second against 61 and 49 for the
+     * stock adapter, whose two software units share every area.) */
+    if(two) {
+        const int32_t h = lv_area_get_height(&box);
+        const int32_t cols = (w + tw - 1) / tw;
+        const int32_t rows = (h + th - 1) / th;
+        if(((int64_t)rows * cols) % 2 == 1 && h >= 2 &&
+           (int64_t)lv_area_get_size(&box) / ((int64_t)rows * cols) >= LV_DRAW_ORTHO_PAIR_MIN_PX)
+            th = (h + rows) / (rows + 1);   /* h over rows + 1 tiles, rounded up */
+    }
     lv_area_t held[2];
     int32_t nheld = 0;
     for(int32_t y = box.y1; y <= box.y2; y += th) {

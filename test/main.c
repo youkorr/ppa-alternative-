@@ -532,6 +532,119 @@ static void scene_text(lv_obj_t * scr)
                       "18:18 lundi 9 novembre 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz");
 }
 
+/* A dashboard as an application draws one: three cards, each with a shadow,
+ * a border and one control, of which only what changed is redrawn every frame.
+ * The scene of the comparison against the stock esp_lvgl_adapter (PR 818's
+ * A/B kit): there, every area a frame redrew fitted in one tile, so the first
+ * core drew all of it while the second idled. Each such area is now cut in
+ * two, one half a core. */
+static lv_obj_t * g_dash_arc, * g_dash_bar, * g_dash_slider, * g_dash_counter, * g_dash_marker;
+static uint32_t g_dash_frame;
+
+static lv_obj_t * dash_card(lv_obj_t * parent, int32_t x, int32_t y, int32_t w, int32_t h, const char * title)
+{
+    lv_obj_t * c = lv_obj_create(parent);
+    lv_obj_set_pos(c, x, y);
+    lv_obj_set_size(c, w, h);
+    lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(c, lv_color_hex(0x203048), 0);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(c, 15, 0);
+    lv_obj_set_style_border_color(c, lv_color_hex(0x526078), 0);
+    lv_obj_set_style_border_width(c, 2, 0);
+    lv_obj_set_style_shadow_width(c, 18, 0);
+    lv_obj_set_style_shadow_opa(c, LV_OPA_40, 0);
+    lv_obj_t * l = lv_label_create(c);
+    lv_label_set_text(l, title);
+    lv_obj_set_style_text_color(l, lv_color_white(), 0);
+    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, 0);
+    return c;
+}
+
+static void dash_update(uint32_t frame)
+{
+    lv_arc_set_value(g_dash_arc, (int32_t)((frame * 7) % 101));
+    lv_bar_set_value(g_dash_bar, (int32_t)((frame * 11) % 101), LV_ANIM_OFF);
+    lv_slider_set_value(g_dash_slider, (int32_t)((frame * 13) % 101), LV_ANIM_OFF);
+    lv_label_set_text_fmt(g_dash_counter, "A/B trace %03u", (unsigned)frame);
+    lv_obj_set_style_bg_color(g_dash_marker, lv_color_hex(((frame * 37) & 255) << 16 | ((frame * 71) & 255) << 8 |
+                                                         ((frame * 109) & 255)), 0);
+}
+
+static void scene_dashboard(lv_obj_t * scr)
+{
+    const int32_t W = lv_obj_get_width(scr), H = lv_obj_get_height(scr);
+    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x081220), 0);
+    lv_obj_set_style_bg_grad_color(scr, lv_color_hex(0x203758), 0);
+    lv_obj_set_style_bg_grad_dir(scr, LV_GRAD_DIR_VER, 0);
+    const int32_t cw = (W - 80) / 3, ch = H - 145;
+    lv_obj_t * c = dash_card(scr, 20, 80, cw, ch, "Temperature");
+    g_dash_arc = lv_arc_create(c);
+    lv_obj_set_size(g_dash_arc, cw - 60, ch - 70);
+    lv_obj_center(g_dash_arc);
+    lv_arc_set_range(g_dash_arc, 0, 100);
+    c = dash_card(scr, 40 + cw, 80, cw, ch, "Power");
+    g_dash_bar = lv_bar_create(c);
+    lv_obj_set_size(g_dash_bar, cw - 45, 45);
+    lv_obj_center(g_dash_bar);
+    c = dash_card(scr, 60 + 2 * cw, 80, cw, ch, "Lighting");
+    g_dash_slider = lv_slider_create(c);
+    lv_obj_set_width(g_dash_slider, cw - 55);
+    lv_obj_center(g_dash_slider);
+    g_dash_counter = lv_label_create(scr);
+    lv_obj_set_style_text_font(g_dash_counter, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(g_dash_counter, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(g_dash_counter, lv_color_hex(0x101820), 0);
+    lv_obj_set_style_bg_opa(g_dash_counter, LV_OPA_COVER, 0);
+    lv_obj_set_pos(g_dash_counter, 16, 15);
+    g_dash_marker = lv_obj_create(scr);
+    lv_obj_remove_style_all(g_dash_marker);
+    lv_obj_set_pos(g_dash_marker, W - 64, 8);
+    lv_obj_set_size(g_dash_marker, 48, 48);
+    lv_obj_set_style_bg_opa(g_dash_marker, LV_OPA_COVER, 0);
+    dash_update(g_dash_frame);
+}
+
+/* Frame after frame, only what changed redrawn: the glass must end as the
+ * last frame drawn whole, and both cores must have had their share. */
+static void check_dashboard(int32_t nw, int32_t nh, lv_display_rotation_t rot)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const uint32_t frames = 24;
+    g_dash_frame = frames - 1;
+    uint8_t * want = reference(nw, nh, cf, rot, scene_dashboard);
+    g_dash_frame = 0;
+    screen_t * nat = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(nat->disp);
+    scene_dashboard(lv_display_get_screen_active(nat->disp));
+    lv_refr_now(nat->disp);
+    lv_draw_ortho_reset_stats();
+    for(uint32_t f = 1; f < frames; f++) {
+        dash_update(f);
+        lv_refr_now(nat->disp);
+    }
+    const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+    const uint32_t tiles = st->tiles, other = st->tiles_other_core;
+    char what[200];
+    snprintf(what, sizeof(what), "dashboard %dx%d at %s, %u frames of changes (%u tiles, %u on the second core)",
+             (int)nw, (int)nh, rot_name(rot), (unsigned)(frames - 1), (unsigned)tiles, (unsigned)other);
+    expect_same(what, nat, want, cf);
+    g_cases++;
+    /* The counter and the marker are too small to share (under
+     * LV_DRAW_ORTHO_PAIR_MIN_PX); the three controls are not. */
+    if(tiles > 0 && other * 100 >= tiles * 30)
+        printf("  ok    ...and the second core drew %u%% of its tiles\n", (unsigned)(other * 100 / tiles));
+    else {
+        g_failures++;
+        printf("  FAIL  ...and the second core drew %u of its %u tiles: its areas were left to one core\n",
+               (unsigned)other, (unsigned)tiles);
+    }
+    drop_screen(nat);
+    free(want);
+}
+
 static void check_font_one_core(void)
 {
     g_spy_font = lv_font_montserrat_28;
@@ -2256,7 +2369,11 @@ int main(int argc, char ** argv)
     check_camera(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
 
 #if LV_USE_OS != LV_OS_NONE
-    if(g_two_cores) check_font_one_core();
+    if(g_two_cores) {
+        check_font_one_core();
+        check_dashboard(1024, 600, LV_DISPLAY_ROTATION_180);   /* Waveshare 7B */
+        check_dashboard(720, 1280, LV_DISPLAY_ROTATION_270);   /* Tab5 */
+    }
 #endif
 
     /* Last: after it the PPA is stuck, as it would stay on a board. */
