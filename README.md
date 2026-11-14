@@ -482,8 +482,16 @@ limit, and 16 % on the Waveshare at 180 (57.0 to 47.7 ms), where drawing is.
 It costs the second core's time and a 12 KiB stack, so it is off by default:
 compare `ortho` and `ortho_2cores` with `lvgl_bench` and keep the faster.
 
-**A pair is two tiles of one redraw**, so the second core paints only where a
-redraw needs more than one tile. On a whole screen redrawn it gets half of
+**A pair is two tiles of one redraw**, and a redraw that fits in one tile is
+cut in two for it. It was not until November 2026: a redraw of one tile was
+all the first core's, and so a dashboard -- a few small areas a frame, a card,
+a bar, a slider -- ran on one core. Measured through Espressif's adapter on
+the household's boards, that scene made 49 and 35 frames a second here
+against 61 and 49 for the stock adapter, whose two software units share every
+area (`test_pr818/RESULTATS.md`). On the same scene on a PC the second core
+painted 1 tile of 120; it paints 74 of 193 now, a tile under
+`LV_DRAW_ORTHO_PAIR_MIN_PX` (8192 pixels) being left whole. What that gives
+on a board is not measured yet. On a whole screen redrawn it gets half of
 them: the boards' logs during `lvgl_bench` read `960 of 1920 tiles painted on
 the second core` (Tab5) and the like. Over a camera it gets **none**, and that
 is expected rather than a fault: the frame is a picture, turned in one PPA

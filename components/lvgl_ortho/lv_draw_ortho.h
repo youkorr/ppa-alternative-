@@ -60,6 +60,15 @@ extern "C" {
 #define LV_DRAW_ORTHO_TILE_BYTES (128 * 1024)
 #endif
 
+/** With a second core: the pixels a tile must hold to be cut in two, one half
+ *  for each core, when it would otherwise be drawn by the first core alone
+ *  (an area that fits in one tile, or the odd tile of a larger one). Below
+ *  it, the second turn and the second pass over the tasks cost more than the
+ *  shared drawing saves. Not measured on a board. */
+#ifndef LV_DRAW_ORTHO_PAIR_MIN_PX
+#define LV_DRAW_ORTHO_PAIR_MIN_PX 8192
+#endif
+
 /** An image carrying this flag stores its pixels in the panel's native
  *  orientation: `header.w` x `header.h` is still its size as the UI sees it,
  *  but row r of the data is native row r of what it will become on the glass.
