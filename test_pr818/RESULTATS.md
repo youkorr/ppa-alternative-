@@ -76,6 +76,61 @@ synchronisation, une fonction attachée au tampon de destination
 sont ceux que le moteur fournit. La même économie peut donc se faire depuis
 le moteur, sans toucher à LVGL. Pas encore écrit.
 
+## Le 15 novembre : les trois corrections, et le banc pour les mesurer
+
+Les trois causes ci-dessus sont corrigées dans le moteur, ici
+(`components/lvgl_ortho`) et dans la branche de test de la PR,
+`test/rotate-in-draw-sync` sur youkorr/esp-iot-solution :
+
+1. **Tableau de bord : les deux cœurs sur chaque zone.** Une zone qui tient
+   dans une tuile est coupée en deux, une moitié par cœur. Sauf si elle
+   contient une image agrandie, tournée ou inclinée : LVGL la rééchantillonne
+   différemment selon l'endroit coupé (602 pixels décalés d'un niveau dans le
+   banc des objets transformés de la PR), donc elle garde ses tuiles.
+2. **Image en flash : par les tuiles, jamais par le PPA.** Le CPU la dessine
+   dans les tuiles en RAM interne, sur les deux cœurs, et le PPA tourne les
+   tuiles pendant que les suivantes se dessinent. Avec le cache d'images, le
+   CPU la lit une seule fois.
+3. **Les recopies de LVGL entre tampons : reprises par le moteur, sans
+   modifier LVGL.** LVGL les fait par `lv_draw_buf_copy()`, qui appelle le
+   `buf_copy_cb` du tampon de destination : le moteur le remplace. Chaque
+   copie est notée, et au début de l'image suivante (`LV_EVENT_RENDER_START`)
+   seul ce qu'elle ne redessine pas est copié, par le PPA. Un
+   rafraîchissement vide ne copie plus rien. C'est l'effet du correctif V9,
+   mais intégrable à la PR puisqu'il ne touche pas LVGL.
+
+Vérifié sur PC : 615 cas sur LVGL 9.5, 9.6 et 10, 629 à deux cœurs, sous
+ASan et UBSan ; dans le banc de la PR, 447 et 462 cas (342 et 353 avant),
+les objets transformés dans leurs bornes, et chaque mutant attrapé.
+**Rien n'est mesuré sur carte** : c'est l'étape suivante.
+
+### Le banc de mesure
+
+`espressif/pr818-ab/` est le banc V9 de Codex (mêmes scènes, même trace,
+mêmes sondes), construit par GitHub Actions
+(`.github/workflows/pr818-ab.yml`, ESP-IDF 5.5.6) pour les deux cartes et
+deux variantes :
+
+| Firmware | Ce qu'il contient |
+|---|---|
+| `*-ab-official.bin` | l'adaptateur d'Espressif tel qu'il est (da53cfa, TRIPLE_PARTIAL) |
+| `*-ab-native.bin` | la PR avec les trois corrections (ROTATE_IN_DRAW, DOUBLE_DIRECT) |
+
+Dans le firmware natif, les deux modes de V9 sont gardés : `eager` est LVGL
+qui fait ses recopies lui-même, `deferred` est le moteur qui les reprend.
+L'officiel et le natif sont donc mesurés avec le même code de banc, le même
+jour, et on peut les comparer ligne à ligne.
+
+Les firmwares du 15 novembre sont les artefacts de l'exécution
+https://github.com/youkorr/ppa-alternative-/actions/runs/43695049197
+(`waveshare-7b-ab-official`, `waveshare-7b-ab-native`, `tab5-ab-official`,
+`tab5-ab-native` ; chaque zip contient le `.bin`, le `sdkconfig` et le `.elf`).
+
+Pour chaque carte : flasher le `.bin` à **0x0**, ouvrir le journal à
+**115200 bauds**, redémarrer, attendre `AB_DONE` (deux à quatre minutes),
+et envoyer le journal complet. Puis la même chose avec l'autre firmware.
+`python3 test_pr818/depouiller.py` lit les journaux.
+
 ## Ce que ces journaux ne disent pas
 
 - Rien sur le Tab5 en V7 (officiel + PPA, lots de 128), ni l'officiel V7 du
