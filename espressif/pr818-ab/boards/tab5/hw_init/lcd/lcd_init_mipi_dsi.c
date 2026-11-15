@@ -74,7 +74,9 @@ static esp_err_t tab5_board_once(void)
             .duty_resolution = LEDC_TIMER_10_BIT,
             .timer_num = LEDC_TIMER_0,
             .freq_hz = 5000,
-            .clk_cfg = LEDC_AUTO_CLK,
+            /* The camera's 24 MHz XCLK (ab_camera.c) can only come from the
+             * 80 MHz PLL, and every LEDC timer shares one clock source. */
+            .clk_cfg = LEDC_USE_PLL_DIV_CLK,
         };
         const ledc_channel_config_t channel = {
             .gpio_num = TAB5_BACKLIGHT_GPIO,

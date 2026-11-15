@@ -12,6 +12,9 @@ on:
   push:
     paths:
       - "espressif/ppa-probe/**"
+      - "espressif/pr818-ab/boards/**"
+      - "espressif/pr818-ab/fixtures/ab_camera.*"
+      - "espressif/pr818-ab/prepare.py"
       - ".github/workflows/ppa-probe.yml"
   workflow_dispatch:
     inputs:

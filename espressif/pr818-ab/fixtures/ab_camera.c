@@ -53,13 +53,16 @@ static ab_camera_counts_t s_counts;
 
 static esp_err_t start_xclk(void)
 {
-    /* Timer 1 and channel 2: the Tab5's backlight has timer 0 and channel 1. */
+    /* Timer 1 and channel 2: the Tab5's backlight has timer 0 and channel 1.
+     * Every LEDC timer of a P4 shares one clock source, and 24 MHz can only
+     * come from the 80 MHz PLL: the backlight is put on it too (hw_init), or
+     * whichever starts second is refused ("timer clock conflict"). */
     const ledc_timer_config_t timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_TIMER_1_BIT,
         .timer_num = LEDC_TIMER_1,
         .freq_hz = XCLK_HZ,
-        .clk_cfg = LEDC_AUTO_CLK,
+        .clk_cfg = LEDC_USE_PLL_DIV_CLK,
     };
     const ledc_channel_config_t channel = {
         .gpio_num = XCLK_GPIO,

@@ -18,21 +18,26 @@
  *                       (what lv_draw_ortho does today); its result is the
  *                       reference every banded result is compared with
  *   bands_direct        the same, cut in bands: what cutting alone costs
- *   bands_to_sram       the PPA turning every band into one SRAM buffer
- *   bands_sram_to_sram  the PPA with no PSRAM at all: the engine's own speed
- *   bands_sram_to_dst   SRAM into the frame buffer: the dashboard's tile path
- *   copy_sram_to_dst    a band copied from SRAM to the frame buffer, all bands
- *   staged_seq          turn a band into SRAM, then copy it, band after band
- *   staged_pipe         the same with two SRAM bands: the PPA turns the next
- *                       band while the copy of the last one runs
+ *   fetch_to_sram       DMA2D copying each band's SOURCE from PSRAM into SRAM
+ *   turn_sram_to_dst    the PPA turning a band from SRAM into the frame buffer
+ *   in_seq              fetch a band's source into SRAM, then turn it into the
+ *                       frame buffer, band after band
+ *   in_pipe             the same with two SRAM bands: DMA2D fetches the next
+ *                       band while the PPA turns the last one
+ *   out_pipe            the first version's idea, for comparison: the PPA turns
+ *                       into SRAM and DMA2D copies the result out
  *
- * "rows" bands are output rows (full width, so the copy is one run per
- * band), "cols" bands are output columns (only for a 90/270 turn: the PPA
- * reads whole source rows, the copy writes short runs). Copies are DMA2D
- * (fbcpy, the copy the DSI driver itself uses), the AXI GDMA (linear, so
- * rows only) or the CPU. Three conditions: before the panel exists (the
- * destination is a PSRAM buffer), with the panel scanning out its frame
- * buffer, and with the camera streaming into PSRAM as well.
+ * The first run of this firmware (both boards, 2026-11-15) answered half of
+ * it: the PPA WRITING to PSRAM costs nothing over writing to SRAM, its
+ * READING from PSRAM in 16x16 macroblocks is what doubles its time, and
+ * DMA2D reads and writes PSRAM about three times faster than the PPA does.
+ * So the band goes through SRAM on the way IN, not on the way out.
+ *
+ * "rows" bands are output rows, "cols" output columns (only for a 90/270
+ * turn: their source is whole source rows, one run each). Three conditions:
+ * before the panel exists (the destination is a PSRAM buffer), with the
+ * panel scanning out its frame buffer, and with the camera streaming into
+ * PSRAM as well.
  *
  * Lines start with PROBE, SUMMARY, PROBE_START and PROBE_DONE.
  */
@@ -95,7 +100,6 @@ typedef struct {
     copier_t copier;
     ppa_client_handle_t client;
     uint8_t *buf[2];                /* SRAM bands */
-    uint8_t *srcband;               /* a source band already in SRAM */
     size_t cap;                     /* bytes in each */
 } job_t;
 
@@ -322,63 +326,80 @@ static bool op_bands_direct(const job_t *j)
     return true;
 }
 
-static bool op_bands_to_sram(const job_t *j)
+/* A band's source, out of the camera picture in PSRAM, into a compact SRAM
+ * buffer: DMA2D reads the picture in long runs, where the PPA reads it in
+ * 16x16 macroblocks. Finished when s_copy_done is given. */
+static esp_err_t fetch_start(rect_t s, uint8_t *to)
+{
+    esp_async_fbcpy_trans_desc_t t = {
+        .src_buffer = s_src,
+        .dst_buffer = to,
+        .src_buffer_size_x = PROBE_SRC_W,
+        .src_buffer_size_y = PROBE_SRC_H,
+        .dst_buffer_size_x = s.w,
+        .dst_buffer_size_y = s.h,
+        .src_offset_x = s.x,
+        .src_offset_y = s.y,
+        .copy_size_x = s.w,
+        .copy_size_y = s.h,
+        .pixel_format_unique_id = {.color_type_id = COLOR_TYPE_ID(COLOR_SPACE_RGB, COLOR_PIXEL_RGB565)},
+    };
+    return esp_async_fbcpy(s_fbcpy, &t, fbcpy_done_cb, NULL);
+}
+
+/* The band o's source, already compact in SRAM, turned into its place. */
+static bool turn_from(ppa_client_handle_t c, const uint8_t *from, rect_t o, ppa_trans_mode_t mode)
+{
+    const rect_t s = source_of(o);
+    const rect_t whole = {0, 0, s.w, s.h};
+    return turn(c, from, s.w, s.h, whole, s_dst, s_dst_bytes, PROBE_OUT_W, PROBE_OUT_H, o.x, o.y,
+                PROBE_ANGLE, mode) == ESP_OK;
+}
+
+static bool op_fetch(const job_t *j)
 {
     for (uint32_t k = 0; k < span(j->layout); k += j->n) {
-        const rect_t o = band(j->layout, k, j->n);
-        if (turn(j->client, s_src, PROBE_SRC_W, PROBE_SRC_H, source_of(o), j->buf[0], j->cap,
-                 o.w, o.h, 0, 0, PROBE_ANGLE, PPA_TRANS_MODE_BLOCKING) != ESP_OK) {
-            return false;
-        }
+        if (fetch_start(source_of(band(j->layout, k, j->n)), j->buf[0]) != ESP_OK || !copy_wait()) return false;
     }
     return true;
 }
 
-static bool op_bands_sram_to_sram(const job_t *j)
+static bool op_turn_from_sram(const job_t *j)
 {
     for (uint32_t k = 0; k < span(j->layout); k += j->n) {
-        const rect_t o = band(j->layout, k, j->n);
-        const rect_t s = source_of(o);
-        const rect_t whole = {0, 0, s.w, s.h};
-        if (turn(j->client, j->srcband, s.w, s.h, whole, j->buf[0], j->cap,
-                 o.w, o.h, 0, 0, PROBE_ANGLE, PPA_TRANS_MODE_BLOCKING) != ESP_OK) {
-            return false;
-        }
+        if (!turn_from(j->client, j->buf[0], band(j->layout, k, j->n), PPA_TRANS_MODE_BLOCKING)) return false;
     }
     return true;
 }
 
-static bool op_bands_sram_to_dst(const job_t *j)
+static bool op_in_seq(const job_t *j)
 {
     for (uint32_t k = 0; k < span(j->layout); k += j->n) {
         const rect_t o = band(j->layout, k, j->n);
-        const rect_t s = source_of(o);
-        const rect_t whole = {0, 0, s.w, s.h};
-        if (turn(j->client, j->srcband, s.w, s.h, whole, s_dst, s_dst_bytes,
-                 PROBE_OUT_W, PROBE_OUT_H, o.x, o.y, PROBE_ANGLE, PPA_TRANS_MODE_BLOCKING) != ESP_OK) {
-            return false;
-        }
+        if (fetch_start(source_of(o), j->buf[0]) != ESP_OK || !copy_wait()) return false;
+        if (!turn_from(j->client, j->buf[0], o, PPA_TRANS_MODE_BLOCKING)) return false;
     }
     return true;
 }
 
-static bool op_copy_bands(const job_t *j)
+/* Band i is turned out of buf[i & 1] while band i+1 is fetched into the other.
+ * Both are waited for before the next turn, so a fetch never lands on the
+ * band the PPA is still reading. */
+static bool op_in_pipe(const job_t *j)
 {
-    for (uint32_t k = 0; k < span(j->layout); k += j->n) {
-        if (copy_start(j->copier, j->buf[0], band(j->layout, k, j->n)) != ESP_OK || !copy_wait()) return false;
-    }
-    return true;
-}
-
-static bool op_staged_seq(const job_t *j)
-{
-    for (uint32_t k = 0; k < span(j->layout); k += j->n) {
-        const rect_t o = band(j->layout, k, j->n);
-        if (turn(j->client, s_src, PROBE_SRC_W, PROBE_SRC_H, source_of(o), j->buf[0], j->cap,
-                 o.w, o.h, 0, 0, PROBE_ANGLE, PPA_TRANS_MODE_BLOCKING) != ESP_OK) {
+    const uint32_t total = span(j->layout), n = j->n;
+    const uint32_t count = (total + n - 1) / n;
+    if (fetch_start(source_of(band(j->layout, 0, n)), j->buf[0]) != ESP_OK || !copy_wait()) return false;
+    for (uint32_t i = 0; i < count; i++) {
+        const bool more = i + 1 < count;
+        if (!turn_from(s_ppa_async, j->buf[i & 1], band(j->layout, i * n, n), PPA_TRANS_MODE_NON_BLOCKING)) {
             return false;
         }
-        if (copy_start(j->copier, j->buf[0], o) != ESP_OK || !copy_wait()) return false;
+        if (more && fetch_start(source_of(band(j->layout, (i + 1) * n, n)), j->buf[(i + 1) & 1]) != ESP_OK) {
+            return false;
+        }
+        if (!ppa_wait()) return false;
+        if (more && !copy_wait()) return false;
     }
     return true;
 }
@@ -392,7 +413,7 @@ static esp_err_t turn_async(const job_t *j, uint32_t k, uint8_t *to)
 
 /* Band i is turned into buf[i & 1] while band i-1 is copied out of the other.
  * The copy of band i-1 must finish before band i+1 is turned over it. */
-static bool op_staged_pipe(const job_t *j)
+static bool op_out_pipe(const job_t *j)
 {
     const uint32_t total = span(j->layout), n = j->n;
     const uint32_t count = (total + n - 1) / n;
@@ -484,68 +505,53 @@ static void run_condition(const char *cond)
     if (s_gdma) measure("raw_gdma", op_raw_gdma, &j, false);
     measure("raw_cpu", op_raw_cpu, &j, false);
 
-    double best = INFINITY;
-    char best_name[64] = "none";
-    static const uint32_t SIZES[] = {16, 32, 64};
+    double best_in = INFINITY, best_out = INFINITY;
+    char name_in[48] = "none", name_out[48] = "none";
+    static const uint32_t SIZES[] = {8, 16, 32, 64};
     const bool sideways = PROBE_ANGLE == PPA_SRM_ROTATION_ANGLE_90 || PROBE_ANGLE == PPA_SRM_ROTATION_ANGLE_270;
     for (int l = LAYOUT_ROWS; l <= LAYOUT_COLS; l++) {
         if (l == LAYOUT_COLS && !sideways) continue;
         for (size_t s = 0; s < sizeof(SIZES) / sizeof(SIZES[0]); s++) {
-            job_t b = {.layout = (layout_t)l, .n = SIZES[s], .client = s_ppa};
+            job_t b = {.layout = (layout_t)l, .n = SIZES[s], .client = s_ppa, .copier = COPY_FBCPY};
             const rect_t o = band(b.layout, 0, b.n);
             b.cap = up((size_t)o.w * o.h * PIX);
             b.buf[0] = in_sram(b.cap);
             b.buf[1] = in_sram(b.cap);
-            /* The third buffer only serves the turns with no PSRAM at all. */
-            b.srcband = b.buf[0] && b.buf[1] ? in_sram(b.cap) : NULL;
             if (!b.buf[0] || !b.buf[1]) {
                 printf("PROBE cond=%s layout=%s band=%" PRIu32 " skipped: no room for 2 x %u bytes of SRAM\n",
                        cond, LAYOUT_NAME[l], b.n, (unsigned)b.cap);
             } else {
+                /* calloc zeroed them through the cache: without this, the PPA
+                 * driver's write-back of its input could put those zeros back
+                 * over a band DMA2D has just written. */
+                for (int i = 0; i < 2; i++) {
+                    esp_cache_msync(b.buf[i], b.cap, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);
+                }
+                printf("PROBE cond=%s layout=%s band=%" PRIu32 " uses 2 x %u bytes of SRAM\n", cond,
+                       LAYOUT_NAME[l], b.n, (unsigned)b.cap);
                 measure("bands_direct", op_bands_direct, &b, true);
-                measure("bands_to_sram", op_bands_to_sram, &b, false);
-                if (b.srcband) {
-                    /* The first band's source, compact, for the SRAM-only turns. */
-                    const rect_t src = source_of(o);
-                    for (uint32_t y = 0; y < src.h; y++) {
-                        memcpy(b.srcband + (size_t)y * src.w * PIX,
-                               (const uint8_t *)s_src + ((size_t)(src.y + y) * PROBE_SRC_W + src.x) * PIX,
-                               (size_t)src.w * PIX);
-                    }
-                    esp_cache_msync(b.srcband, b.cap, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-                    measure("bands_sram_to_sram", op_bands_sram_to_sram, &b, false);
-                    measure("bands_sram_to_dst", op_bands_sram_to_dst, &b, false);
-                } else {
-                    printf("PROBE cond=%s layout=%s band=%" PRIu32 " no room for a third band: SRAM-only turns skipped\n",
-                           cond, LAYOUT_NAME[l], b.n);
+                measure("fetch_to_sram", op_fetch, &b, false);
+                measure("turn_sram_to_dst", op_turn_from_sram, &b, false);
+                double ms = measure("in_seq", op_in_seq, &b, true);
+                ms = fmin(ms, measure("in_pipe", op_in_pipe, &b, true));
+                if (s_last_ok && ms < best_in) {
+                    best_in = ms;
+                    snprintf(name_in, sizeof(name_in), "%s %" PRIu32, LAYOUT_NAME[l], b.n);
                 }
-                for (int c = COPY_FBCPY; c <= COPY_CPU; c++) {
-                    if (c == COPY_GDMA && (l != LAYOUT_ROWS || !s_gdma)) continue;
-                    b.copier = (copier_t)c;
-                    measure("copy_sram_to_dst", op_copy_bands, &b, false);
-                }
-                for (int c = COPY_FBCPY; c <= COPY_GDMA; c++) {
-                    if (c == COPY_GDMA && (l != LAYOUT_ROWS || !s_gdma)) continue;
-                    b.copier = (copier_t)c;
-                    static const char *const NAMES[] = {"staged_seq", "staged_pipe"};
-                    const op_t OPS[] = {op_staged_seq, op_staged_pipe};
-                    for (int p = 0; p < 2; p++) {
-                        const double ms = measure(NAMES[p], OPS[p], &b, true);
-                        if (s_last_ok && ms < best) {
-                            best = ms;
-                            snprintf(best_name, sizeof(best_name), "%s %s %" PRIu32 " %s", NAMES[p],
-                                     LAYOUT_NAME[l], b.n, COPY_NAME[c]);
-                        }
-                    }
+                ms = measure("out_pipe", op_out_pipe, &b, true);
+                if (s_last_ok && ms < best_out) {
+                    best_out = ms;
+                    snprintf(name_out, sizeof(name_out), "%s %" PRIu32, LAYOUT_NAME[l], b.n);
                 }
             }
             heap_caps_free(b.buf[0]);
             heap_caps_free(b.buf[1]);
-            heap_caps_free(b.srcband);
         }
     }
-    printf("SUMMARY cond=%s ppa_whole=%.2f ms (%.1f fps) best_staged=%.2f ms (%.1f fps, %s) change=%+.0f%%\n",
-           cond, whole, 1000.0 / whole, best, 1000.0 / best, best_name, (whole - best) / whole * 100.0);
+    printf("SUMMARY cond=%s ppa_whole=%.2f ms (%.1f fps) in_sram=%.2f ms (%.1f fps, %s) change=%+.0f%% "
+           "out_sram=%.2f ms (%s) change=%+.0f%%\n",
+           cond, whole, 1000.0 / whole, best_in, 1000.0 / best_in, name_in, (whole - best_in) / whole * 100.0,
+           best_out, name_out, (whole - best_out) / whole * 100.0);
 }
 
 #if PROBE_HAS_CAMERA
