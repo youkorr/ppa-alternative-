@@ -144,12 +144,22 @@ void LvglOrtho::setup() {
       n++;
   }
 
+  // Two or three panel buffers: LVGL keeps them in step with copies of its
+  // own, by the CPU and at every refresh, even one with nothing to draw.
+  // lv_draw_ortho makes them instead, only where the next frame does not draw,
+  // and by the PPA.
+  if (this->panel_fbs_ > 0)
+    this->sync_on_ = lv_draw_ortho_take_sync(this->disp_);
+
   lv_obj_invalidate(lv_display_get_screen_active(this->disp_));
   this->ready_ = true;
   ESP_LOGI(TAG, "LVGL draws the panel's %dx%d directly at ESPHome rotation %d (%d touch device(s), turned by LVGL)",
            (int) this->width_, (int) this->height_, this->degrees_, n);
   if (this->panel_fbs_ > 0) {
     ESP_LOGI(TAG, "...into the panel's own %d frame buffers: nothing is turned and nothing is copied", this->panel_fbs_);
+    ESP_LOGI(TAG, "...LVGL's copies between them %s", this->sync_on_ ? "made only where the next frame does not draw, "
+                                                                       "by the PPA"
+                                                                     : "left to LVGL (could not be taken)");
   } else {
     ESP_LOGI(TAG, "...into a buffer of its own, copied to the display. For no copy at all, use youkorr/lvgl_9.5's "
                   "mipi_dsi with framebuffers: 3");
@@ -491,6 +501,15 @@ void LvglOrtho::loop() {
                  st->splits / s, 100.0f * st->bytes_split_turner / all, 100.0f * st->bytes_split_cpu / all,
                  this->cores_on_ ? " on both cores" : "", (unsigned) (st->split_share / 10));
       }
+      // LVGL's copies between the panel's buffers: what it would have copied,
+      // and what was: the rest the next frames drew anyway.
+      if (st->sync_bytes_noted > 0) {
+        ESP_LOGI(TAG, "  buffers kept in step: %.0f KiB/s of LVGL's copies, %.0f KiB/s made (%.0f%% by the PPA)",
+                 st->sync_bytes_noted / 1024.0f / s, st->sync_bytes_copied / 1024.0f / s,
+                 st->sync_bytes_copied ? 100.0f * st->sync_bytes_handed / st->sync_bytes_copied : 0.0f);
+      }
+      if (st->images_flash > 0)
+        ESP_LOGI(TAG, "  %.1f big pictures/s in the flash drawn in the tiles", st->images_flash / s);
       if (this->cores_on_ && st->tiles > 0) {
         ESP_LOGI(TAG, "  %u of %u tiles painted on the second core", (unsigned) st->tiles_other_core,
                  (unsigned) st->tiles);

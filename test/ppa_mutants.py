@@ -12,6 +12,8 @@ picture comes out wrong. Each mutant below takes one wait out; `ortho_test
 
     python3 ppa_mutants.py LVGL_BUILD_DIR      (default: build)
 
+`--only WORDS` runs only the mutants whose name holds WORDS.
+
 With `--cores BUILD_DIR` (an LVGL built with LV_USE_OS=1, see test/Makefile),
 it checks the second core instead: `ortho_test --cores` must fail on each of
 CORES_MUTANTS.
@@ -78,8 +80,8 @@ MUTANTS = {
         "    fence();\n    const uint8_t * sp = src", "    const uint8_t * sp = src"),
     # The copy out of the cache placed by the upright area, not the native one.
     "the cache copied from the upright place": (
-        "                        lv_area_get_width(&whole) * px, &whole, &parts[i]);",
-        "                        lv_area_get_width(&whole) * px, &t->area, &parts[i]);"),
+        "                        lv_area_get_width(&whole) * px, &whole, &parts[i], true);",
+        "                        lv_area_get_width(&whole) * px, &t->area, &parts[i], true);"),
     # A partial band sent to the panel with the copy out of the cache still
     # running.
     "a band sent mid-copy": ("    /* Drawn alone, so nothing else waits for these before LVGL takes the\n"
@@ -98,6 +100,38 @@ MUTANTS = {
     # The share asked for, ignored.
     "the split share ignored": ("    const float share = g_split_fixed ? g_split_fixed / 1000.0f\n",
                                 "    const float share = 0 ? g_split_fixed / 1000.0f\n"),
+    # A picture in the flash not recognised: handed to the PPA, as before,
+    # which reads the flash more slowly than the CPU.
+    "the flash not recognised": ("    if(g_flash_cb) return g_flash_cb(img);\n#if defined(ESP_PLATFORM)\n    return esp_ptr_in_drom",
+                                 "    if(0) return g_flash_cb(img);\n#if defined(ESP_PLATFORM)\n    return esp_ptr_in_drom"),
+    # The picture cache filled by the PPA straight out of the flash.
+    "the cache filled from the flash by the PPA": ("    if(in_flash(img)) {\n        /* Read once",
+                                                   "    if(0) {\n        /* Read once"),
+    # LVGL's copies between frame buffers handed back to it as they come.
+    "LVGL's copies made at once": ("            sync_behind(d, &a);\n", "            g_sync.orig[d]->buf_copy_cb(dest, dest_area, src, src_area);\n"),
+    # A copy LVGL makes in a refresh with nothing to draw, dropped.
+    "an empty refresh's copies dropped": ("            sync_behind(d, &a);\n", "            if(g_sync.disp->inv_p) sync_behind(d, &a);\n"),
+    # What a frame draws subtracted where the UI has it, not the panel.
+    "the frame's areas not turned to the panel": (
+        "        if(lv_display_get_matrix_rotation(disp)) lv_display_rotate_area(disp, &drawn[nd]);\n", ""),
+    # Brought up to date from itself instead of the buffer shown last.
+    "a buffer repaired from itself": ("    sync_repair(a, sync_on_screen(disp), drawn, nd);",
+                                      "    sync_repair(a, disp->buf_act, drawn, nd);"),
+    # The repair left running while LVGL draws.
+    "the repair left running": ("    sync_repair(a, sync_on_screen(disp), drawn, nd);\n    /* Done before anything is drawn: LVGL's own units, and the PPA's fills,\n     * are not in the turner's queue. */\n    fence();\n",
+                                "    sync_repair(a, sync_on_screen(disp), drawn, nd);\n"),
+    # Given back to LVGL with copies still written down.
+    "given back with copies owed": ("    if(g_sync.disp) sync_settle_and_release();\n    sync_unhook();\n",
+                                    "    if(g_sync.disp) sync_release();\n    sync_unhook();\n"),
+    # The adapter's copy at the frame's start taken for one of LVGL's: it is
+    # written down, and the frame is drawn over the buffer it left behind.
+    "another copy written down": (
+        "    if(same_place && disp && lv_refr_get_disp_refreshing() == disp && sync_area_of_lvgl(disp, dest_area)) {",
+        "    if(same_place && disp && lv_refr_get_disp_refreshing() == disp && !disp->rendering_in_progress) {"),
+    # That copy queued for the PPA and not waited for.
+    "another copy left queued": ("            fence();\n            g_stats.sync_others++;", "            g_stats.sync_others++;"),
+    # Buffers set again, and the copies left to LVGL from then on.
+    "buffers set again, never taken again": ("        if(!sync_install(disp)) return;\n", "        return;\n"),
     # The PPA's angle the wrong way round.
     "the PPA turning the other way": (
         "        case LV_DISPLAY_ROTATION_90:\n            return PPA_SRM_ROTATION_ANGLE_90;",
@@ -127,7 +161,8 @@ CORES_MUTANTS = {
     # An area that fits in one tile left to the first core alone, as it was:
     # a dashboard then runs on one core.
     "one-tile areas left to one core": (
-        "    if(two) {\n        const int32_t h = lv_area_get_height(&box);", "    if(0) {\n        const int32_t h = lv_area_get_height(&box);", []),
+        "    if(two && !cut_shows(jobs, n)) {\n        const int32_t h = lv_area_get_height(&box);",
+        "    if(0) {\n        const int32_t h = lv_area_get_height(&box);", []),
     # The pair's first tile drawn into the other core's tile.
     "both cores in one tile": (
         "    ok[0] = prep_tile(jobs, n, o, &rect[0], u->tile[base], u->tile_bytes, &w[0]);",
@@ -142,10 +177,17 @@ CORES_MUTANTS = {
 
 def main():
     args = sys.argv[1:]
+    only = None
+    if "--only" in args:
+        at = args.index("--only")
+        only = args[at + 1]
+        args = args[:at] + args[at + 2:]
     cores = bool(args) and args[0] == "--cores"
     if cores:
         args = args[1:]
     mutants = CORES_MUTANTS if cores else {k: (o, n, []) for k, (o, n) in MUTANTS.items()}
+    if only:
+        mutants = {k: v for k, v in mutants.items() if only in k}
     build = HERE / (args[0] if args else ("build-mt" if cores else "build"))
     lvgl = build / "lvgl.a"
     src = build / "lvgl-src"

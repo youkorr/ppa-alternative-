@@ -18,6 +18,8 @@
  */
 
 #include "lvgl.h"
+/* The display's buffers, to see their handlers given back. */
+#include "lvgl_private.h"
 
 /* 9.6 renamed lv_draw_sw_rotate and warns on the old name. */
 #if LVGL_VERSION_MAJOR > 9 || (LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR >= 6)
@@ -1389,6 +1391,498 @@ static void check_image_caches(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Pictures in the flash (lv_draw_ortho_set_flash_cb)                        */
+/* ------------------------------------------------------------------------ */
+
+/* The PPA reads the flash more slowly than the CPU does (measured on both
+ * boards, see in_flash in lv_draw_ortho.c), so it is never handed a picture
+ * there: the CPU draws it into the tiles, and the PPA turns only the tiles
+ * and, with a cache, copies only the cache's copy. Here a wallpaper the size
+ * of the screen, as the boards' "fixed_flash" scene has, with a label and a
+ * box over it, drawn three times: the same pixels as LVGL's own every time,
+ * and not one PPA transaction reading the picture. */
+static bool g_flash_on;
+static bool frame_in_flash(const lv_image_dsc_t * img)
+{
+    return g_flash_on && g_frame && img->data == g_frame->data;
+}
+
+static void scene_flash(lv_obj_t * scr)
+{
+    lv_obj_t * img = lv_image_create(scr);
+    lv_image_set_src(img, g_frame);
+    lv_obj_set_pos(img, 0, 0);
+    lv_obj_t * box = lv_obj_create(scr);
+    lv_obj_set_pos(box, 40, 30);
+    lv_obj_set_size(box, 70, 50);
+    lv_obj_set_style_bg_color(box, lv_color_hex(0x30A050), 0);
+    lv_obj_t * l = lv_label_create(scr);
+    lv_label_set_text(l, "over the flash");
+    lv_obj_set_pos(l, 25, 100);
+}
+
+static void check_flash(int32_t nw, int32_t nh, lv_display_rotation_t rot, bool cache, bool partial, bool flash)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const bool swap = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    g_frame = image_of(swap ? nh : nw, swap ? nw : nh, cf, 19);
+    g_flash_on = flash;
+    lv_draw_ortho_set_flash_cb(frame_in_flash);
+    lv_draw_ortho_set_image_constant_cb(frame_in_flash);
+    lv_draw_ortho_set_image_cache(cache ? 8 * 1024 * 1024 : 0);
+    uint8_t * want = reference(nw, nh, cf, rot, scene_flash);
+    lv_draw_ortho_ppa_init();
+    screen_t * nat = make_screen(nw, nh, cf, rot, true, partial);
+    lv_display_set_default(nat->disp);
+    lv_obj_t * scr = lv_display_get_screen_active(nat->disp);
+    scene_flash(scr);
+    const bool lines = (lv_draw_buf_width_to_stride(nw, cf) * (uint32_t)nh) % 128 == 0;
+    uint32_t builds = 0, cached = 0, flashed = 0;
+    int read = 0;
+    uint64_t handed = 0, straight = 0;
+    for(int pass = 0; pass < 3; pass++) {
+        lv_draw_ortho_reset_stats();
+        if(pass) lv_obj_invalidate(scr);
+        p4fake_watch(g_frame->data);
+        lv_refr_now(nat->disp);
+        const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+        read += p4fake_watched();
+        builds += st->image_cache_builds;
+        cached += st->images_cached;
+        flashed += st->images_flash;
+        handed += st->bytes_handed;
+        straight += st->bytes_straight_handed;
+        char what[220];
+        snprintf(what, sizeof(what), "picture %s, %dx%d at %s, %s, cache %s, draw %d: %d PPA reads of it, "
+                 "%u through the tiles, %u into the cache, %u from it", flash ? "in the flash" : "in RAM ",
+                 (int)nw, (int)nh, rot_name(rot), partial ? "partial" : "direct ", cache ? "on " : "off", pass + 1,
+                 p4fake_watched(), st->images_flash, st->image_cache_builds, st->images_cached);
+        expect_same(what, nat, want, cf);
+        p4fake_run_all();
+    }
+    p4fake_watch(NULL);
+    g_cases++;
+    char why[200] = "";
+    if(flash) {
+        if(read) snprintf(why, sizeof(why), "the PPA read the picture in the flash %d time(s)", read);
+        else if(!cache && !flashed) snprintf(why, sizeof(why), "it never went through the tiles");
+        else if(cache && (builds != 1 || !cached))
+            snprintf(why, sizeof(why), "it was not read once into the cache (%u) and copied from it (%u)", builds, cached);
+        else if(!partial && lines && !cache && handed == 0)
+            snprintf(why, sizeof(why), "the PPA turned none of the tiles it was drawn into");
+        else if(!partial && lines && cache && straight == 0)
+            snprintf(why, sizeof(why), "the PPA did not copy the cache's copy");
+    }
+    else if(!partial && lines && !cache && read == 0)
+        snprintf(why, sizeof(why), "a picture in RAM was not handed to the PPA, so this case sees nothing");
+    if(why[0]) {
+        g_failures++;
+        printf("  FAIL  picture %s at %s, %s, cache %s: %s\n", flash ? "in the flash" : "in RAM", rot_name(rot),
+               partial ? "partial" : "direct", cache ? "on" : "off", why);
+    }
+    else printf("  ok    picture %s at %s, %s, cache %s: %s\n", flash ? "in the flash" : "in RAM", rot_name(rot),
+                    partial ? "partial" : "direct", cache ? "on" : "off",
+                    flash ? "never read by the PPA" : "handed to the PPA, as before");
+    if(p4fake_pending()) cache_fail("...and PPA transactions were left queued");
+    p4fake_run_all();
+    drop_screen(nat);
+    lv_draw_ortho_ppa_deinit();
+    lv_draw_ortho_set_image_cache(0);
+    lv_draw_ortho_set_image_constant_cb(NULL);
+    lv_draw_ortho_set_flash_cb(NULL);
+    g_flash_on = false;
+    free(want);
+    free((void *)g_frame->data);
+    free(g_frame);
+    g_frame = NULL;
+}
+
+static void check_flashes(void)
+{
+    const lv_display_rotation_t rots[] = {LV_DISPLAY_ROTATION_90, LV_DISPLAY_ROTATION_180, LV_DISPLAY_ROTATION_270};
+    for(unsigned r = 0; r < 3; r++) {
+        for(int mode = 0; mode < 4; mode++) check_flash(320, 480, rots[r], mode & 1, mode & 2, true);
+        /* The control: in RAM, the PPA turns it as it always did. */
+        check_flash(320, 480, rots[r], false, false, false);
+    }
+}
+
+/* ------------------------------------------------------------------------ */
+/* LVGL's copies between frame buffers (lv_draw_ortho_take_sync)            */
+/* ------------------------------------------------------------------------ */
+
+/* Two or three frame buffers in DIRECT mode, against one: LVGL keeps the
+ * buffers in step by copying what the last frame drew into the one it draws
+ * next (refr_sync_areas). Taken over, each copy is written down and only
+ * what the next frame does not draw is copied, at that frame's start. The
+ * frame shown after every refresh must be the single buffer's exactly --
+ * after refreshes with nothing to draw too, which is where LVGL copies for
+ * nothing and where a copy left undone would show. */
+typedef struct {
+    lv_display_t * disp;
+    uint8_t * alloc[3];
+    lv_draw_buf_t third;
+    const uint8_t * shown;   /* the buffer flushed last, as it was when it was handed over */
+    uint8_t * snap;
+    uint32_t stride;
+    int32_t w, h;
+    lv_obj_t * img, * label, * box;
+} sync_screen_t;
+
+static void sync_flush(lv_display_t * disp, const lv_area_t * area, uint8_t * px)
+{
+    (void)area;
+    sync_screen_t * s = lv_display_get_user_data(disp);
+    /* What the panel is given is the buffer as it is now: a copy still
+     * queued for the PPA would reach it later, or never. */
+    if(lv_display_flush_is_last(disp)) {
+        memcpy(s->snap, px, (size_t)s->stride * s->h);
+        s->shown = s->snap;
+    }
+    lv_display_flush_ready(disp);
+}
+
+static sync_screen_t * sync_screen(int32_t w, int32_t h, lv_display_rotation_t rot, int nbufs)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    sync_screen_t * s = calloc(1, sizeof(*s));
+    s->w = w;
+    s->h = h;
+    s->disp = lv_display_create(w, h);
+    lv_display_set_color_format(s->disp, cf);
+    s->stride = lv_draw_buf_width_to_stride(w, cf);
+    const size_t size = (size_t)s->stride * h;
+    s->snap = malloc(size);
+    for(int i = 0; i < nbufs; i++) {
+        s->alloc[i] = aligned_alloc(128, (size + 127) / 128 * 128);
+        memset(s->alloc[i], 0x11 * (i + 3), size);   /* each its own garbage */
+    }
+    lv_display_set_buffers_with_stride(s->disp, s->alloc[0], nbufs > 1 ? s->alloc[1] : NULL, size, s->stride,
+                                       LV_DISPLAY_RENDER_MODE_DIRECT);
+    if(nbufs > 2) {
+        lv_draw_buf_init(&s->third, w, h, cf, s->stride, s->alloc[2], size);
+        lv_display_set_3rd_draw_buffer(s->disp, &s->third);
+    }
+    lv_display_set_flush_cb(s->disp, sync_flush);
+    lv_display_set_user_data(s->disp, s);
+    lv_display_set_rotation(s->disp, rot);
+    lv_display_set_matrix_rotation(s->disp, true);
+    return s;
+}
+
+static void sync_drop(sync_screen_t * s)
+{
+    lv_display_delete(s->disp);
+    for(int i = 0; i < 3; i++) free(s->alloc[i]);
+    free(s->snap);
+    free(s);
+}
+
+/* A picture as big as the screen, as a camera frame or a changing picture
+ * is, a label and a box over it. */
+static lv_image_dsc_t * g_sync_bank[2];
+static void sync_scene(sync_screen_t * s)
+{
+    lv_obj_t * scr = lv_display_get_screen_active(s->disp);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x102030), 0);
+    s->img = lv_image_create(scr);
+    lv_image_set_src(s->img, g_sync_bank[0]);
+    lv_obj_set_pos(s->img, 0, 0);
+    s->box = lv_obj_create(scr);
+    lv_obj_set_size(s->box, 60, 44);
+    lv_obj_set_pos(s->box, 30, 40);
+    lv_obj_set_style_bg_color(s->box, lv_color_hex(0xE07020), 0);
+    s->label = lv_label_create(scr);
+    lv_label_set_text(s->label, "frame 0");
+    lv_obj_set_pos(s->label, 20, 120);
+}
+
+/* Step k: what changes. 'p' a new picture (the whole screen), 'l' the label,
+ * 'b' the box moves, 'h' the picture made invisible or visible again, '-' nothing at
+ * all: a refresh LVGL's timer makes with nothing to draw. */
+static const char * const g_sync_steps =
+    "*l-b--p-pl-b-plb-h-l-hp--b-ll-p-p-p--b-";
+
+static void sync_step(sync_screen_t * s, char what, int k)
+{
+    char text[32];
+    switch(what) {
+        case 'p':
+            lv_image_set_src(s->img, lv_image_get_src(s->img) == g_sync_bank[0] ? g_sync_bank[1] : g_sync_bank[0]);
+            break;
+        case 'l':
+            snprintf(text, sizeof(text), "frame %d", k);
+            lv_label_set_text(s->label, text);
+            break;
+        case 'b':
+            lv_obj_set_pos(s->box, 30 + (k * 23) % 150, 40 + (k * 37) % 200);
+            break;
+        case 'h':   /* by opacity: the flag calls were renamed in 9.6 */
+            lv_obj_set_style_opa(s->img, lv_obj_get_style_opa(s->img, 0) == LV_OPA_COVER ? LV_OPA_TRANSP : LV_OPA_COVER,
+                                 0);
+            break;
+        default:
+            break;
+    }
+}
+
+static void sync_fail(const char * what)
+{
+    g_failures++;
+    printf("  FAIL  %s\n", what);
+}
+
+static void check_sync(int32_t nw, int32_t nh, lv_display_rotation_t rot, int nbufs, bool ppa, bool take)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const bool swap = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    g_sync_bank[0] = image_of(swap ? nh : nw, swap ? nw : nh, cf, 31);
+    g_sync_bank[1] = image_of(swap ? nh : nw, swap ? nw : nh, cf, 37);
+    if(ppa) lv_draw_ortho_ppa_init();
+    sync_screen_t * ref = sync_screen(nw, nh, rot, 1);
+    sync_screen_t * t = sync_screen(nw, nh, rot, nbufs);
+    sync_scene(ref);
+    sync_scene(t);
+    bool took = !take || lv_draw_ortho_take_sync(t->disp);
+    char what[240];
+    long bad_steps = 0;
+    int first_bad = -1;
+    uint64_t noted = 0, copied = 0, handed = 0, whole_noted = 0, whole_copied = 0, last_noted = 0;
+    const size_t n = strlen(g_sync_steps);
+    for(size_t k = 0; k < n; k++) {
+        const char c = g_sync_steps[k];
+        sync_step(ref, c, (int)k);
+        sync_step(t, c, (int)k);
+        lv_draw_ortho_reset_stats();
+        lv_refr_now(ref->disp);
+        lv_refr_now(t->disp);
+        p4fake_run_all();
+        const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+        noted += st->sync_bytes_noted;
+        copied += st->sync_bytes_copied;
+        handed += st->sync_bytes_handed;
+        /* A picture every frame with nothing drawn in between: the frame
+         * after a 'p' and an empty refresh draws the whole screen, so
+         * nothing at all needs copying. */
+        if(c == 'p' && k >= 2 && g_sync_steps[k - 1] == '-' && g_sync_steps[k - 2] == 'p') {
+            whole_noted += last_noted + st->sync_bytes_noted;   /* written down by the empty refresh */
+            whole_copied += st->sync_bytes_copied;
+        }
+        last_noted = st->sync_bytes_noted;
+        if(t->shown == NULL || memcmp(t->shown, ref->shown, (size_t)t->stride * nh) != 0) {
+            if(first_bad < 0) first_bad = (int)k;
+            bad_steps++;
+        }
+    }
+    g_cases++;
+    int empty = 0;
+    for(size_t k = 0; k < n; k++) empty += g_sync_steps[k] == '-';
+    snprintf(what, sizeof(what), "frame buffers: %d %s, %s, %dx%d at %s, %d refreshes, %d with nothing to draw: "
+             "%.0f KiB LVGL's to copy, %.0f copied (%.0f by the PPA)", nbufs, take ? "taken" : "LVGL's",
+             ppa ? "PPA" : "CPU", (int)nw, (int)nh, rot_name(rot), (int)n, empty, noted / 1024.0, copied / 1024.0,
+             handed / 1024.0);
+    if(!took) sync_fail("...the copies could not be taken");
+    else if(bad_steps) {
+        g_failures++;
+        printf("  FAIL  %s: the frame shown differs from one buffer's after %ld refresh(es), first after step %d ('%c')\n",
+               what, bad_steps, first_bad, g_sync_steps[first_bad]);
+    }
+    else printf("  ok    %s\n", what);
+    if(take && took) {
+        /* What it is for: fewer bytes copied than LVGL would have, none at
+         * all where the next frame draws everything, and the PPA's. */
+        if(noted == 0 || copied >= noted) sync_fail("...and it copied no less than LVGL would have");
+        /* Some of it is needed (a label after a whole new picture): none
+         * made here means LVGL made them. */
+        if(copied == 0) sync_fail("...and it made none of the copies, so LVGL must have");
+        if(whole_noted == 0 || whole_copied != 0) {
+            g_failures++;
+            printf("  FAIL  ...and a picture each frame with empty refreshes between still copied %.0f KiB (of %.0f)\n",
+                   whole_copied / 1024.0, whole_noted / 1024.0);
+        }
+        if(ppa && handed == 0 && copied > 0) sync_fail("...and the PPA copied none of it");
+    }
+    if(p4fake_pending()) sync_fail("...and PPA transactions were left queued");
+
+    if(take && took) {
+        /* Given back mid-way: what was written down is copied first, or the
+         * buffers LVGL draws into next would miss it. */
+        lv_label_set_text(ref->label, "given back");
+        lv_label_set_text(t->label, "given back");
+        lv_refr_now(ref->disp);
+        lv_refr_now(t->disp);
+        lv_refr_now(t->disp);   /* nothing to draw: written down */
+        lv_draw_ortho_release_sync(t->disp);
+        bool restored = true;
+        for(int i = 0; i < nbufs; i++) {
+            lv_draw_buf_t * b = i == 0 ? t->disp->buf_1 : i == 1 ? t->disp->buf_2 : t->disp->buf_3;
+            if(b->handlers->buf_copy_cb == NULL || b->handlers != lv_draw_buf_get_handlers()) restored = false;
+        }
+        int bad = 0;
+        for(int k = 0; k < 2 * nbufs; k++) {
+            sync_step(ref, 'b', 100 + k);
+            sync_step(t, 'b', 100 + k);
+            lv_refr_now(ref->disp);
+            lv_refr_now(t->disp);
+            if(memcmp(t->shown, ref->shown, (size_t)t->stride * nh) != 0) bad++;
+        }
+        g_cases++;
+        if(!restored) sync_fail("frame buffers given back: their own copy handlers not restored");
+        else if(bad) {
+            g_failures++;
+            printf("  FAIL  frame buffers given back to LVGL mid-way: %d of %d frames differ after\n", bad, 2 * nbufs);
+        }
+        else printf("  ok    frame buffers given back to LVGL mid-way (%d buffers, %s): every frame after right\n",
+                        nbufs, rot_name(rot));
+    }
+    p4fake_run_all();
+    sync_drop(t);
+    sync_drop(ref);
+    if(ppa) lv_draw_ortho_ppa_deinit();
+    for(int i = 0; i < 2; i++) {
+        free((void *)g_sync_bank[i]->data);
+        free(g_sync_bank[i]);
+    }
+}
+
+/* esp_lvgl_adapter brings a third panel buffer up to date itself, from its
+ * own LV_EVENT_RENDER_START handler, with lv_draw_buf_copy() between the
+ * same two buffers LVGL syncs -- and draws over the result at once. Such a
+ * copy must be made there and then, never written down as one of LVGL's. */
+static sync_screen_t * g_other_copy_screen;
+static int g_other_copy_bad, g_other_copy_made;
+static void other_copy_at_start(lv_event_t * e)
+{
+    lv_display_t * disp = lv_event_get_current_target(e);
+    sync_screen_t * t = g_other_copy_screen;
+    if(t == NULL || disp != t->disp) return;
+    lv_draw_buf_t * act = lv_display_get_buf_active(disp);
+    lv_draw_buf_t * on = act == disp->buf_1 ? disp->buf_2 : disp->buf_1;
+    /* A band the frame does not draw: where the adapter's copy matters. */
+    const lv_area_t band = {0, (int32_t)act->header.h - 24, (int32_t)act->header.w - 1, (int32_t)act->header.h - 1};
+    lv_draw_buf_copy(act, &band, on, &band);
+    g_other_copy_made++;
+    for(int32_t y = band.y1; y <= band.y2; y++)
+        if(memcmp(act->data + y * act->header.stride, on->data + y * on->header.stride, act->header.stride) != 0) {
+            g_other_copy_bad++;
+            break;
+        }
+}
+
+static void check_sync_others(lv_display_rotation_t rot, bool ppa)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const bool swap = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    g_sync_bank[0] = image_of(swap ? 480 : 320, swap ? 320 : 480, cf, 41);
+    g_sync_bank[1] = image_of(swap ? 480 : 320, swap ? 320 : 480, cf, 43);
+    if(ppa) lv_draw_ortho_ppa_init();
+    sync_screen_t * ref = sync_screen(320, 480, rot, 1);
+    sync_screen_t * t = sync_screen(320, 480, rot, 2);
+    sync_scene(ref);
+    sync_scene(t);
+    /* Before the copies are taken, as the adapter's handler is. */
+    lv_display_add_event_cb(t->disp, other_copy_at_start, LV_EVENT_RENDER_START, NULL);
+    g_other_copy_screen = t;
+    g_other_copy_bad = g_other_copy_made = 0;
+    const bool took = lv_draw_ortho_take_sync(t->disp);
+    lv_draw_ortho_reset_stats();
+    int bad = 0;
+    const char * steps = "*lb-l-b-pl-b";
+    for(int k = 0; steps[k]; k++) {
+        sync_step(ref, steps[k], k);
+        sync_step(t, steps[k], k);
+        lv_refr_now(ref->disp);
+        lv_refr_now(t->disp);
+        if(memcmp(t->shown, ref->shown, (size_t)t->stride * t->h) != 0) bad++;
+    }
+    const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+    g_cases++;
+    if(!took || bad || g_other_copy_bad || !g_other_copy_made || st->sync_others == 0 ||
+       (ppa && st->sync_others_handed == 0)) {
+        g_failures++;
+        printf("  FAIL  frame buffers, another copy at the frame's start (%s, %s): %d of %d not made at once, "
+               "%u counted, %d frame(s) wrong\n", rot_name(rot), ppa ? "PPA" : "CPU", g_other_copy_bad,
+               g_other_copy_made, st->sync_others, bad);
+    }
+    else printf("  ok    frame buffers, another copy at the frame's start (%s, %s): all %d made at once%s, "
+                    "every frame right\n", rot_name(rot), ppa ? "PPA" : "CPU", g_other_copy_made,
+                    ppa ? " by the PPA" : "");
+    g_other_copy_screen = NULL;
+
+    /* The display's buffers set again behind the takeover, on the same
+     * memory: what was written down is made, and they are taken again at the
+     * next frame. */
+    lv_label_set_text(ref->label, "set again");
+    lv_label_set_text(t->label, "set again");
+    lv_refr_now(ref->disp);
+    lv_refr_now(t->disp);
+    lv_refr_now(t->disp);   /* nothing to draw: written down */
+    const size_t size = (size_t)t->stride * t->h;
+    lv_display_set_buffers_with_stride(t->disp, t->alloc[0], t->alloc[1], size, t->stride,
+                                       LV_DISPLAY_RENDER_MODE_DIRECT);
+    /* LVGL starts again at the first buffer, and the screen is drawn whole,
+     * as anyone setting buffers has to have it. */
+    lv_obj_invalidate(lv_display_get_screen_active(t->disp));
+    lv_obj_invalidate(lv_display_get_screen_active(ref->disp));
+    lv_refr_now(ref->disp);
+    lv_refr_now(t->disp);
+    lv_draw_ortho_reset_stats();
+    bad = 0;
+    for(int k = 0; k < 6; k++) {
+        const char c = "l-b-lb"[k];
+        sync_step(ref, c, 200 + k);
+        sync_step(t, c, 200 + k);
+        lv_refr_now(ref->disp);
+        lv_refr_now(t->disp);
+        if(memcmp(t->shown, ref->shown, size) != 0) bad++;
+    }
+    const bool again = t->disp->buf_1->handlers != lv_draw_buf_get_handlers() &&
+                       lv_draw_ortho_get_stats()->sync_noted > 0;
+    g_cases++;
+    if(bad || !again) {
+        g_failures++;
+        printf("  FAIL  frame buffers set again behind the takeover (%s): %d frame(s) wrong, %s\n", rot_name(rot), bad,
+               again ? "taken again" : "not taken again");
+    }
+    else printf("  ok    frame buffers set again behind the takeover (%s): taken again at the next frame, every frame "
+                    "right\n", rot_name(rot));
+    lv_draw_ortho_release_sync(t->disp);
+    p4fake_run_all();
+    sync_drop(t);
+    sync_drop(ref);
+    if(ppa) lv_draw_ortho_ppa_deinit();
+    for(int i = 0; i < 2; i++) {
+        free((void *)g_sync_bank[i]->data);
+        free(g_sync_bank[i]);
+    }
+}
+
+static void check_syncs(void)
+{
+    check_sync_others(LV_DISPLAY_ROTATION_90, true);
+    check_sync_others(LV_DISPLAY_ROTATION_180, false);
+    const lv_display_rotation_t rots[] = {LV_DISPLAY_ROTATION_90, LV_DISPLAY_ROTATION_180, LV_DISPLAY_ROTATION_270,
+                                          LV_DISPLAY_ROTATION_0
+                                         };
+    for(unsigned r = 0; r < 4; r++) {
+        for(int nb = 2; nb <= 3; nb++) {
+            check_sync(320, 480, rots[r], nb, true, false);   /* the control: LVGL's own */
+            check_sync(320, 480, rots[r], nb, true, true);
+            check_sync(320, 480, rots[r], nb, false, true);
+        }
+    }
+    /* Not taken: one buffer, or another mode. */
+    g_cases++;
+    sync_screen_t * one = sync_screen(320, 480, LV_DISPLAY_ROTATION_90, 1);
+    screen_t * part = make_screen(320, 480, LV_COLOR_FORMAT_RGB565, LV_DISPLAY_ROTATION_90, true, true);
+    if(lv_draw_ortho_take_sync(one->disp) || lv_draw_ortho_take_sync(part->disp))
+        sync_fail("frame buffers: copies taken with one buffer, or in partial mode");
+    else printf("  ok    frame buffers: nothing taken with one buffer, or in partial mode\n");
+    sync_drop(one);
+    drop_screen(part);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Timing                                                                   */
 /* ------------------------------------------------------------------------ */
 
@@ -2233,6 +2727,8 @@ int main(int argc, char ** argv)
     }
 
     check_image_caches();
+    check_flashes();
+    check_syncs();
     check_splits();
     {
         /* Narrower, taller tiles (lv_draw_ortho_set_tile_width): the same

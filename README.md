@@ -441,6 +441,46 @@ It also takes the doubt out of the PPA's calibration for these pictures (see
 fast the PPA turns, so a picture drawn again costs the same however slow the
 Tab5's turn proves to be.
 
+### Pictures in the flash
+
+The PPA reads the flash more slowly than the CPU does. Measured through
+Espressif's adapter, the same full-screen RGB565 picture drawn with nothing
+kept: the PPA handed the flash took 224 ms a picture on a Waveshare 7B and
+338 on a Tab5; the CPU read it into RAM in 171 and 239 (the flash there in
+DIO at 40 MHz, about 7 MB/s). So the PPA is never handed a picture whose
+pixels are in the flash: the CPU draws it into the tiles like any widget, on
+both cores when there are two, and the PPA turns the tiles while the next are
+drawn. With `image_cache:` the CPU reads such a picture once into the cache,
+and the PPA copies the cache's copy, which is in PSRAM. The log's ten-second
+line counts them ("big pictures/s in the flash drawn in the tiles"). Without
+ESPHome, `lv_draw_ortho_set_flash_cb()` says which pictures those are where
+the address alone does not.
+
+### LVGL's copies between frame buffers
+
+With two or three frame buffers in DIRECT mode (youkorr/lvgl_9.5's mipi_dsi
+with `framebuffers:`, or Espressif's adapter in DOUBLE_DIRECT), LVGL keeps
+them in step: at the start of every refresh it copies into the buffer it is
+about to draw what the last frame drew, less what this one will draw — by the
+CPU, PSRAM into PSRAM, and before it knows whether there is anything to draw
+at all. A refresh with nothing to draw (LVGL's own timer, between two
+pictures) still copies everything the last frame drew, and the next frame
+draws over it. Through Espressif's adapter that was 13.2 ms a frame on a
+Waveshare 7B and 20.7 on a Tab5, with a picture changing every frame.
+
+LVGL makes each of those copies through the destination buffer's own
+`buf_copy_cb`, so lv_draw_ortho takes them over there, without changing
+LVGL: each copy is written down, and when a buffer is about to be drawn into
+(`LV_EVENT_RENDER_START`), only what it is behind by and the frame does not
+draw is copied, from the buffer shown last, by the PPA. LVGL's copies are
+told apart exactly, by their area being one of LVGL's own list; any other
+copy between the same buffers (the adapter's, for its third buffer) is made at
+once, by the PPA. Buffers set again later (a dummy draw, a new panel) are
+taken again at the next frame. `lvgl_ortho` does this by itself on the
+panel's buffers; elsewhere, `lv_draw_ortho_take_sync()`. The ten-second line
+says how much LVGL would have copied and how much was ("buffers kept in
+step").
+
 ### Two cores
 
 With the PPA turning, what is left of a redraw is LVGL drawing, on one core
@@ -635,10 +675,11 @@ quote.
 ```
 git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 510 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 615 cases, and the ESPHome component at four angles
 build/ortho_test --ppa             # the PPA's cases alone
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case
+python3 ppa_mutants.py --only copies   # ...or only those whose name holds a word
 python3 esphome_mutants.py         # each break in the ESPHome component must fail a case
 
 # the second core: LVGL built with pthreads

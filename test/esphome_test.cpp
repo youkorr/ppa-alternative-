@@ -250,6 +250,7 @@ int main(int argc, char **argv) {
 #if LVGL_ORTHO_FAST_PRESENT
   lv_display_add_event_cb(disp, render_start, LV_EVENT_RENDER_START, nullptr);
   expect(ortho.on_panel_buffers(), "it draws into the panel's own buffers");
+  expect(ortho.copies_taken(), "LVGL's copies between them are lv_draw_ortho's");
 #endif
   lv_refr_now(disp);
   char what[200];
@@ -306,11 +307,22 @@ int main(int argc, char **argv) {
   expect(got.x == ui.x && got.y == ui.y, what);
 
 #if LVGL_ORTHO_FAST_PRESENT
-  // Many frames, each with a change, so every buffer takes its turn.
+  // Many frames, each with a change, so every buffer takes its turn -- and
+  // every other one followed by a refresh with nothing to draw, as LVGL's
+  // own timer makes them: there LVGL copies, and lv_draw_ortho waits.
+  lv_draw_ortho_reset_stats();
   for (int i = 0; i < 12; i++) {
     lv_obj_set_style_bg_color(s.small, lv_color_hex(i & 1 ? 0xff00ff : 0x00ff00), 0);
     ortho.show_video(s.canvas, frame->data, fw, fh);
     lv_refr_now(disp);
+    if (i & 1)
+      lv_refr_now(disp);
+  }
+  {
+    const lv_draw_ortho_stats_t *st = lv_draw_ortho_get_stats();
+    std::snprintf(what, sizeof what, "LVGL's copies written down (%.0f KiB), fewer made (%.0f KiB)",
+                  st->sync_bytes_noted / 1024.0, st->sync_bytes_copied / 1024.0);
+    expect(st->sync_bytes_noted > 0 && st->sync_bytes_copied < st->sync_bytes_noted, what);
   }
   d = diffs(glass(), want_video);
   std::snprintf(what, sizeof what, "after 12 more frames in turn: glass right (%zu differ), %d swaps", d, g_presents);
