@@ -338,6 +338,29 @@ Ce que ça dit :
 - Aucune erreur, aucun PPA bloqué, `hardware_measurement=COMPLETE` sur les
   deux cartes.
 
+## Une scène caméra, le vrai capteur de chaque carte
+
+Ajoutée au banc le 15 novembre (`camera`, protocole 9 inchangé). Chaque image
+mesurée est une nouvelle image du capteur, affichée plein écran, centrée et
+coupée à l'écran, par esp_video d'Espressif (MIPI-CSI, l'ISP qui passe du RAW
+au RGB565, avec son exposition et sa balance des blancs automatiques) --
+le même code pour les deux variantes, esp-video-components figé à un commit :
+
+| | capteur | image | cadence du capteur |
+|---|---|---|---|
+| Tab5 | SC2356 (pilote SC202CS d'Espressif, même puce) | 1280x720, l'écran entier | 30 i/s |
+| Waveshare 7B | OV5647 | 1280x960, coupée à 1024x600 | 45 i/s (binning) |
+
+Branchés comme les configurations ESPHome du foyer : XCLK 24 MHz sur GPIO36,
+le capteur du Tab5 sur le bus I2C de l'écran avec son reset sur la broche 6 de
+l'expandeur, celui du Waveshare sur GPIO7/8 avec le LDO 4 à 2,5 V.
+
+L'image montrée est toujours la plus récente ; celles que le capteur a livrées
+pendant que l'écran était occupé sont comptées « sautées » (`AB_CAMERA`). L'attente
+du capteur se fait hors du verrou LVGL. Une caméra qui ne démarre pas est dite
+une fois (`AB_CAMERA_READY`) et sa scène est sautée, le reste du banc tourne
+comme avant.
+
 ## Ce que ces journaux ne disent pas
 
 - Rien sur le Tab5 en V7 (officiel + PPA, lots de 128), ni l'officiel V7 du
