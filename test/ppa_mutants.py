@@ -55,8 +55,11 @@ MUTANTS = {
     "slivers cut": ("#define SIDE 16\n", "#define SIDE 1\n"),
     # A wait with no bound: a stuck PPA freezes the screen (the driver's own
     # blocking mode). The test would hang, so the run has a timeout.
-    "a wait with no bound": ("        else if((idle_us += 10) >= LV_DRAW_ORTHO_PPA_TIMEOUT_MS * 1000u) {",
+    "a wait with no bound": ("        else if(idle_us >= limit) {",
                              "        else if(0) {"),
+    # A wait that never counts the time it slept: the bound is never reached.
+    "a sleep not counted": ("        idle_us += pause_for_ppa(limit - LV_MIN(idle_us, limit));",
+                            "        pause_for_ppa(limit - LV_MIN(idle_us, limit));"),
     # A stalled PPA not given up on for good: the video tries it again, and
     # waits out the timeout every frame.
     "a stuck PPA used again": ("    if(g_stuck) return ESP_ERR_INVALID_STATE;\n    esp_err_t err = ensure_client();",
