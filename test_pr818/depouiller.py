@@ -37,7 +37,7 @@ def main():
     engine = "--moteur" in sys.argv
     files = args or sorted(glob.glob(os.path.join(HERE, "*.txt")))
     for path in files:
-        results, cost, native = defaultdict(list), defaultdict(list), defaultdict(list)
+        results, cost, native, cpu = defaultdict(list), defaultdict(list), defaultdict(list), defaultdict(list)
         frames = 64
         with open(path, errors="replace") as f:
             for line in f:
@@ -45,6 +45,9 @@ def main():
                     kv = fields(line)
                     frames = int(kv["frames"])
                     results[(mode_of(kv), kv["scene"])].append(kv)
+                elif "AB_CPU protocol" in line:
+                    kv = fields(line)
+                    cpu[(mode_of(kv), kv["scene"])].append(kv)
                 elif "AB_NATIVE" in line:
                     kv = fields(line)
                     native[(mode_of(kv), kv["scene"])].append(kv)
@@ -57,8 +60,15 @@ def main():
             med = st.median(float(r["refresh_median_us"]) for r in rows) / 1000
             p95 = st.median(float(r["refresh_p95_us"]) for r in rows) / 1000
             failed = sum(int(r["failures"]) for r in rows)
+            load = ""
+            if cpu.get((mode, scene)):
+                c = cpu[(mode, scene)]
+                busy = st.median(float(r["busy_pct"]) for r in c)
+                work = st.median(float(r["busy_us_per_frame"]) for r in c) / 1000
+                load = f", processeur occupé {busy:4.1f} % ({work:5.1f} ms de travail par image, deux cœurs)"
             print(f"   {mode:9s} {scene:23s} {st.median(fps):6.2f} images/s  "
-                  f"(rafraîchissement médian {med:6.1f} ms, p95 {p95:6.1f} ms, {len(rows)} passages, {failed} échec)")
+                  f"(rafraîchissement médian {med:6.1f} ms, p95 {p95:6.1f} ms, {len(rows)} passages, {failed} échec)"
+                  + load)
         if engine:
             for (mode, scene), rows in native.items():
                 tiles = st.mean(float(r["tiles"]) for r in rows) / frames

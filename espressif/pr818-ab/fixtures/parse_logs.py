@@ -106,7 +106,7 @@ def parse(path):
                 raise ValueError('AB_DONE identity does not match AB_READY')
         if done.get('hardware_measurement') != 'COMPLETE':
             raise ValueError('capture has no successful completion marker')
-        scenes = ('dashboard', 'changing_rgb565', 'fixed_flash_off') + (('fixed_flash_warm_cache',) if native else ())
+        scenes = ('dashboard', 'dashboard_full', 'changing_rgb565', 'fixed_flash_off') + (('fixed_flash_warm_cache',) if native else ())
         expected = {(mode, scene, round_) for mode in MODES for scene in scenes for round_ in range(1, rounds + 1)}
         for tag in ('AB_RESULT', 'AB_TIMING', 'AB_REFRESH'):
             keys = [phase_key(row) for row in records[tag]]
