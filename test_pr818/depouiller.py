@@ -38,6 +38,7 @@ def main():
     files = args or sorted(glob.glob(os.path.join(HERE, "*.txt")))
     for path in files:
         results, cost, native, cpu = defaultdict(list), defaultdict(list), defaultdict(list), defaultdict(list)
+        camera, camera_ready = defaultdict(list), None
         frames = 64
         with open(path, errors="replace") as f:
             for line in f:
@@ -45,6 +46,11 @@ def main():
                     kv = fields(line)
                     frames = int(kv["frames"])
                     results[(mode_of(kv), kv["scene"])].append(kv)
+                elif "AB_CAMERA_READY" in line:
+                    camera_ready = fields(line)
+                elif "AB_CAMERA protocol" in line:
+                    kv = fields(line)
+                    camera[(mode_of(kv), kv["scene"])].append(kv)
                 elif "AB_CPU protocol" in line:
                     kv = fields(line)
                     cpu[(mode_of(kv), kv["scene"])].append(kv)
@@ -55,6 +61,9 @@ def main():
                     kv = fields(line)
                     cost[(mode_of(kv), kv["scene"], kv.get("stage", "-"), kv["kind"])].append(kv)
         print("==", os.path.basename(path))
+        if camera_ready:
+            print(f"   caméra : {camera_ready.get('status')}, {camera_ready.get('sensor')} "
+                  f"{camera_ready.get('width')}x{camera_ready.get('height')}")
         for (mode, scene), rows in results.items():
             fps = [float(r["submitted_fps"]) for r in rows]
             med = st.median(float(r["refresh_median_us"]) for r in rows) / 1000
@@ -69,6 +78,11 @@ def main():
             print(f"   {mode:9s} {scene:23s} {st.median(fps):6.2f} images/s  "
                   f"(rafraîchissement médian {med:6.1f} ms, p95 {p95:6.1f} ms, {len(rows)} passages, {failed} échec)"
                   + load)
+            if camera.get((mode, scene)):
+                c = camera[(mode, scene)]
+                print(f"      {'':9s} {'':23s} caméra : {st.median(float(r['camera_fps']) for r in c):5.2f} images/s "
+                      f"livrées, {st.median(float(r['shown_fps']) for r in c):5.2f} affichées, "
+                      f"{st.mean(float(r['skipped']) for r in c):4.1f} sautées sur {frames}")
         if engine:
             for (mode, scene), rows in native.items():
                 tiles = st.mean(float(r["tiles"]) for r in rows) / frames

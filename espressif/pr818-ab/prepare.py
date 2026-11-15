@@ -37,6 +37,24 @@ HERE = Path(__file__).resolve().parent
 ADAPTER = Path('components/display/tools/esp_lvgl_adapter')
 SIZES = {'tab5': (1280, 720, 270, '16MB'), 'waveshare-7b': (1024, 600, 180, '32MB')}
 
+# The camera scene (--video): each board's camera as the household's working
+# ESPHome configurations run it. The Tab5's SC2356 is Espressif's SC202CS
+# driver (the same chip, PID 0xeb52) and answers on the bus the display opened
+# (hw_camera_prepare), so it has no pins here; the Waveshare's OV5647 is on
+# I2C SCL GPIO8, SDA GPIO7.
+CAMERAS = {
+    'tab5': ((-1, -1), '''CONFIG_CAMERA_SC202CS=y
+CONFIG_CAMERA_SC202CS_AUTO_DETECT_MIPI_INTERFACE_SENSOR=y
+CONFIG_CAMERA_SC202CS_MIPI_RAW8_1280X720_30FPS=y
+CONFIG_CAMERA_SC202CS_MIPI_DEFAULT_FMT_RAW8_1280X720_30FPS=y
+'''),
+    'waveshare-7b': ((8, 7), '''CONFIG_CAMERA_OV5647=y
+CONFIG_CAMERA_OV5647_AUTO_DETECT_MIPI_INTERFACE_SENSOR=y
+CONFIG_CAMERA_OV5647_MIPI_RAW10_1280X960_BINNING_45FPS=y
+CONFIG_CAMERA_OV5647_MIPI_DEFAULT_FMT_RAW10_1280X960_BINNING_45FPS=y
+'''),
+}
+
 
 def run(cmd, **kw):
     return subprocess.run([str(c) for c in cmd], check=True, **kw)
@@ -117,7 +135,8 @@ endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(test_esp_lvgl_adapter_lvgl9)
 ''')
-    (app / 'main/idf_component.yml').write_text('''dependencies:
+    camera = args.video is not None
+    manifest = '''dependencies:
   idf:
     version: ">=5.5.5"
   lvgl/lvgl:
@@ -128,7 +147,14 @@ project(test_esp_lvgl_adapter_lvgl9)
   espressif/button:
     version: "4.*"
     override_path: "../../../../../../button"
-''')
+'''
+    if camera:
+        video = args.video.resolve()
+        for name in ('esp_video', 'esp_cam_sensor', 'esp_ipa'):
+            if not (video / name / 'idf_component.yml').is_file():
+                raise ValueError(f'--video: {video / name} is not an esp-video-components component')
+            manifest += f'  espressif/{name}:\n    version: "*"\n    override_path: "{video / name}"\n'
+    (app / 'main/idf_component.yml').write_text(manifest)
     (app / 'partitions.csv').write_text('''# Name, Type, SubType, Offset, Size, Flags
 nvs, data, nvs, , 0x6000,
 phy_init, data, phy, , 0x1000,
@@ -141,7 +167,8 @@ factory, app, factory, , 0x600000,
     for f in main.iterdir():
         if f.is_file() and f.suffix in ('.c', '.h', '.txt'):
             f.unlink()
-    for name in ('ab_main.c', 'ab_scanout_probe.c', 'ab_scanout_probe.h', 'ab_cost_probe.c', 'ab_cost_probe.h'):
+    for name in ('ab_main.c', 'ab_scanout_probe.c', 'ab_scanout_probe.h', 'ab_cost_probe.c', 'ab_cost_probe.h') + \
+            (('ab_camera.c', 'ab_camera.h') if camera else ()):
         shutil.copy2(HERE / 'fixtures' / name, main / name)
     patch_main(main / 'ab_main.c')
     variant = 'native64' if native else 'official'
@@ -150,9 +177,12 @@ factory, app, factory, , 0x600000,
         'AB_SOURCE_COMMIT': sha, 'AB_SOURCE_TREE': tree, 'AB_WIDTH': width, 'AB_HEIGHT': height,
         'AB_BATCH_LIMIT': 64 if native else 0, 'AB_HAS_NATIVE': int(native), 'AB_HAS_DPI_PROBE': 1,
         'AB_STOCK_PPA': 0, 'AB_DASHBOARD_FULL': 0, 'AB_FRAMES': 64, 'AB_ROUNDS': 2, 'AB_WARMUP': 16,
+        'AB_HAS_CAMERA': int(camera),
     }
     config = ''.join(f'#define {k} ' + (f'"{v}"' if isinstance(v, str) else f'{v}u') + '\n' for k, v in header.items())
     config += f'#define AB_ROTATION ESP_LV_ADAPTER_ROTATE_{rotation}\n'
+    (scl, sda), camera_sdkconfig = CAMERAS[args.board]
+    config += f'#define AB_CAMERA_SCL ({scl})\n#define AB_CAMERA_SDA ({sda})\n'
     config += '#define AB_TEAR_MODE ESP_LV_ADAPTER_TEAR_AVOID_MODE_' + ('DOUBLE_DIRECT' if native else 'TRIPLE_PARTIAL') + '\n'
     (main / 'ab_bench_config.h').write_text(config)
     # The fixed picture, the V9 kit's own: a gradient with a checkerboard.
@@ -163,9 +193,9 @@ factory, app, factory, , 0x600000,
             struct.pack_into('<H', pixels, (y * width + x) * 2, r << 11 | g << 5 | b)
     (main / 'ab_wallpaper.rgb565').write_bytes(pixels)
     cmake = '''idf_component_register(
-    SRCS "ab_main.c" "ab_scanout_probe.c" "ab_cost_probe.c"
+    SRCS "ab_main.c" "ab_scanout_probe.c" "ab_cost_probe.c"''' + (' "ab_camera.c"' if camera else '') + '''
     INCLUDE_DIRS "."
-    REQUIRES hw_init esp_timer esp_mm esp_driver_ppa
+    REQUIRES hw_init esp_timer esp_mm esp_driver_ppa''' + (' esp_driver_ledc' if camera else '') + '''
     EMBED_FILES "ab_wallpaper.rgb565"
 )
 target_link_options(${COMPONENT_LIB} INTERFACE
@@ -213,7 +243,12 @@ CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 ''' + ''.join(f'{k}={"y" if native else "n"}\n' for k in (
-        'CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW', 'CONFIG_LV_USE_MATRIX', 'CONFIG_LV_DRAW_TRANSFORM_USE_MATRIX')))
+        'CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW', 'CONFIG_LV_USE_MATRIX', 'CONFIG_LV_DRAW_TRANSFORM_USE_MATRIX')) +
+        ('''# The camera scene: MIPI-CSI through the ISP, with its automatic exposure
+# and white balance (esp_ipa), identical for both variants.
+CONFIG_ESP_VIDEO_ENABLE_MIPI_CSI_VIDEO_DEVICE=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER=y
+''' + camera_sdkconfig if camera else ''))
     if native:
         source = out / ADAPTER / 'src/display/rotate_in_draw/lv_draw_ortho_ppa.c'
         run([sys.executable, HERE / 'fixtures/patch_native_wait_probe.py', '--source', source],
@@ -231,4 +266,5 @@ if __name__ == '__main__':
     p.add_argument('--board', choices=sorted(SIZES), required=True)
     p.add_argument('--idf', type=Path, default=Path(os.environ.get('IDF_PATH', '')))
     p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--video', type=Path, help='an espressif/esp-video-components checkout: adds the camera scene')
     prepare(p.parse_args())

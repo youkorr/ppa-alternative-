@@ -46,6 +46,24 @@ static void lcd_ldo_power_on(void)
     ESP_ERROR_CHECK(esp_ldo_acquire_channel(&ldo_mipi_phy_config, &s_ldo_mipi_phy));
 }
 
+/* The camera (OV5647) brings its own I2C bus (GPIO7/8, opened by esp_video).
+ * LDO channel 4 at 2.5 V as well as the PHY's: the household's working
+ * ESPHome configuration for this board turns both on, so this does too. */
+static esp_ldo_channel_handle_t s_ldo_camera;
+
+void *hw_camera_prepare(void)
+{
+    lcd_ldo_power_on();
+    if (!s_ldo_camera) {
+        const esp_ldo_channel_config_t ldo_config = {
+            .chan_id = 4,
+            .voltage_mv = 2500,
+        };
+        ESP_ERROR_CHECK(esp_ldo_acquire_channel(&ldo_config, &s_ldo_camera));
+    }
+    return NULL;
+}
+
 esp_err_t hw_lcd_init(esp_lcd_panel_handle_t *panel_handle, esp_lcd_panel_io_handle_t *io_handle, esp_lv_adapter_tear_avoid_mode_t tear_avoid_mode, esp_lv_adapter_rotation_t rotation)
 {
     lcd_ldo_power_on();

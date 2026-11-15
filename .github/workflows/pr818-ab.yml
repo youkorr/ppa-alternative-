@@ -29,6 +29,9 @@ jobs:
     container: espressif/idf:v5.5.6
     env:
       NAME: ${{ matrix.board }}-ab-${{ matrix.variant }}
+      # Espressif's camera stack for the camera scene (esp_video, esp_cam_sensor,
+      # esp_ipa), at one commit so both variants are built on the same one.
+      VIDEO_COMMIT: 3bb32ee9ee42b35cfbfeb64ecbc38a7a2222dd71
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +50,15 @@ jobs:
             components/display/tools/esp_lvgl_adapter
             components/display/lcd/esp_lcd_ek79007
             components/button
+      - uses: actions/checkout@v4
+        with:
+          repository: espressif/esp-video-components
+          ref: ${{ env.VIDEO_COMMIT }}
+          path: video
+          sparse-checkout: |
+            esp_video
+            esp_cam_sensor
+            esp_ipa
       - name: Prepare ${{ matrix.board }}, ${{ matrix.variant }}
         shell: bash
         run: |
@@ -57,7 +69,7 @@ jobs:
           [ -f "$IDF_PATH/version.txt" ] || git -C "$IDF_PATH" describe --tags --exact-match > "$IDF_PATH/version.txt"
           cat "$IDF_PATH/version.txt"
           python3 ppa/espressif/pr818-ab/prepare.py --repo iots --ref HEAD --variant ${{ matrix.variant }} \
-            --board ${{ matrix.board }} --idf "$IDF_PATH" --out work
+            --board ${{ matrix.board }} --idf "$IDF_PATH" --out work --video video
       - name: Build
         shell: bash
         run: |

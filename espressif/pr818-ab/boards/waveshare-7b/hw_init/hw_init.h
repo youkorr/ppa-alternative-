@@ -55,6 +55,11 @@ esp_err_t hw_lcd_init(esp_lcd_panel_handle_t *panel_handle,
                       esp_lv_adapter_rotation_t rotation);
 esp_err_t hw_lcd_deinit(void);
 
+/* The camera's side of the board, for the A/B benchmark's camera scene: the
+ * I2C bus its sensor answers on when the board already opened one (NULL
+ * when the camera brings its own), with the sensor out of reset. */
+void *hw_camera_prepare(void);
+
 #if HW_USE_TOUCH
 #include "esp_lcd_touch.h"
 

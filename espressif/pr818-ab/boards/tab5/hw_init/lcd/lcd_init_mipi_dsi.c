@@ -92,6 +92,19 @@ static esp_err_t tab5_board_once(void)
     return ESP_OK;
 }
 
+/* The camera (SC2356) answers on the same bus, and its reset is pin 6 of the
+ * same expander, held high as the household's ESPHome configuration holds it
+ * (ALWAYS_ON). As for the panel, the output has to be switched on as well. */
+void *hw_camera_prepare(void)
+{
+    ESP_ERROR_CHECK(tab5_board_once());
+    ESP_ERROR_CHECK(esp_io_expander_set_dir(s_expander, IO_EXPANDER_PIN_NUM_6, IO_EXPANDER_OUTPUT));
+    ESP_ERROR_CHECK(esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_6, 1));
+    ESP_ERROR_CHECK(esp_io_expander_set_output_mode(s_expander, IO_EXPANDER_PIN_NUM_6, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL));
+    vTaskDelay(pdMS_TO_TICKS(20));
+    return s_i2c;
+}
+
 esp_err_t hw_lcd_init(esp_lcd_panel_handle_t *panel_handle, esp_lcd_panel_io_handle_t *io_handle,
                       esp_lv_adapter_tear_avoid_mode_t tear_avoid_mode, esp_lv_adapter_rotation_t rotation)
 {

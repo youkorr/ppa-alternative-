@@ -89,7 +89,7 @@ def parse(path):
             raise ValueError('scanout, cost and refresh-event probes must all be enabled')
         if header['timer_policy'] != 'automatic':
             raise ValueError('normal automatic timer policy required')
-        if header['sensor_capture'] != '0' or header['draw_units'] != '2' or header['ppa_draw_requested'] != '0':
+        if header['sensor_capture'] not in ('0', '1') or header['draw_units'] != '2' or header['ppa_draw_requested'] != '0':
             raise ValueError('unexpected sensor/draw-worker/PPA profile for V9 kit')
         if integer(header, 'panel_buffers', 1) != 3:
             raise ValueError('V9 requires three physical panel buffers')
@@ -107,6 +107,9 @@ def parse(path):
         if done.get('hardware_measurement') != 'COMPLETE':
             raise ValueError('capture has no successful completion marker')
         scenes = ('dashboard', 'dashboard_full', 'changing_rgb565', 'fixed_flash_off') + (('fixed_flash_warm_cache',) if native else ())
+        # The camera scene runs only when the board's camera started (AB_CAMERA_READY status=ok).
+        if header['sensor_capture'] == '1' and any(row['scene'] == 'camera' for row in records['AB_RESULT']):
+            scenes += ('camera',)
         expected = {(mode, scene, round_) for mode in MODES for scene in scenes for round_ in range(1, rounds + 1)}
         for tag in ('AB_RESULT', 'AB_TIMING', 'AB_REFRESH'):
             keys = [phase_key(row) for row in records[tag]]
@@ -169,6 +172,7 @@ def parse(path):
             if integer(t, 'produced_us', 1) != produced:
                 raise ValueError('timing window does not match result')
             names = ('handoff_us', 'lock_us', 'update_us', 'refresh_us', 'timer_policy_us', 'unlock_us', 'yield_us', 'residual_us')
+            names += ('camera_us',) if 'camera_us' in t else ()
             if sum(integer(t, field) for field in names) != produced:
                 raise ValueError('timing accounting does not reconstruct produced_us')
             if not math.isclose(number(row, 'refresh_mean_us'), integer(t, 'refresh_us') / frames, abs_tol=0.02):
@@ -198,7 +202,7 @@ def parse(path):
                 raise ValueError('timer override applied in eager mode')
             if row['scene'] != 'fixed_flash_warm_cache' and integer(row, 'cache_budget'):
                 raise ValueError('warm image cache mixed into normal-scene comparison')
-            if row['scene'] == 'changing_rgb565' and integer(row, 'cache_hits'):
+            if row['scene'] in ('changing_rgb565', 'camera') and integer(row, 'cache_hits'):
                 raise ValueError('changing frames unexpectedly used immutable-image cache')
             if row['scene'] == 'fixed_flash_warm_cache' and not (integer(row, 'cache_budget', 1) and integer(row, 'cache_hits', 1)):
                 raise ValueError('warm-cache phase did not exercise cache')

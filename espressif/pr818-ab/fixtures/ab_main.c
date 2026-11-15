@@ -24,6 +24,9 @@
 #if AB_HAS_NATIVE
 #include "../../../src/display/rotate_in_draw/lv_draw_ortho.h"
 #endif
+#if AB_HAS_CAMERA
+#include "ab_camera.h"
+#endif
 
 static const char *TAG = "ab_bench";
 extern const uint8_t ab_wallpaper_start[] asm("_binary_ab_wallpaper_rgb565_start");
@@ -32,6 +35,12 @@ static lv_display_t *s_display;
 static lv_obj_t *s_arc, *s_bar, *s_slider, *s_counter, *s_marker;
 static lv_image_dsc_t s_image;
 static uint8_t *s_bank[4];
+/* Kind 4, the board's camera: its picture shown full screen, centred and
+ * cut to the screen where it is larger (the Waveshare's 1280x960). */
+#if AB_HAS_CAMERA
+static ab_camera_info_t s_camera;
+#endif
+static const uint8_t *s_camera_frame;
 
 
 /* All timer-policy state and refresh-event counters are owned by the adapter's
@@ -209,6 +218,20 @@ static void build_scene(unsigned kind)
         s_slider = lv_slider_create(c);
         lv_obj_set_width(s_slider, cw - 55);
         lv_obj_center(s_slider);
+    } else if (kind == 4) {
+#if AB_HAS_CAMERA
+        s_image = (lv_image_dsc_t) {
+            .header = {.magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RGB565,
+                       .w = s_camera.width, .h = s_camera.height, .stride = s_camera.stride,
+                       .flags = LV_IMAGE_FLAGS_MODIFIABLE},
+            .data_size = s_camera.stride * s_camera.height,
+            .data = s_camera_frame
+        };
+        lv_obj_t *image = lv_image_create(screen);
+        lv_image_set_src(image, &s_image);
+        lv_obj_set_pos(image, ((int)AB_WIDTH - s_camera.width) / 2, ((int)AB_HEIGHT - s_camera.height) / 2);
+        lv_obj_set_user_data(screen, image);
+#endif
     } else {
         s_image = (lv_image_dsc_t) {
             .header = {.magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RGB565,
@@ -248,6 +271,9 @@ static void update_scene(unsigned kind, uint32_t frame)
         if (kind == 1) {
             lv_image_cache_drop(&s_image);
             s_image.data = s_bank[frame % 4];
+        } else if (kind == 4) {
+            lv_image_cache_drop(&s_image);
+            s_image.data = s_camera_frame;
         }
         lv_obj_t *image = lv_obj_get_user_data(lv_display_get_screen_active(s_display));
         lv_image_set_src(image, &s_image);
@@ -301,6 +327,20 @@ static void log_costs(const char *scene, const char *sync_mode, unsigned round,
     }
 }
 
+/* The camera scene's picture, taken outside the LVGL lock: waiting for the
+ * sensor is time the display has nothing to draw, for either adapter. */
+static void scene_input(unsigned kind)
+{
+#if AB_HAS_CAMERA
+    if (kind == 4) {
+        s_camera_frame = ab_camera_take();
+        assert(s_camera_frame);
+    }
+#else
+    (void)kind;
+#endif
+}
+
 static void phase(const char *scene, unsigned kind, unsigned round,
                   size_t cache_bytes, bool defer_sync)
 {
@@ -318,9 +358,19 @@ static void phase(const char *scene, unsigned kind, unsigned round,
     ab_cost_probe_set_background(false);
     ab_cost_probe_set_stage(AB_COST_STAGE_SETUP);
     cache_budget(cache_bytes);
+    if (kind == 4) {
+        esp_lv_adapter_unlock();
+        scene_input(kind);
+        ESP_ERROR_CHECK(esp_lv_adapter_lock(10000));
+    }
     build_scene(kind);
     ab_probe_begin();
     for (unsigned i = 0; i < AB_WARMUP; i++) {
+        if (kind == 4) {
+            esp_lv_adapter_unlock();
+            scene_input(kind);
+            ESP_ERROR_CHECK(esp_lv_adapter_lock(10000));
+        }
         update_scene(kind, i);
         manual_refresh();
         enforce_timer_policy();
@@ -354,8 +404,11 @@ static void phase(const char *scene, unsigned kind, unsigned round,
     ab_cost_probe_set_active(true);
     ESP_ERROR_CHECK(heap_caps_monitor_local_minimum_free_size_start());
     uint64_t lock_us = 0, update_us = 0, refresh_sum = 0, timer_policy_us = 0;
-    uint64_t unlock_us = 0, yield_us = 0;
+    uint64_t unlock_us = 0, yield_us = 0, camera_us = 0;
     unsigned idle_yields = 0;
+#if AB_HAS_CAMERA
+    ab_camera_reset_counts();
+#endif
     const ab_cpu_t cpu_before = cpu_snapshot();
     const int64_t started = esp_timer_get_time();
     /* Count this single handoff explicitly; then each measured frame owns the
@@ -365,8 +418,11 @@ static void phase(const char *scene, unsigned kind, unsigned round,
     esp_lv_adapter_unlock();
     const uint64_t handoff_us = esp_timer_get_time() - handoff_start;
     for (uint32_t i = 0; i < AB_FRAMES; i++) {
-        ab_cost_probe_set_stage(AB_COST_STAGE_LOCK);
         int64_t mark = esp_timer_get_time();
+        scene_input(kind);
+        camera_us += esp_timer_get_time() - mark;
+        ab_cost_probe_set_stage(AB_COST_STAGE_LOCK);
+        mark = esp_timer_get_time();
         ESP_ERROR_CHECK(esp_lv_adapter_lock(10000));
         lock_us += esp_timer_get_time() - mark;
         ab_cost_probe_set_stage(AB_COST_STAGE_UPDATE);
@@ -433,7 +489,7 @@ static void phase(const char *scene, unsigned kind, unsigned round,
     tile_internal = stats.tile_internal; tiles_in_turn = stats.tiles_in_turn;
     batches = stats.batches; waits = stats.waits; bytes_turned = stats.bytes_turned;
     if (cache_bytes) assert(cache_hits && cache_kept);
-    if (kind == 1) assert(cache_hits == 0);
+    if (kind == 1 || kind == 4) assert(cache_hits == 0);
 #endif
     const size_t free_after = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     const size_t internal_after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -462,18 +518,34 @@ static void phase(const char *scene, unsigned kind, unsigned round,
              (unsigned)free_before, (unsigned)internal_before, (unsigned)free_after, (unsigned)internal_after,
              (unsigned)minimum_free, (unsigned)minimum_internal, (unsigned)largest_internal_before,
              (unsigned)largest_internal_after, (unsigned)heap_ok, idle_yields, CONFIG_FREERTOS_HZ);
-    const uint64_t accounted_us = handoff_us + lock_us + update_us + refresh_sum + timer_policy_us + unlock_us + yield_us;
+    const uint64_t accounted_us = handoff_us + lock_us + update_us + refresh_sum + timer_policy_us + unlock_us + yield_us +
+                                  camera_us;
     const int64_t residual_us = produced_us - (int64_t)accounted_us;
     ESP_LOGI(TAG, "AB_TIMING protocol=9 board=%s variant=%s sync_mode=%s scene=%s round=%u frames=%u "
              "handoff_us=%llu lock_us=%llu update_us=%llu refresh_us=%llu timer_policy_us=%llu "
              "unlock_us=%llu yield_us=%llu residual_us=%lld produced_us=%lld drain_us=%lld close_lock_us=%lld "
-             "lock_calls=%u update_calls=%u refresh_calls=%u unlock_calls=%u yield_calls=%u",
+             "lock_calls=%u update_calls=%u refresh_calls=%u unlock_calls=%u yield_calls=%u camera_us=%llu",
              AB_BOARD_NAME, AB_VARIANT, sync_mode, scene, round, AB_FRAMES,
              (unsigned long long)handoff_us, (unsigned long long)lock_us, (unsigned long long)update_us,
              (unsigned long long)refresh_sum, (unsigned long long)timer_policy_us,
              (unsigned long long)unlock_us, (unsigned long long)yield_us,
              (long long)residual_us, (long long)produced_us, (long long)drain_us, (long long)close_lock_us,
-             AB_FRAMES, AB_FRAMES, AB_FRAMES, AB_FRAMES, idle_yields);
+             AB_FRAMES, AB_FRAMES, AB_FRAMES, AB_FRAMES, idle_yields, (unsigned long long)camera_us);
+#if AB_HAS_CAMERA
+    if (kind == 4) {
+        /* What the camera delivered over the measured frames, against what
+         * was shown: frames it had to throw away because the display was
+         * still busy with an earlier one are "skipped". */
+        const ab_camera_counts_t cam = ab_camera_counts();
+        ESP_LOGI(TAG, "AB_CAMERA protocol=9 board=%s variant=%s sync_mode=%s scene=%s round=%u frames=%u "
+                 "sensor=%s width=%u height=%u received=%" PRIu32 " shown=%" PRIu32 " skipped=%" PRIu32
+                 " errors=%" PRIu32 " wait_us=%llu produced_us=%lld camera_fps=%.2f shown_fps=%.2f",
+                 AB_BOARD_NAME, AB_VARIANT, sync_mode, scene, round, AB_FRAMES, s_camera.sensor,
+                 s_camera.width, s_camera.height, cam.received, cam.shown, cam.skipped, cam.errors,
+                 (unsigned long long)cam.wait_us, (long long)produced_us,
+                 cam.received * 1e6 / produced_us, cam.shown * 1e6 / produced_us);
+    }
+#endif
     ESP_LOGI(TAG, "AB_REFRESH protocol=9 board=%s variant=%s sync_mode=%s scene=%s round=%u "
              "window=trace_plus_drain_and_close_lock manual_starts=%u manual_ready=%u automatic_starts=%u automatic_ready=%u "
              "manual_us=%llu automatic_us=%llu requests=%u requests_running=%u strict_pauses=%u "
@@ -541,13 +613,13 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "AB_READY protocol=9 board=%s variant=%s source_commit=%s source_tree=%s "
              "logical=%ux%u rotation=%u panel_buffers=3 cpu_mhz=%u psram_mhz=%u l2_kib=%u "
-             "batch=%u rounds=%u warmup=%u frames=%u dpi_probe=%u dashboard_full=%u sensor_capture=0 "
+             "batch=%u rounds=%u warmup=%u frames=%u dpi_probe=%u dashboard_full=%u sensor_capture=%u "
              "draw_units=%u ppa_draw_requested=%u sync_modes=eager,deferred timer_policy=automatic paired_order=alternating "
              "cost_probe=1 refresh_events=1 timings=lock,update,refresh,unlock,yield",
              AB_BOARD_NAME, AB_VARIANT, AB_SOURCE_COMMIT, AB_SOURCE_TREE,
              AB_WIDTH, AB_HEIGHT, (unsigned)AB_ROTATION,
              CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ, CONFIG_SPIRAM_SPEED, CONFIG_CACHE_L2_CACHE_SIZE / 1024,
-             AB_BATCH_LIMIT, AB_ROUNDS, AB_WARMUP, AB_FRAMES, AB_HAS_DPI_PROBE, AB_DASHBOARD_FULL,
+             AB_BATCH_LIMIT, AB_ROUNDS, AB_WARMUP, AB_FRAMES, AB_HAS_DPI_PROBE, AB_DASHBOARD_FULL, AB_HAS_CAMERA,
              CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT, AB_STOCK_PPA);
     assert(ab_wallpaper_end - ab_wallpaper_start == AB_WIDTH * AB_HEIGHT * 2);
     vTaskDelay(pdMS_TO_TICKS(3000));
@@ -576,6 +648,13 @@ void app_main(void)
     esp_lv_adapter_unlock();
     ESP_ERROR_CHECK(esp_lv_adapter_start());
     prepare_bank();
+#if AB_HAS_CAMERA
+    const esp_err_t camera_err = ab_camera_start(&s_camera);
+    const bool camera_ok = camera_err == ESP_OK;
+    ESP_LOGI(TAG, "AB_CAMERA_READY protocol=9 board=%s variant=%s status=%s sensor=%s width=%u height=%u stride=%" PRIu32,
+             AB_BOARD_NAME, AB_VARIANT, camera_ok ? "ok" : esp_err_to_name(camera_err), s_camera.sensor,
+             s_camera.width, s_camera.height, s_camera.stride);
+#endif
     for (unsigned round = 1; round <= AB_ROUNDS; round++) {
         paired_phase("dashboard", 0, round, 0);
         paired_phase("dashboard_full", 3, round, 0);
@@ -583,6 +662,9 @@ void app_main(void)
         paired_phase("fixed_flash_off", 2, round, 0);
 #if AB_HAS_NATIVE
         paired_phase("fixed_flash_warm_cache", 2, round, 4 * 1024 * 1024);
+#endif
+#if AB_HAS_CAMERA
+        if (camera_ok) paired_phase("camera", 4, round, 0);
 #endif
     }
     for (unsigned i = 0; i < 4; i++) heap_caps_free(s_bank[i]);
