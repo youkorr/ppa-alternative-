@@ -204,6 +204,16 @@ qu'elle sert, et le travail va toujours à celle de l'autre cœur. Une ligne
 `AB_NATIVE` dans le journal donne désormais les tuiles relues, la part du
 second cœur et les cœurs où tournent ces tâches.
 
+### Les firmwares à mesurer
+
+Exécution https://github.com/youkorr/ppa-alternative-/actions/runs/43721830314
+(PR : `test/rotate-in-draw-sync` à fab3be6). **Seuls les deux firmwares
+natifs ont changé** : `waveshare-7b-ab-native` et `tab5-ab-native`.
+L'officiel est le même, ses journaux du 15 novembre restent valables. Même
+procédure : `.bin` à 0x0, journal à 115200 bauds jusqu'à `AB_DONE`.
+`python3 test_pr818/depouiller.py --moteur` lit en plus les lignes
+`AB_NATIVE`.
+
 ## Ce que ces journaux ne disent pas
 
 - Rien sur le Tab5 en V7 (officiel + PPA, lots de 128), ni l'officiel V7 du
