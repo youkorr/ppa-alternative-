@@ -161,7 +161,8 @@ CORES_MUTANTS = {
     # An area that fits in one tile left to the first core alone, as it was:
     # a dashboard then runs on one core.
     "one-tile areas left to one core": (
-        "    if(two) {\n        const int32_t h = lv_area_get_height(&box);", "    if(0) {\n        const int32_t h = lv_area_get_height(&box);", []),
+        "    if(two && !cut_shows(jobs, n)) {\n        const int32_t h = lv_area_get_height(&box);",
+        "    if(0) {\n        const int32_t h = lv_area_get_height(&box);", []),
     # The pair's first tile drawn into the other core's tile.
     "both cores in one tile": (
         "    ok[0] = prep_tile(jobs, n, o, &rect[0], u->tile[base], u->tile_bytes, &w[0]);",

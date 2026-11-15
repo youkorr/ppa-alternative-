@@ -1055,6 +1055,23 @@ static void draw_pair(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
     if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);
 }
 
+/* Whether LVGL's software renderer draws any of the jobs differently where
+ * a tile cuts it: a picture or a layer it resamples -- scaled, rotated or
+ * skewed -- comes out a level different on some pixels near the cut. Through
+ * esp_lvgl_adapter's transformed-object suite, a scaled picture cut in two
+ * for the second core put 602 pixels one level off LVGL's own. */
+static bool cut_shows(const job_t * jobs, int32_t n)
+{
+    for(int32_t i = 0; i < n; i++) {
+        const lv_draw_task_t * t = jobs[i].t;
+        if(t->type != LV_DRAW_DSC_TYPE_IMAGE && t->type != LV_DRAW_DSC_TYPE_LAYER) continue;
+        const lv_draw_image_dsc_t * d = t->draw_dsc;
+        if(d->rotation != 0 || d->scale_x != LV_SCALE_NONE || d->scale_y != LV_SCALE_NONE || d->skew_x != 0 ||
+           d->skew_y != 0) return true;
+    }
+    return false;
+}
+
 static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ortho_t * o)
 {
     const lv_color_format_t cf = jobs[0].t->target_layer->draw_buf->header.cf;
@@ -1098,8 +1115,9 @@ static void draw_jobs(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
      * drawing saves. (Through Espressif's adapter on a Waveshare 7B and a
      * Tab5, a dashboard of three cards drew 5 areas a frame, nearly all of one
      * tile: this engine at 49 and 35 frames a second against 61 and 49 for the
-     * stock adapter, whose two software units share every area.) */
-    if(two) {
+     * stock adapter, whose two software units share every area.) Not where a
+     * cut shows (cut_shows): those keep the tiles they always had. */
+    if(two && !cut_shows(jobs, n)) {
         const int32_t h = lv_area_get_height(&box);
         const int32_t cols = (w + tw - 1) / tw;
         const int32_t rows = (h + th - 1) / th;
