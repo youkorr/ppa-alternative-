@@ -214,6 +214,34 @@ procédure : `.bin` à 0x0, journal à 115200 bauds jusqu'à `AB_DONE`.
 `python3 test_pr818/depouiller.py --moteur` lit en plus les lignes
 `AB_NATIVE`.
 
+## Le 15 novembre, après la correction des cartes : la PR devant ou à égalité partout
+
+Les deux firmwares natifs reconstruits (exécution 43721830314, journaux
+`*-native-v11 ESP-logs.txt`), comparés aux journaux officiels du matin (même
+firmware officiel). Images par seconde, médiane de deux passages :
+
+| Scène | Waveshare officiel | Waveshare PR | Tab5 officiel | Tab5 PR |
+|---|---|---|---|---|
+| tableau de bord | 61,2 | **61,2** (52,0 avant) | 48,9 | **48,9** (40,4 avant) |
+| images changeantes | 15,2 | **29,5** (×1,93) | 13,1 | **15,5** (+18 %) |
+| image en flash, sans cache | 5,1 | **5,7** (+11 %) | 3,75 | **4,0** (+6 %) |
+| image en flash, avec cache | (pas de cache) | **29,8** | (pas de cache) | **15,5** |
+
+**Le tableau de bord est au maximum de l'écran sur les deux cartes**, comme
+l'officiel : une image à chaque balayage (rafraîchissement médian 15,7 ms
+sur le Waveshare, 19,8 ms sur le Tab5, p95 15,9 et 20,0). Aucun
+adaptateur ne peut faire plus sur cette scène. Avec LVGL qui fait ses
+recopies lui-même (`eager`), la correction seule fait passer le tableau de
+bord de 38,4 à 49,1 sur le Waveshare et de 30,0 à 41,1 sur le Tab5.
+
+La ligne `AB_NATIVE` confirme la cause : sur le tableau de bord, 0,3 tuile
+relue par image sur 7,5 (il en restait 5 sur 8 avant), et le PPA tourne
+86 Kio par image au lieu de 151 sur le Waveshare (112 au lieu de 203 sur le
+Tab5). Le second cœur peint 2,3 tuiles par image. `helper_cores=2` : une
+seule tâche, sur le cœur 1. Dans ce banc, la tâche du second cœur était donc
+déjà sur le bon cœur. Le placement par cœur ne change rien ici ; il protège
+les applications dont la tâche de dessin change de cœur.
+
 ## Ce que ces journaux ne disent pas
 
 - Rien sur le Tab5 en V7 (officiel + PPA, lots de 128), ni l'officiel V7 du
