@@ -262,10 +262,7 @@ a changé pour les deux :
 ## Le 15 novembre au soir : redessin plein écran et charge du processeur
 
 Firmwares de l'exécution 43725165875, journaux `*-v12 ESP-logs.txt`.
-**Le journal officiel du Waveshare manque** : le fichier reçu sous ce nom
-est un firmware natif de l'exécution précédente (`variant=native64`, sans
-`dashboard_full` ni `AB_CPU`). La comparaison complète n'existe donc que pour
-le Tab5. « Travail par image » : le temps où les deux cœurs ne sont pas au
+« Travail par image » : le temps où les deux cœurs ne sont pas au
 repos, divisé par le nombre d'images. Une attente active compte comme du
 travail.
 
@@ -277,16 +274,26 @@ travail.
 | image en flash | 3,76 images/s, 408 ms par image | **3,95 images/s**, 404 ms par image |
 | image en flash, avec cache | (pas de cache) | **15,5 images/s**, 67 ms par image |
 
-Waveshare, PR seule : tableau de bord 61,3 images/s (37 % occupé, 12,0 ms
-par image), **plein écran 24,1 images/s** (69 ms par image).
+| Waveshare 7B | officiel | PR (`deferred`) |
+|---|---|---|
+| tableau de bord | 61,3 images/s, 31 % occupé, **10,2 ms** par image | 61,3 images/s, 37 % occupé, 12,0 ms par image |
+| **plein écran** | **15,2 images/s**, 95 ms par image | **24,1 images/s (×1,58)**, **69 ms** par image (−27 %) |
+| images changeantes | 15,3 images/s, 72 ms par image | **29,6 images/s (×1,94)**, **34 ms** par image (−53 %) |
+| image en flash | 5,14 images/s, 298 ms par image | **5,69 images/s**, 280 ms par image |
+| image en flash, avec cache | (pas de cache) | **29,9 images/s**, 34 ms par image |
+
+Le journal officiel du Waveshare est arrivé ensuite (`waveshare-7b-ab-official-v12`,
+`variant=official`) ; le fichier reçu d'abord sous ce nom était un natif de
+l'exécution précédente.
 
 Ce que ça dit :
 
-- **Plein écran, ce qu'on sent en changeant de page : la PR va presque
-  deux fois plus vite sur le Tab5, avec 43 % de travail en moins par
-  image.** C'est l'écart le plus grand du banc.
+- **Plein écran, ce qu'on sent en changeant de page : ×1,9 sur le Tab5 et
+  ×1,58 sur le Waveshare, avec 43 % et 27 % de travail en moins par image.**
+- **Partout où quelque chose de gros change, la PR travaille moins par
+  image** (images changeantes : −53 % sur le Waveshare, −16 % sur le Tab5).
 - **Sur le tableau de bord, l'officiel travaille moins** : 10,8 ms par image
-  contre 14,0. Une cause est vue dans le code : la PR attend le PPA en
+  contre 14,0 sur le Tab5, 10,2 contre 12,0 sur le Waveshare. Une cause est vue dans le code : la PR attend le PPA en
   boucle active (`wait_on()` dans `lv_draw_ortho_ppa.c`, toutes les 10 µs),
   et le journal compte 2,6 ms d'attente du PPA par image sur ce tableau de
   bord. Attendre le PPA en dormant (son rappel de fin de transfert) rendrait
