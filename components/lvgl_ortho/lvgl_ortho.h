@@ -55,6 +55,9 @@ class LvglOrtho : public Component {
   void set_tile_width(int width) { this->tile_width_ = width; }
   // A big picture's turn shared between the PPA and the CPU (lv_draw_ortho_set_split).
   void set_split(bool split) { this->split_ = split; }
+  // Bytes of internal RAM, both bands together, for turning a big picture in
+  // PSRAM through it (lv_draw_ortho_ppa_set_stage); 0 turns it straight.
+  void set_camera_ram(size_t bytes) { this->camera_ram_ = bytes; }
 
   void setup() override;
   void loop() override;
@@ -100,6 +103,7 @@ class LvglOrtho : public Component {
   size_t image_cache_{0};
   int tile_width_{0};
   bool split_{false};
+  size_t camera_ram_{0};
   bool ppa_on_{false};
   bool ppa_lost_{false};  // said once, and the screen drawn again
   lv_display_t *disp_{nullptr};

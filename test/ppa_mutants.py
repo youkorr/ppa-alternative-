@@ -167,6 +167,31 @@ MUTANTS = {
     # NOT here: a picture with alpha counted as covering a fill. plain_image()
     # already wants the layer's own format, none of which has alpha, so
     # covered_later()'s check is a guard that cannot fail.
+    # Through internal RAM: a band copied in while the PPA still reads it.
+    "a band copied over one the PPA still reads": (
+        "            if(g_stage_reader[(i + 1) & 1] && !wait(g_stage_reader[(i + 1) & 1])) return g_queued;\n", ""),
+    # ...a band turned before its copy has landed.
+    "a band turned before it arrived": ("        if(!copies_done()) {", "        if(0) {"),
+    # ...the next band's rows taken from the wrong place in the picture.
+    "the next band copied from this band's rows": (
+        "            if(!copy_rows(src, (uint32_t)block->y1 + row + k, next_rows, g_stage[(i + 1) & 1])) {",
+        "            if(!copy_rows(src, (uint32_t)block->y1 + row, next_rows, g_stage[(i + 1) & 1])) {"),
+    # ...every band put where the first one goes.
+    "every band placed as the first": (
+        "        place(rot, bw, bh, p->x, row + p->y, p->w, p->h, &ox, &oy);",
+        "        place(rot, bw, bh, p->x, p->y, p->w, p->h, &ox, &oy);"),
+    # ...the last, shorter band cut as a full one.
+    "the last band cut as a full one": (
+        "        const piece_t * pieces = rows == k ? full : last;", "        const piece_t * pieces = full;"),
+    # ...a refused copy left without the rest turned straight.
+    "a refused copy leaving the rest unturned": (
+        "                g_stage_stats.declined++;\n                for(uint32_t r = row + k; r < bh; r += k) {",
+        "                g_stage_stats.declined++;\n                for(uint32_t r = bh; r < bh; r += k) {"),
+    # NOT here: the bands written back out of the cache once taken, and the
+    # wait for an earlier picture still reading the first band. The fake PPA
+    # has no cache, and every picture lv_draw_ortho turns is fenced before
+    # the next: both guards are for the board, where a dirty line or an
+    # interrupted picture (a part outside a video window) can meet them.
     # The PPA's angle the wrong way round.
     "the PPA turning the other way": (
         "        case LV_DISPLAY_ROTATION_90:\n            return PPA_SRM_ROTATION_ANGLE_90;",

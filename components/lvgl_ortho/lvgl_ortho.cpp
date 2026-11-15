@@ -103,6 +103,20 @@ void LvglOrtho::setup() {
     if (!this->ppa_on_)
       ESP_LOGW(TAG, "No PPA client (error 0x%x): the CPU turns the tiles", (unsigned) err);
   }
+  // Two bands of internal RAM for a big picture in PSRAM: taken now or never,
+  // and said either way, since internal RAM is what Wi-Fi and the rest live on.
+  if (this->ppa_on_ && this->camera_ram_ > 0) {
+    const size_t band = this->camera_ram_ / 2;
+    const esp_err_t err = lv_draw_ortho_ppa_set_stage(band);
+    if (err == ESP_OK) {
+      ESP_LOGI(TAG, "A camera picture is turned through 2 x %u KiB of internal RAM (%u KiB of it left)",
+               (unsigned) (band / 1024), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+    } else {
+      ESP_LOGW(TAG, "No 2 x %u KiB of internal RAM for camera_ram (error 0x%x, %u KiB free): pictures are turned "
+               "straight from PSRAM", (unsigned) (band / 1024), (unsigned) err,
+               (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+    }
+  }
   lv_draw_ortho_set_image_cache(this->image_cache_);
   lv_draw_ortho_set_tile_width(this->tile_width_);
   lv_draw_ortho_set_split(this->split_);
@@ -515,6 +529,17 @@ void LvglOrtho::loop() {
       }
       if (st->images_flash > 0)
         ESP_LOGI(TAG, "  %.1f big pictures/s in the flash drawn in the tiles", st->images_flash / s);
+      // A picture in PSRAM turned through internal RAM, and how often it
+      // could not be: a band shape the PPA cannot take, or the GDMA refusing.
+      lv_draw_ortho_ppa_stage_stats_t ss;
+      lv_draw_ortho_ppa_get_stage_stats(&ss, true);
+      if (ss.pictures > 0 || ss.declined > 0) {
+        ESP_LOGI(TAG, "  %.1f pictures/s turned through internal RAM, in bands of %u rows", ss.pictures / s,
+                 (unsigned) ss.rows);
+        if (ss.declined > 0)
+          ESP_LOGI(TAG, "    %.1f/s turned straight, or partly: a band the PPA cannot take whole, or the copy refused",
+                   ss.declined / s);
+      }
       if (this->cores_on_ && st->tiles > 0) {
         ESP_LOGI(TAG, "  %u of %u tiles painted on the second core", (unsigned) st->tiles_other_core,
                  (unsigned) st->tiles);

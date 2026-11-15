@@ -2434,6 +2434,95 @@ static void check_camera_ring(int32_t nw, int32_t nh, lv_display_rotation_t rot,
     free(want);
 }
 
+/* A camera frame in PSRAM, turned through two bands of internal RAM
+ * (lv_draw_ortho_ppa_set_stage): the frame buffer, scribbled over first, must
+ * come out as LVGL's own drawing of the same frame, upright then turned. Early
+ * copies show a band copied over one the PPA had yet to read; late ones a band
+ * turned before it arrived. `refuse_after` >= 0 refuses the GDMA's copies from
+ * that one on: the rest is turned straight, the same pixels. The frame must
+ * have gone through the bands in as many as its rows need, or -- where the
+ * engine says it would decline (too few rows, a band shape the PPA cannot
+ * take, the frame not in PSRAM) -- not at all. */
+static void check_camera_staged(int32_t nw, int32_t nh, lv_display_rotation_t rot, int32_t cw, int32_t ch,
+                                int32_t band_rows, int late, bool in_psram, int refuse_after)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const bool swap = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    lv_image_dsc_t * fr[2] = {image_of(cw, ch, cf, 53), image_of(cw, ch, cf, 91)};
+    const uint32_t nstride = lv_draw_buf_width_to_stride(nw, cf);
+    const size_t band = (size_t)band_rows * cw * 2;
+
+    g_cam_first = fr[0];
+    screen_t * u = make_screen(swap ? nh : nw, swap ? nw : nh, cf, LV_DISPLAY_ROTATION_0, false, false);
+    lv_display_set_default(u->disp);
+    scene_camera(lv_display_get_screen_active(u->disp));
+    lv_refr_now(u->disp);
+    memset(u->buf, 0x5a, (size_t)u->stride * u->h);
+    cam_next(u->disp, fr[1]);
+    uint8_t * want = malloc((size_t)nstride * nh);
+    turn_buffer(u->buf, want, u->w, u->h, u->stride, nstride, rot, cf);
+    drop_screen(u);
+
+    p4fake_external(NULL, 0);
+    if(in_psram) {
+        p4fake_external(fr[0]->data, fr[0]->data_size);
+        p4fake_external(fr[1]->data, fr[1]->data_size);
+    }
+    const esp_err_t set = lv_draw_ortho_ppa_set_stage(band);
+    p4fake_copy_late(late);
+    g_cam_first = fr[0];
+    screen_t * s = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(s->disp);
+    scene_camera(lv_display_get_screen_active(s->disp));
+    lv_refr_now(s->disp);
+    memset(s->buf, 0x5a, (size_t)s->stride * s->h);
+    lv_draw_ortho_ppa_stage_stats_t st;
+    lv_draw_ortho_ppa_get_stage_stats(&st, true);
+    const int copies = g_p4_copies;
+    if(refuse_after >= 0) p4fake_copy_refuse(refuse_after, 1000);
+    cam_next(s->disp, fr[1]);
+    p4fake_copy_refuse(0, 0);
+    lv_draw_ortho_ppa_get_stage_stats(&st, true);
+
+    char what[200];
+    snprintf(what, sizeof(what), "camera %dx%d on %dx%d at %s through bands of %d rows, %s copies%s%s", (int)cw, (int)ch,
+             (int)nw, (int)nh, rot_name(rot), (int)band_rows, late ? "late" : "early", in_psram ? "" : ", in internal RAM",
+             refuse_after >= 0 ? ", the GDMA refusing" : "");
+    expect_same(what, s, want, cf);
+
+    /* What the engine should have done, worked out here: a band is as many
+     * whole rows as fit, a multiple of 8, or the whole frame; it goes through
+     * the bands only if each band's shape is one the PPA takes whole. */
+    int32_t k = band_rows >= ch ? ch : band_rows - band_rows % 8;
+    const int32_t rest = k ? ch % k : 0;
+    uint32_t pieces[8][4];
+    const bool shapes = k >= 8 && lv_draw_ortho_ppa_cut((uint32_t)cw, (uint32_t)k, rot, 16, pieces, 8) > 0 &&
+                        (rest == 0 || lv_draw_ortho_ppa_cut((uint32_t)cw, (uint32_t)rest, rot, 16, pieces, 8) > 0);
+    const bool staged = in_psram && shapes && refuse_after < 0;
+    const uint32_t bands = k ? (uint32_t)((ch + k - 1) / k) : 0;
+    g_cases++;
+    bool ok;
+    if(set != ESP_OK) ok = false;
+    else if(staged) ok = st.pictures == 1 && st.bands == bands && st.rows == (uint32_t)k && st.declined == 0 &&
+                             g_p4_copies - copies == (int)bands;
+    else if(!in_psram) ok = st.pictures == 0 && st.declined == 0 && g_p4_copies == copies;
+    else ok = st.pictures == 0 && st.declined >= 1 && st.bands == (uint32_t)LV_MAX(refuse_after, 0);
+    if(ok) {
+        printf("  ok    %s: %s\n", what, staged ? "turned in its bands" : "turned straight, as it should be");
+    }
+    else {
+        g_failures++;
+        printf("  FAIL  %s: set %d, %u pictures in %u bands of %u rows (%u declined, %d copies; %s %u bands)\n", what,
+               (int)set, st.pictures, st.bands, st.rows, st.declined, g_p4_copies - copies,
+               staged ? "wanted" : "wanted none, of", bands);
+    }
+    lv_draw_ortho_ppa_set_stage(0);
+    p4fake_copy_late(0);
+    p4fake_external(NULL, 0);
+    drop_screen(s);
+    free(want);
+}
+
 /* A camera frame every time, the way lvgl_camera_display's timer does it. */
 static void bench_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int32_t cw, int32_t ch,
                          const char * board)
@@ -2972,6 +3061,20 @@ int main(int argc, char ** argv)
         check_camera_ring(400, 640, LV_DISPLAY_ROTATION_90, 322, 182);
         check_camera_ring(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
         check_camera_ring(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300);
+        /* Through internal RAM: every rotation, early and late copies, a
+         * last band shorter than the others, one band for the whole frame,
+         * and the ways out. */
+        for(int late = 0; late < 2; late++) {
+            check_camera_staged(400, 640, LV_DISPLAY_ROTATION_90, 322, 182, 16, late, true, -1);
+            check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, late, true, -1);
+            check_camera_staged(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 8, late, true, -1);
+            check_camera_staged(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 24, late, true, -1);
+        }
+        check_camera_staged(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 300, 0, true, -1);
+        check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 4, 0, true, -1);
+        check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, 0, false, -1);
+        check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, 0, true, 0);
+        check_camera_staged(400, 640, LV_DISPLAY_ROTATION_90, 322, 182, 16, 1, true, 3);
         lv_draw_ortho_ppa_deinit();
         g_cases++;
         /* The screen's plain background behind the frame is the PPA's fill. */

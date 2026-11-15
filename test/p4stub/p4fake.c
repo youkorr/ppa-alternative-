@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "esp_async_memcpy.h"
+#include "esp_memory_utils.h"
 #include "esp_rom_sys.h"
 
 p4fake_t g_p4;
@@ -216,10 +218,124 @@ void p4fake_stall_next(void)
     g_stall_next = 1;
 }
 
+/* The AXI GDMA's copy (esp_async_memcpy). Early, the default, copies at once:
+ * a band copied over one the PPA has yet to read is wrong pixels. Late copies
+ * only once the PPA has nothing queued: a band turned before it arrived is. */
+struct async_memcpy_context_t {
+    int copies_pending;
+};
+#define COPIES 8
+static struct {
+    async_memcpy_handle_t h;
+    void * dst;
+    const void * src;
+    size_t n;
+    async_memcpy_isr_cb_t cb;
+    void * args;
+} g_copy[COPIES];
+static int g_copy_head, g_copy_count, g_copy_late, g_copy_pass, g_copy_refuse;
+int g_p4_copies;
+unsigned long long g_p4_copy_bytes;
+
+void p4fake_copy_late(int late)
+{
+    g_copy_late = late;
+}
+
+void p4fake_copy_refuse(int after, int n)
+{
+    g_copy_pass = after;
+    g_copy_refuse = n;
+}
+
+static void land(int i)
+{
+    memcpy(g_copy[i].dst, g_copy[i].src, g_copy[i].n);
+    g_copy[i].h->copies_pending--;
+    async_memcpy_event_t e = {0};
+    if(g_copy[i].cb) g_copy[i].cb(g_copy[i].h, &e, g_copy[i].args);
+}
+
+static void land_one(void)
+{
+    if(g_copy_count == 0) return;
+    const int i = g_copy_head;
+    g_copy_head = (g_copy_head + 1) % COPIES;
+    g_copy_count--;
+    land(i);
+}
+
+esp_err_t esp_async_memcpy_install_gdma_axi(const async_memcpy_config_t * config, async_memcpy_handle_t * mcp)
+{
+    (void)config;
+    *mcp = calloc(1, sizeof(**mcp));
+    return *mcp ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+esp_err_t esp_async_memcpy_uninstall(async_memcpy_handle_t mcp)
+{
+    if(mcp->copies_pending) return ESP_ERR_INVALID_STATE;
+    free(mcp);
+    return ESP_OK;
+}
+
+esp_err_t esp_async_memcpy(async_memcpy_handle_t mcp, void * dst, void * src, size_t n, async_memcpy_isr_cb_t cb_isr,
+                           void * cb_args)
+{
+    if(g_copy_pass > 0) g_copy_pass--;
+    else if(g_copy_refuse > 0) {
+        g_copy_refuse--;
+        return ESP_ERR_INVALID_STATE;
+    }
+    if(g_copy_count == COPIES) return ESP_ERR_INVALID_STATE;
+    g_p4_copies++;
+    g_p4_copy_bytes += n;
+    const int i = (g_copy_head + g_copy_count) % COPIES;
+    g_copy[i].h = mcp;
+    g_copy[i].dst = dst;
+    g_copy[i].src = src;
+    g_copy[i].n = n;
+    g_copy[i].cb = cb_isr;
+    g_copy[i].args = cb_args;
+    mcp->copies_pending++;
+    g_copy_count++;
+    if(!g_copy_late) land_one();
+    return ESP_OK;
+}
+
+/* Which buffers stand for PSRAM: the test says. */
+#define EXTERNAL 8
+static struct {
+    uintptr_t lo, hi;
+} g_external[EXTERNAL];
+static int g_nexternal;
+
+void p4fake_external(const void * buf, size_t n)
+{
+    if(buf == NULL) {
+        g_nexternal = 0;
+        return;
+    }
+    if(g_nexternal < EXTERNAL) {
+        g_external[g_nexternal].lo = (uintptr_t)buf;
+        g_external[g_nexternal].hi = (uintptr_t)buf + n;
+        g_nexternal++;
+    }
+}
+
+bool esp_ptr_external_ram(const void * p)
+{
+    for(int i = 0; i < g_nexternal; i++) {
+        if((uintptr_t)p >= g_external[i].lo && (uintptr_t)p < g_external[i].hi) return true;
+    }
+    return false;
+}
+
 void p4fake_reset(void)
 {
     g_head = g_count = 0;
     g_stall_next = 0;
+    while(g_copy_count) land_one();
 }
 
 
@@ -324,7 +440,9 @@ int p4fake_pending(void)
 void esp_rom_delay_us(uint32_t us)
 {
     (void)us;
-    finish_one();
+    /* A late copy lands only once the PPA has nothing left to do. */
+    if(g_count) finish_one();
+    else land_one();
 }
 
 esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t c, const ppa_srm_oper_config_t * op)

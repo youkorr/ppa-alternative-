@@ -211,6 +211,30 @@ the ring is filled now (on a PC, 5 140 pixels instead of the 58 604 under a
 322x182 frame), checked pixel for pixel against LVGL's own drawing over a
 scribbled frame buffer. Not measured on a board.
 
+**A camera picture is now turned through internal RAM** (`camera_ram:`,
+80KB by default). The PPA writing PSRAM costs it nothing over writing
+internal RAM, but its reading PSRAM in 16x16 macro blocks doubles its time,
+and that read is what the panel's scan-out and the camera slow down. So the
+picture's rows are copied into internal RAM a band at a time by the AXI GDMA,
+in one run, while the PPA turns the band before out of RAM. Measured on both
+boards with `espressif/ppa-probe`, the camera streaming, a whole picture:
+
+| | straight from PSRAM | bands of 16 rows | bands of 32 rows |
+|---|---|---|---|
+| Waveshare 7B, 1024x600 at 180 | 31.6 ms | 13.8 ms | 12.4 ms |
+| Tab5, 1280x720 at 270 | 44.3 ms | 24.4 ms | 18.7 ms |
+
+A band of a 1280-wide picture is 2.5 KB a row: 80KB holds two bands of 16
+rows, 160KB two of 32.
+
+Those were measured with the DMA2D copy; the engine uses the GDMA's, public
+in ESP-IDF 5.5 and 6 where the DMA2D one is private and gone in 6.0, and the
+probe measures that one too. A band is whole rows of the picture, a multiple
+of 8. Anything else -- no room at boot, a band shape the PPA cannot take
+whole (DIG-734), a copy refused -- is the plain turn, said in the
+ten-second report. Checked on a PC at every angle with copies landing at
+once and late, pixel for pixel; not yet run inside the engine on a board.
+
 On the Tab5 it is the same shape: 49 ms a frame, **44.3 ms of it waiting for
 the PPA** to turn the 1280x720 picture a quarter turn, one picture of 1800 KiB
 a screen. That is about 21 Mpx/s, faster than the 15-18 a quarter turn reads
@@ -278,6 +302,7 @@ lvgl_ortho:
   # tile_width: 256       # off by default: narrower, taller tiles (slower on a Tab5)
   # split: true           # off by default: the PPA and the CPU together (slower on a Tab5)
   # cpu_load: true        # off by default: each core's real load in the ten-second report
+  # camera_ram: 160KB     # 80KB by default: internal RAM to turn a camera picture through, 0 off
 ```
 
 It takes LVGL's display over once ESPHome's lvgl has built it: one
@@ -310,6 +335,12 @@ display's rotation itself.
 - **`cores: 2`** draws every other tile on the second core (see
   [Two cores](#two-cores)). It needs LVGL built with an OS, which
   youkorr/lvgl_9.5 is, and is refused otherwise.
+- **`camera_ram:`** is the internal RAM, both bands together, a big picture
+  in PSRAM is turned through: a camera frame, a wallpaper in PSRAM. 80KB by
+  default; on a Tab5 160KB takes the turn from 24 to 19 ms if internal RAM
+  has room for it. The boot log says whether it was taken and how much
+  internal RAM is left; the ten-second report how many pictures went through
+  it. `0` turns every picture straight from PSRAM, as before.
 - **`cpu_load: true`** adds each core's real load to the ten-second report,
   from FreeRTOS's count of the time each core's idle task ran:
   `processor really busy: core 0 12%, core 1 4%`. LVGL's `perf_monitor`

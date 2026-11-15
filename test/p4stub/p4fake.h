@@ -49,3 +49,13 @@ typedef struct {
 #define P4FAKE_EVENTS 8192
 extern p4fake_event_t g_p4_ev[P4FAKE_EVENTS];
 extern int g_p4_nev;
+/* The AXI GDMA's copies (esp_async_memcpy): how many, and how many bytes.
+ * Late, a copy lands only once the PPA has nothing queued; else at once.
+ * Let `after` copies through, then refuse `n`, as a busy GDMA would. */
+extern int g_p4_copies;
+extern unsigned long long g_p4_copy_bytes;
+void p4fake_copy_late(int late);
+void p4fake_copy_refuse(int after, int n);
+/* `n` bytes at `buf` stand for PSRAM (esp_ptr_external_ram); NULL forgets
+ * every range given. */
+void p4fake_external(const void * buf, size_t n);
