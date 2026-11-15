@@ -481,6 +481,22 @@ panel's buffers; elsewhere, `lv_draw_ortho_take_sync()`. The ten-second line
 says how much LVGL would have copied and how much was ("buffers kept in
 step").
 
+### Cards: a tile under a background is not read back
+
+A tile starts as what is already on the glass under it -- turned back out of
+the frame buffer, by the PPA, while the CPU waits -- unless the first thing
+drawn there paints all of it. In a card, the first thing drawn is its shadow,
+which its background then covers. That was recognised only where the
+background is the shadow's own rectangle, and a card with a border has its
+background drawn a pixel inside (LVGL leaves the border's anti-aliasing room).
+So every tile inside such a card was read back first, and the shadow painted
+under the background for nothing: on the dashboard of `test_pr818/` at a
+Waveshare 7B's size, **82,000 pixels turned a frame for 48,800 drawn**, and
+the board's own log said the same (151 KiB turned a frame). What a rounded
+background certainly covers is now its cross, the rectangle less its four
+corners, and the same for the inside of a rounded border: no tile of that
+dashboard is read back, 48,800 pixels are turned, and 35% fewer are painted.
+
 ### Two cores
 
 With the PPA turning, what is left of a redraw is LVGL drawing, on one core
@@ -521,6 +537,14 @@ Those are simulated. Measured, the second core gains 10 % on the Tab5 at 270
 limit, and 16 % on the Waveshare at 180 (57.0 to 47.7 ms), where drawing is.
 It costs the second core's time and a 12 KiB stack, so it is off by default:
 compare `ortho` and `ortho_2cores` with `lvgl_bench` and keep the faster.
+
+**The second core's tile goes to the other core than the drawing task**,
+whichever that is: there is a task pinned to each core, the second started
+the first time it is needed (a second stack). LVGL's task has no core of its
+own, and an application may refresh from a task pinned anywhere; a single
+task pinned once, opposite the core LVGL happened to be on, could be on the
+very core that hands it the tile, and both halves were then painted one after
+the other. `helper_cores` in the stats says which cores have one.
 
 **A pair is two tiles of one redraw**, and a redraw that fits in one tile is
 cut in two for it. It was not until November 2026: a redraw of one tile was
@@ -588,7 +612,7 @@ Read in ESP-IDF's, LVGL's and ESPHome's own issues and pull requests (October
 | | what it is | elsewhere | here |
 |---|---|---|---|
 | **DIG-734** ([esp-idf #19023](https://github.com/espressif/esp-idf/issues/19023), [#19096](https://github.com/espressif/esp-idf/issues/19096), [#18768](https://github.com/espressif/esp-idf/pull/18768)) | at 90 and 270, a block whose last macro block leaves the DMA under its FIFO depth never finishes | fixed on ESP-IDF master (469aa16), **not in v5.5.6**, which ESPHome 2026.10 builds with; esp_lvgl_adapter's "PPA freeze with rotation" is this | `lv_draw_ortho_ppa.c` applies the driver's test both ways and cuts a block into pieces that are either given the bypass or leave at least twice the FIFO's depth in their last macro block (below), each at least 16 pixels a side: no sliver. Every size up to 1300x1300, at 90 and 180, 16 and 24 bits, checked: at most 7 pieces, 0.7% of sizes (0.03% of their pixels) left to the CPU |
-| **an unbounded wait** | the driver's blocking mode waits for ever: a stuck transfer is a frozen screen | LVGL's PPA unit blocks with no timeout; the author's own [lvgl #10265](https://github.com/lvgl/lvgl/pull/10265) (open, not merged) keeps that call | every wait is bounded (`LV_DRAW_ORTHO_PPA_TIMEOUT_MS`, 250 ms); past it the CPU turns, the video window is refused, and the screen is redrawn and the log says so, with the transaction that never finished: its whole geometry, the buffers, and the bypass each driver would program |
+| **an unbounded wait** | the driver's blocking mode waits for ever: a stuck transfer is a frozen screen | LVGL's PPA unit blocks with no timeout; the author's own [lvgl #10265](https://github.com/lvgl/lvgl/pull/10265) (open, not merged) keeps that call | every wait is bounded (`LV_DRAW_ORTHO_PPA_TIMEOUT_MS`, 250 ms) and sleeps on the PPA's own interrupt rather than polling, so the core is free while it waits; past it the CPU turns, the video window is refused, and the screen is redrawn and the log says so, with the transaction that never finished: its whole geometry, the buffers, and the bypass each driver would program |
 | **DMA2D reset hang** ([esp-idf #18999](https://github.com/espressif/esp-idf/issues/18999), [#19108](https://github.com/espressif/esp-idf/issues/19108)) | after a software reset a DMA2D channel can wait for ever inside a spinlock | open at Espressif | **not handled**: it spins below anything a component can bound. A power cycle clears it |
 | **DIG-734 at the FIFO's exact depth** (Tab5, `yaml/tab5-camera-ui.yaml`, November 2026) | a block whose last macro block leaves exactly 1536 bits -- 464x70 turned 90, a tile band behind three moving lights -- never finished, right after an identical one had: most likely a race at the exact depth | **not known elsewhere**: both drivers, v5.5 and master, bypass only strictly below the depth | found from the board's own report of the transaction that never finished (`lv_draw_ortho_ppa_describe_stall()`). A block sent without the bypass now leaves at least twice the depth, a whole FIFO of margin; a bypass given where it is not needed does no harm, since Espressif's own esp_lvgl_adapter patches ESP-IDF to give it to every transaction ("Temporary fix for the PPA hang issue"). The test PPA now hangs on the exact depth, and an existing test scene was already sending one |
 
@@ -675,7 +699,7 @@ quote.
 ```
 git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 615 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 627 cases, and the ESPHome component at four angles
 build/ortho_test --ppa             # the PPA's cases alone
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case

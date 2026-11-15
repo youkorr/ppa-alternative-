@@ -6,6 +6,7 @@
 
     python3 test_pr818/depouiller.py                 les images par seconde
     python3 test_pr818/depouiller.py --couts         et où part le temps (V8, V9)
+    python3 test_pr818/depouiller.py --moteur        et ce que le moteur de la PR a fait
 
 Lit tous les fichiers .txt du dossier (ou ceux donnés en argument). Les lignes
 AB_RESULT donnent les images par seconde de chaque passage ; AB_COST, les
@@ -33,9 +34,10 @@ def mode_of(kv):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     costs = "--couts" in sys.argv
+    engine = "--moteur" in sys.argv
     files = args or sorted(glob.glob(os.path.join(HERE, "*.txt")))
     for path in files:
-        results, cost = defaultdict(list), defaultdict(list)
+        results, cost, native, cpu = defaultdict(list), defaultdict(list), defaultdict(list), defaultdict(list)
         frames = 64
         with open(path, errors="replace") as f:
             for line in f:
@@ -43,6 +45,12 @@ def main():
                     kv = fields(line)
                     frames = int(kv["frames"])
                     results[(mode_of(kv), kv["scene"])].append(kv)
+                elif "AB_CPU protocol" in line:
+                    kv = fields(line)
+                    cpu[(mode_of(kv), kv["scene"])].append(kv)
+                elif "AB_NATIVE" in line:
+                    kv = fields(line)
+                    native[(mode_of(kv), kv["scene"])].append(kv)
                 elif "AB_COST" in line:
                     kv = fields(line)
                     cost[(mode_of(kv), kv["scene"], kv.get("stage", "-"), kv["kind"])].append(kv)
@@ -52,8 +60,24 @@ def main():
             med = st.median(float(r["refresh_median_us"]) for r in rows) / 1000
             p95 = st.median(float(r["refresh_p95_us"]) for r in rows) / 1000
             failed = sum(int(r["failures"]) for r in rows)
+            load = ""
+            if cpu.get((mode, scene)):
+                c = cpu[(mode, scene)]
+                busy = st.median(float(r["busy_pct"]) for r in c)
+                work = st.median(float(r["busy_us_per_frame"]) for r in c) / 1000
+                load = f", processeur occupé {busy:4.1f} % ({work:5.1f} ms de travail par image, deux cœurs)"
             print(f"   {mode:9s} {scene:23s} {st.median(fps):6.2f} images/s  "
-                  f"(rafraîchissement médian {med:6.1f} ms, p95 {p95:6.1f} ms, {len(rows)} passages, {failed} échec)")
+                  f"(rafraîchissement médian {med:6.1f} ms, p95 {p95:6.1f} ms, {len(rows)} passages, {failed} échec)"
+                  + load)
+        if engine:
+            for (mode, scene), rows in native.items():
+                tiles = st.mean(float(r["tiles"]) for r in rows) / frames
+                read = st.mean(float(r["tiles"]) - float(r["tiles_unread"]) for r in rows) / frames
+                other = st.mean(float(r["tiles_other_core"]) for r in rows) / frames
+                cores = ",".join(sorted({r["helper_cores"] for r in rows}))
+                print(f"      {mode:9s} {scene:23s} {tiles:5.1f} tuiles/image, {read:5.1f} relues, "
+                      f"{other:5.1f} sur l'autre cœur (tâches sur les cœurs {cores}), "
+                      f"{st.mean(float(r['sync_bytes_copied']) for r in rows) / frames / 1024:6.1f} Kio recopiés")
         if not costs:
             continue
         for (mode, scene, stage, kind), rows in cost.items():

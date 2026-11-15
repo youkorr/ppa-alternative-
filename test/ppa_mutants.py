@@ -55,8 +55,11 @@ MUTANTS = {
     "slivers cut": ("#define SIDE 16\n", "#define SIDE 1\n"),
     # A wait with no bound: a stuck PPA freezes the screen (the driver's own
     # blocking mode). The test would hang, so the run has a timeout.
-    "a wait with no bound": ("        else if((idle_us += 10) >= LV_DRAW_ORTHO_PPA_TIMEOUT_MS * 1000u) {",
+    "a wait with no bound": ("        else if(idle_us >= limit) {",
                              "        else if(0) {"),
+    # A wait that never counts the time it slept: the bound is never reached.
+    "a sleep not counted": ("        idle_us += pause_for_ppa(limit - LV_MIN(idle_us, limit));",
+                            "        pause_for_ppa(limit - LV_MIN(idle_us, limit));"),
     # A stalled PPA not given up on for good: the video tries it again, and
     # waits out the timeout every frame.
     "a stuck PPA used again": ("    if(g_stuck) return ESP_ERR_INVALID_STATE;\n    esp_err_t err = ensure_client();",
@@ -132,6 +135,23 @@ MUTANTS = {
     "another copy left queued": ("            fence();\n            g_stats.sync_others++;", "            g_stats.sync_others++;"),
     # Buffers set again, and the copies left to LVGL from then on.
     "buffers set again, never taken again": ("        if(!sync_install(disp)) return;\n", "        return;\n"),
+    # A card's shadow taken as hidden only where its background is the same
+    # rectangle, as before: a card with a border has its background a pixel
+    # inside, so every tile in it was read back first.
+    "a shadow hidden only under a background of its own size": (
+        "            if(f->opa >= LV_OPA_MAX && f->grad.dir == LV_GRAD_DIR_NONE) {",
+        "            if(f->opa >= LV_OPA_MAX && f->grad.dir == LV_GRAD_DIR_NONE && lv_area_is_in(&t->area, &t->next->area, 0)) {"),
+    # The rounded corners of that background counted as painted.
+    "a background's rounded corners counted as covering the shadow": (
+        "                cross(j, fa, 0, r, &t->next->clip_area);", "                cross(j, fa, 0, 0, &t->next->clip_area);"),
+    # Only one arm of the cross: a run along a card, close to both its edges,
+    # read back.
+    "one arm of the cross": ("    for(int k = 0; k < 2; k++) {\n        lv_area_t h = *a;",
+                             "    for(int k = 1; k < 2; k++) {\n        lv_area_t h = *a;"),
+    # A rounded border's corners counted as clear of it.
+    "a border's rounded corners counted as clear": (
+        "        cross(j, &t->area, d->width, LV_MAX(d->width, d->radius), &t->area);",
+        "        cross(j, &t->area, d->width, d->width, &t->area);"),
     # The PPA's angle the wrong way round.
     "the PPA turning the other way": (
         "        case LV_DISPLAY_ROTATION_90:\n            return PPA_SRM_ROTATION_ANGLE_90;",
@@ -145,10 +165,10 @@ CORES_MUTANTS = {
     "the other core's tile reused mid-turn": ("    wait_ticket(&u->ticket[base + 1]);\n", "", []),
     # The other core's tile turned out before it has finished painting it.
     "turned out before the other core finished": (
-        "    if(ok[1]) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n"
+        "    if(handed) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n    else if(ok[1]) paint_tile(&w[1]);\n"
         "    if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);\n    if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);\n",
         "    if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);\n    if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);\n"
-        "    if(ok[1]) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n", []),
+        "    if(handed) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n    else if(ok[1]) paint_tile(&w[1]);\n", []),
     # Tiles cut from one block all at its start: the cores paint over each other.
     "tiles cut from a block overlapping": (
         "        u->tile[j] = j < want ? tile_aligned(u->tile_alloc[j / per]) + (size_t)(j % per) * bytes : NULL;\n",

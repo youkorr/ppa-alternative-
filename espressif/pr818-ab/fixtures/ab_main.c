@@ -107,6 +107,40 @@ static void disable_scroll(lv_obj_t *object)
 #endif
 }
 
+/* Time each core spent in its idle task, from FreeRTOS's run-time counters
+ * (microseconds, esp_timer): what the frames left free for the rest of an
+ * application. A wait that spins counts as busy, as it would for that
+ * application. Same configuration for both variants (prepare.py). */
+typedef struct {
+    uint32_t idle[2];
+    uint32_t total;
+    bool ok;
+} ab_cpu_t;
+
+static ab_cpu_t cpu_snapshot(void)
+{
+    ab_cpu_t snap = {0};
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS && CONFIG_FREERTOS_USE_TRACE_FACILITY
+    UBaseType_t count = uxTaskGetNumberOfTasks() + 8;
+    TaskStatus_t *tasks = heap_caps_malloc(count * sizeof(TaskStatus_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!tasks) return snap;
+    configRUN_TIME_COUNTER_TYPE total = 0;
+    count = uxTaskGetSystemState(tasks, count, &total);
+    unsigned found = 0;
+    for (UBaseType_t i = 0; i < count; i++) {
+        const char *name = tasks[i].pcTaskName;
+        if (strncmp(name, "IDLE", 4) == 0 && (name[4] == '0' || name[4] == '1') && name[5] == 0) {
+            snap.idle[name[4] - '0'] = (uint32_t)tasks[i].ulRunTimeCounter;
+            found++;
+        }
+    }
+    snap.total = (uint32_t)total;
+    snap.ok = count > 0 && found == 2;
+    heap_caps_free(tasks);
+#endif
+    return snap;
+}
+
 static uint32_t percentile(uint32_t *values, unsigned count, unsigned percent)
 {
     for (unsigned i = 1; i < count; i++) {
@@ -147,6 +181,8 @@ static lv_obj_t *card(lv_obj_t *parent, int x, int y, int w, int h, const char *
     return object;
 }
 
+/* Kind 3 is the dashboard of kind 0 with the whole screen invalidated every
+ * frame: what a page change or a scrolled list costs. */
 static void build_scene(unsigned kind)
 {
     lv_obj_t *screen = lv_display_get_screen_active(s_display);
@@ -156,7 +192,7 @@ static void build_scene(unsigned kind)
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x081220), 0);
     s_arc = s_bar = s_slider = NULL;
-    if (kind == 0) {
+    if (kind == 0 || kind == 3) {
         lv_obj_set_style_bg_grad_color(screen, lv_color_hex(0x203758), 0);
         lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_VER, 0);
         const int cw = (AB_WIDTH - 80) / 3, ch = AB_HEIGHT - 145;
@@ -203,7 +239,7 @@ static void update_scene(unsigned kind, uint32_t frame)
 {
     /* Every variant sees the same ordered trace. No animation depends on
      * elapsed wall time or on the throughput of the tested renderer. */
-    if (kind == 0) {
+    if (kind == 0 || kind == 3) {
         const int value = (frame * 7) % 101;
         lv_arc_set_value(s_arc, value);
         lv_bar_set_value(s_bar, (frame * 11) % 101, LV_ANIM_OFF);
@@ -223,9 +259,7 @@ static void update_scene(unsigned kind, uint32_t frame)
     lv_obj_set_style_bg_color(s_marker, lv_color_hex(((frame * 37) & 255) << 16 |
                                                    ((frame * 71) & 255) << 8 |
                                                    ((frame * 109) & 255)), 0);
-#if AB_DASHBOARD_FULL
-    if (kind == 0) lv_obj_invalidate(lv_display_get_screen_active(s_display));
-#endif
+    if (kind == 3 || (AB_DASHBOARD_FULL && kind == 0)) lv_obj_invalidate(lv_display_get_screen_active(s_display));
 }
 
 static void prepare_bank(void)
@@ -322,6 +356,7 @@ static void phase(const char *scene, unsigned kind, unsigned round,
     uint64_t lock_us = 0, update_us = 0, refresh_sum = 0, timer_policy_us = 0;
     uint64_t unlock_us = 0, yield_us = 0;
     unsigned idle_yields = 0;
+    const ab_cpu_t cpu_before = cpu_snapshot();
     const int64_t started = esp_timer_get_time();
     /* Count this single handoff explicitly; then each measured frame owns the
      * complete lock/update/refresh/unlock sequence, as in V7. */
@@ -360,6 +395,7 @@ static void phase(const char *scene, unsigned kind, unsigned round,
         }
     }
     const int64_t produced_us = esp_timer_get_time() - started;
+    const ab_cpu_t cpu_after = cpu_snapshot();
     ab_cost_probe_set_stage(AB_COST_STAGE_DRAIN);
     const int64_t drain_started = esp_timer_get_time();
     const int64_t deadline = drain_started + 500000;
@@ -446,6 +482,34 @@ static void phase(const char *scene, unsigned kind, unsigned round,
              events.manual_starts, events.manual_ready, events.automatic_starts, events.automatic_ready,
              (unsigned long long)events.manual_us, (unsigned long long)events.automatic_us,
              events.requests, events.requests_running, events.strict_pauses, events.nested, events.unmatched_ready);
+    if (cpu_before.ok && cpu_after.ok) {
+        const uint32_t elapsed = cpu_after.total - cpu_before.total;
+        const uint32_t idle0 = cpu_after.idle[0] - cpu_before.idle[0];
+        const uint32_t idle1 = cpu_after.idle[1] - cpu_before.idle[1];
+        const double busy = elapsed ? 100.0 * (1.0 - (idle0 + (double)idle1) / (2.0 * elapsed)) : -1.0;
+        ESP_LOGI(TAG, "AB_CPU protocol=9 board=%s variant=%s sync_mode=%s scene=%s round=%u frames=%u "
+                 "elapsed_us=%" PRIu32 " idle0_us=%" PRIu32 " idle1_us=%" PRIu32 " busy_pct=%.1f "
+                 "busy_us_per_frame=%.0f",
+                 AB_BOARD_NAME, AB_VARIANT, sync_mode, scene, round, AB_FRAMES, elapsed, idle0, idle1, busy,
+                 (2.0 * elapsed - idle0 - (double)idle1) / AB_FRAMES);
+    } else {
+        ESP_LOGW(TAG, "AB_CPU unavailable: FreeRTOS run-time stats or the idle tasks' names were not found");
+    }
+#if AB_HAS_NATIVE
+    /* What the draw unit did, for reading a native capture: tiles read back
+     * from the frame buffer (tiles - tiles_unread), the second core's share,
+     * and the cores its tasks were started on. Not part of the comparison:
+     * parse_logs.py reads only the rows above. */
+    ESP_LOGI(TAG, "AB_NATIVE protocol=9 board=%s variant=%s sync_mode=%s scene=%s round=%u "
+             "tiles=%u tiles_unread=%u tiles_other_core=%u helper_cores=%u tasks=%u fills_direct=%u fills_handed=%u "
+             "images_turned=%u images_flash=%u sync_noted=%u sync_copies=%u sync_bytes_noted=%llu "
+             "sync_bytes_copied=%llu sync_others=%u",
+             AB_BOARD_NAME, AB_VARIANT, sync_mode, scene, round,
+             stats.tiles, stats.tiles_unread, stats.tiles_other_core, (unsigned)stats.helper_cores,
+             stats.tasks_general, stats.fills_direct, stats.fills_handed, stats.images_turned, stats.images_flash,
+             stats.sync_noted, stats.sync_copies, (unsigned long long)stats.sync_bytes_noted,
+             (unsigned long long)stats.sync_bytes_copied, stats.sync_others);
+#endif
     log_costs(scene, sync_mode, round, costs);
     assert(heap_ok && !turner_failed && !probe.failures && residual_us >= 0);
     assert(events.manual_starts == AB_FRAMES && events.manual_ready == AB_FRAMES);
@@ -514,6 +578,7 @@ void app_main(void)
     prepare_bank();
     for (unsigned round = 1; round <= AB_ROUNDS; round++) {
         paired_phase("dashboard", 0, round, 0);
+        paired_phase("dashboard_full", 3, round, 0);
         paired_phase("changing_rgb565", 1, round, 0);
         paired_phase("fixed_flash_off", 2, round, 0);
 #if AB_HAS_NATIVE
