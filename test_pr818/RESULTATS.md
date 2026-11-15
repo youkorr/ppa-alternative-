@@ -299,6 +299,45 @@ Ce que ça dit :
   bord. Attendre le PPA en dormant (son rappel de fin de transfert) rendrait
   ce temps au reste de l'application. Pas fait, pas mesuré.
 
+## Le 15 novembre, 17 h : l'attente du PPA endormie
+
+Firmwares natifs de l'exécution 43732115749 (commit `45f7420` de
+`test/rotate-in-draw-sync`), journaux `*-native-v13 ESP-logs.txt`. Les
+journaux officiels restent ceux de la v12 : le banc n'a pas changé.
+
+Le changement : une tâche qui attend le PPA dort sur un sémaphore que
+l'interruption de fin de transfert lui donne, au lieu de tourner toutes les
+10 µs. Le PPA ne va pas plus vite (le temps d'attente mesuré par
+`native_wait` est le même qu'en v12, à 0,1 ms près) ; ce temps-là n'est plus
+du travail.
+
+Mode `deferred`, travail des deux cœurs par image :
+
+| | officiel | PR v12 | **PR v13** |
+|---|---|---|---|
+| Tab5, tableau de bord (48,9 images/s partout) | **10,8 ms** | 14,0 ms | **11,6 ms** |
+| Tab5, plein écran | 183 ms, 8,3 images/s | 105 ms, 15,9 images/s | **103 ms, 15,8 images/s** |
+| Tab5, images changeantes | 80 ms, 13,3 images/s | 67 ms, 15,5 images/s | **27 ms, 15,4 images/s** |
+| Waveshare, tableau de bord (61,3 images/s partout) | **10,2 ms** | 12,0 ms | **10,6 ms** |
+| Waveshare, plein écran | 95 ms, 15,2 images/s | 69 ms, 24,1 images/s | **69 ms, 23,6 images/s** |
+| Waveshare, images changeantes | 72 ms, 15,3 images/s | 34 ms, 29,6 images/s | **9,1 ms, 29,3 images/s** |
+
+Ce que ça dit :
+
+- **Le temps gagné est exactement le temps d'attente** : 41 ms d'attente du
+  PPA par image changeante sur le Tab5, 40 ms de travail en moins ; 2,6 ms
+  sur le tableau de bord, 2,4 ms en moins.
+- **Images changeantes : la PR fait plus d'images avec 3 fois (Tab5) à
+  8 fois (Waveshare) moins de processeur que l'officiel.** Sur le Waveshare
+  le processeur est occupé 13 % du temps à 29 images/s, contre 55 % à
+  15 images/s pour l'officiel.
+- **Tableau de bord : l'écart avec l'officiel est presque fermé** (11,6
+  contre 10,8 ms sur le Tab5, 10,6 contre 10,2 sur le Waveshare).
+- Le nombre d'images ne bouge pas, à 1 ou 2 % près, dans un sens ou dans
+  l'autre : c'était attendu, le PPA et l'écran fixent le rythme.
+- Aucune erreur, aucun PPA bloqué, `hardware_measurement=COMPLETE` sur les
+  deux cartes.
+
 ## Ce que ces journaux ne disent pas
 
 - Rien sur le Tab5 en V7 (officiel + PPA, lots de 128), ni l'officiel V7 du
