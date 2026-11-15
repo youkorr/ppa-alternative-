@@ -543,12 +543,22 @@ static void scene_text(lv_obj_t * scr)
 static lv_obj_t * g_dash_arc, * g_dash_bar, * g_dash_slider, * g_dash_counter, * g_dash_marker;
 static uint32_t g_dash_frame;
 
+/* LVGL 9.6 deprecated the flag calls and 10 removed them. */
+static void no_scroll(lv_obj_t * o)
+{
+#if LVGL_VERSION_MAJOR > 9 || (LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR >= 6)
+    lv_obj_set_scrollable(o, false);
+#else
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+#endif
+}
+
 static lv_obj_t * dash_card(lv_obj_t * parent, int32_t x, int32_t y, int32_t w, int32_t h, const char * title)
 {
     lv_obj_t * c = lv_obj_create(parent);
     lv_obj_set_pos(c, x, y);
     lv_obj_set_size(c, w, h);
-    lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    no_scroll(c);
     lv_obj_set_style_bg_color(c, lv_color_hex(0x203048), 0);
     lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(c, 15, 0);
@@ -576,7 +586,7 @@ static void dash_update(uint32_t frame)
 static void scene_dashboard(lv_obj_t * scr)
 {
     const int32_t W = lv_obj_get_width(scr), H = lv_obj_get_height(scr);
-    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    no_scroll(scr);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x081220), 0);
     lv_obj_set_style_bg_grad_color(scr, lv_color_hex(0x203758), 0);
