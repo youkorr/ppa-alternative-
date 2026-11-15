@@ -242,6 +242,23 @@ seule tâche, sur le cœur 1. Dans ce banc, la tâche du second cœur était don
 déjà sur le bon cœur. Le placement par cœur ne change rien ici ; il protège
 les applications dont la tâche de dessin change de cœur.
 
+### La charge du processeur et un redessin plein écran
+
+Exécution https://github.com/youkorr/ppa-alternative-/actions/runs/43725165875,
+**les quatre firmwares** (officiel et PR, Waveshare et Tab5), car le banc
+a changé pour les deux :
+
+- une scène de plus, `dashboard_full` : le tableau de bord avec tout l'écran
+  redessiné à chaque image, ce que coûte un changement de page ou une liste
+  qu'on fait défiler ;
+- une ligne `AB_CPU` par scène : le temps que chaque cœur a passé à ne rien
+  faire (compteurs de FreeRTOS), d'où la part du processeur occupée et le
+  temps de travail par image. Là où les deux adaptateurs sont au rythme de
+  l'écran, c'est ce qui les distingue : le temps qui reste pour le reste de
+  l'application.
+
+`python3 test_pr818/depouiller.py` affiche les deux.
+
 ## Ce que ces journaux ne disent pas
 
 - Rien sur le Tab5 en V7 (officiel + PPA, lots de 128), ni l'officiel V7 du
