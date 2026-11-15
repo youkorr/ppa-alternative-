@@ -59,6 +59,7 @@ jobs:
             esp_video
             esp_cam_sensor
             esp_ipa
+            esp_sccb_intf
       - name: Prepare ${{ matrix.board }}, ${{ matrix.variant }}
         shell: bash
         run: |

@@ -150,7 +150,8 @@ project(test_esp_lvgl_adapter_lvgl9)
 '''
     if camera:
         video = args.video.resolve()
-        for name in ('esp_video', 'esp_cam_sensor', 'esp_ipa'):
+        # esp_cam_sensor's own manifest points at ../esp_sccb_intf, so it has to be there too.
+        for name in ('esp_video', 'esp_cam_sensor', 'esp_ipa', 'esp_sccb_intf'):
             if not (video / name / 'idf_component.yml').is_file():
                 raise ValueError(f'--video: {video / name} is not an esp-video-components component')
             manifest += f'  espressif/{name}:\n    version: "*"\n    override_path: "{video / name}"\n'
