@@ -26,6 +26,15 @@
  *                       band while the PPA turns the last one
  *   out_pipe            the first version's idea, for comparison: the PPA turns
  *                       into SRAM and DMA2D copies the result out
+ *   gdma_rows           the AXI GDMA copying each band's source ROWS, whole,
+ *                       into SRAM (where a band's source is whole rows)
+ *   in_pipe_gdma        in_pipe with that copy: the PPA reads the band's
+ *                       columns out of whole rows in SRAM
+ *
+ * Why the GDMA: esp_async_fbcpy, the DMA2D copy, is private to ESP-IDF 5.5's
+ * esp_lcd and gone in 6.0; esp_async_memcpy is public in both. It only copies
+ * runs, so a band has to be whole source rows, which is the layout that won
+ * anyway: output rows at 180, output columns at 90 and 270.
  *
  * The first run of this firmware (both boards, 2026-11-15) answered half of
  * it: the PPA WRITING to PSRAM costs nothing over writing to SRAM, its
@@ -347,6 +356,49 @@ static esp_err_t fetch_start(rect_t s, uint8_t *to)
     return esp_async_fbcpy(s_fbcpy, &t, fbcpy_done_cb, NULL);
 }
 
+/* The source rows of band o, whole, into SRAM by the AXI GDMA: one run. */
+static esp_err_t fetch_rows_start(rect_t s, uint8_t *to)
+{
+    return esp_async_memcpy(s_gdma, to, (uint8_t *)s_src + (size_t)s.y * PROBE_SRC_W * PIX,
+                            (size_t)s.h * PROBE_SRC_W * PIX, gdma_done_cb, NULL);
+}
+
+/* The band o turned out of its source rows, whole, in SRAM. */
+static bool turn_from_rows(ppa_client_handle_t c, const uint8_t *rows, rect_t o, ppa_trans_mode_t mode)
+{
+    const rect_t s = source_of(o);
+    const rect_t in = {s.x, 0, s.w, s.h};
+    return turn(c, rows, PROBE_SRC_W, s.h, in, s_dst, s_dst_bytes, PROBE_OUT_W, PROBE_OUT_H, o.x, o.y,
+                PROBE_ANGLE, mode) == ESP_OK;
+}
+
+static bool op_fetch_rows(const job_t *j)
+{
+    for (uint32_t k = 0; k < span(j->layout); k += j->n) {
+        if (fetch_rows_start(source_of(band(j->layout, k, j->n)), j->buf[0]) != ESP_OK || !copy_wait()) return false;
+    }
+    return true;
+}
+
+static bool op_in_pipe_gdma(const job_t *j)
+{
+    const uint32_t total = span(j->layout), n = j->n;
+    const uint32_t count = (total + n - 1) / n;
+    if (fetch_rows_start(source_of(band(j->layout, 0, n)), j->buf[0]) != ESP_OK || !copy_wait()) return false;
+    for (uint32_t i = 0; i < count; i++) {
+        const bool more = i + 1 < count;
+        if (!turn_from_rows(s_ppa_async, j->buf[i & 1], band(j->layout, i * n, n), PPA_TRANS_MODE_NON_BLOCKING)) {
+            return false;
+        }
+        if (more && fetch_rows_start(source_of(band(j->layout, (i + 1) * n, n)), j->buf[(i + 1) & 1]) != ESP_OK) {
+            return false;
+        }
+        if (!ppa_wait()) return false;
+        if (more && !copy_wait()) return false;
+    }
+    return true;
+}
+
 /* The band o's source, already compact in SRAM, turned into its place. */
 static bool turn_from(ppa_client_handle_t c, const uint8_t *from, rect_t o, ppa_trans_mode_t mode)
 {
@@ -505,8 +557,8 @@ static void run_condition(const char *cond)
     if (s_gdma) measure("raw_gdma", op_raw_gdma, &j, false);
     measure("raw_cpu", op_raw_cpu, &j, false);
 
-    double best_in = INFINITY, best_out = INFINITY;
-    char name_in[48] = "none", name_out[48] = "none";
+    double best_in = INFINITY, best_out = INFINITY, best_gdma = INFINITY;
+    char name_in[48] = "none", name_out[48] = "none", name_gdma[48] = "none";
     static const uint32_t SIZES[] = {8, 16, 32, 64};
     const bool sideways = PROBE_ANGLE == PPA_SRM_ROTATION_ANGLE_90 || PROBE_ANGLE == PPA_SRM_ROTATION_ANGLE_270;
     for (int l = LAYOUT_ROWS; l <= LAYOUT_COLS; l++) {
@@ -514,9 +566,24 @@ static void run_condition(const char *cond)
         for (size_t s = 0; s < sizeof(SIZES) / sizeof(SIZES[0]); s++) {
             job_t b = {.layout = (layout_t)l, .n = SIZES[s], .client = s_ppa, .copier = COPY_FBCPY};
             const rect_t o = band(b.layout, 0, b.n);
-            b.cap = up((size_t)o.w * o.h * PIX);
+            /* A band whose source is whole rows (output rows at 0/180,
+             * output columns at 90/270) can also be fetched as those rows. */
+            bool rows_src = (l == LAYOUT_ROWS) != sideways && s_gdma;
+            const size_t compact = up((size_t)o.w * o.h * PIX);
+            /* Whole source rows can be wider than the band's columns (the
+             * Waveshare's block is 1024 of 1280): room for them if there is
+             * any, else the band compact and no GDMA tests for it. */
+            b.cap = rows_src ? up((size_t)PROBE_SRC_W * source_of(o).h * PIX) : compact;
             b.buf[0] = in_sram(b.cap);
             b.buf[1] = in_sram(b.cap);
+            if (b.cap != compact && (!b.buf[0] || !b.buf[1])) {
+                heap_caps_free(b.buf[0]);
+                heap_caps_free(b.buf[1]);
+                rows_src = false;
+                b.cap = compact;
+                b.buf[0] = in_sram(b.cap);
+                b.buf[1] = in_sram(b.cap);
+            }
             if (!b.buf[0] || !b.buf[1]) {
                 printf("PROBE cond=%s layout=%s band=%" PRIu32 " skipped: no room for 2 x %u bytes of SRAM\n",
                        cond, LAYOUT_NAME[l], b.n, (unsigned)b.cap);
@@ -543,14 +610,25 @@ static void run_condition(const char *cond)
                     best_out = ms;
                     snprintf(name_out, sizeof(name_out), "%s %" PRIu32, LAYOUT_NAME[l], b.n);
                 }
+                if (rows_src) {
+                    b.copier = COPY_GDMA;
+                    measure("gdma_rows", op_fetch_rows, &b, false);
+                    ms = measure("in_pipe_gdma", op_in_pipe_gdma, &b, true);
+                    if (s_last_ok && ms < best_gdma) {
+                        best_gdma = ms;
+                        snprintf(name_gdma, sizeof(name_gdma), "%s %" PRIu32, LAYOUT_NAME[l], b.n);
+                    }
+                    b.copier = COPY_FBCPY;
+                }
             }
             heap_caps_free(b.buf[0]);
             heap_caps_free(b.buf[1]);
         }
     }
     printf("SUMMARY cond=%s ppa_whole=%.2f ms (%.1f fps) in_sram=%.2f ms (%.1f fps, %s) change=%+.0f%% "
-           "out_sram=%.2f ms (%s) change=%+.0f%%\n",
+           "in_gdma=%.2f ms (%.1f fps, %s) change=%+.0f%% out_sram=%.2f ms (%s) change=%+.0f%%\n",
            cond, whole, 1000.0 / whole, best_in, 1000.0 / best_in, name_in, (whole - best_in) / whole * 100.0,
+           best_gdma, 1000.0 / best_gdma, name_gdma, (whole - best_gdma) / whole * 100.0,
            best_out, name_out, (whole - best_out) / whole * 100.0);
 }
 
