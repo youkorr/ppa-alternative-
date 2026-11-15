@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# The PPA probe (espressif/ppa-probe), for a Waveshare 7B and a Tab5: where a
+# camera picture's turn onto the panel spends its time, from and to PSRAM and
+# internal SRAM, and whether turning it in bands through SRAM beats turning it
+# straight into the frame buffer. Each artifact is one .bin to write at 0x0;
+# the serial log, at 115200 bauds, runs from PROBE_START to PROBE_DONE.
+name: PPA probe firmwares
+on:
+  push:
+    paths:
+      - "espressif/ppa-probe/**"
+      - ".github/workflows/ppa-probe.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch of youkorr/esp-iot-solution the board files' adapter comes from"
+        default: test/rotate-in-draw-sync
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container: espressif/idf:v5.5.6
+    env:
+      NAME: ppa-probe-${{ matrix.board }}
+      # The A/B benchmark's camera stack, at the same commit.
+      VIDEO_COMMIT: 3bb32ee9ee42b35cfbfeb64ecbc38a7a2222dd71
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [waveshare-7b, tab5]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ppa
+      - uses: actions/checkout@v4
+        with:
+          repository: youkorr/esp-iot-solution
+          ref: ${{ inputs.ref || 'test/rotate-in-draw-sync' }}
+          path: iots
+          sparse-checkout: |
+            components/display/tools/esp_lvgl_adapter
+            components/display/lcd/esp_lcd_ek79007
+            components/button
+      - uses: actions/checkout@v4
+        with:
+          repository: espressif/esp-video-components
+          ref: ${{ env.VIDEO_COMMIT }}
+          path: video
+          sparse-checkout: |
+            esp_video
+            esp_cam_sensor
+            esp_ipa
+            esp_sccb_intf
+      - name: Prepare ${{ matrix.board }}
+        shell: bash
+        run: |
+          set -e
+          git config --global --add safe.directory '*'
+          python3 ppa/espressif/ppa-probe/prepare.py --repo iots --ref HEAD --board ${{ matrix.board }} \
+            --out work --video video
+      - name: Build
+        shell: bash
+        run: |
+          set -e
+          . "$IDF_PATH/export.sh" > /dev/null
+          cd work/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9
+          idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.bench;sdkconfig.probe' -D IDF_TARGET=esp32p4 build
+          grep -E "^CONFIG_SPIRAM_SPEED_200M=y" sdkconfig
+          grep -E "^CONFIG_CACHE_L2_CACHE_128KB=y" sdkconfig
+          SIZE=$([ "${{ matrix.board }}" = tab5 ] && echo 16MB || echo 32MB)
+          cd build
+          python3 - "$GITHUB_WORKSPACE/$NAME.bin" "$SIZE" <<'EOF'
+          import json, subprocess, sys
+          files = json.load(open('flasher_args.json'))['flash_files']
+          segs = [x for off in sorted(files, key=lambda o: int(o, 16)) for x in (off, files[off])]
+          subprocess.run([sys.executable, '-m', 'esptool', '--chip', 'esp32p4', 'merge_bin', '-o', sys.argv[1],
+                          '--flash_mode', 'dio', '--flash_freq', '40m', '--flash_size', sys.argv[2], *segs], check=True)
+          EOF
+          cp ../sdkconfig "$GITHUB_WORKSPACE/sdkconfig-$NAME"
+          cp ppa_probe.elf "$GITHUB_WORKSPACE/$NAME.elf"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: |
+            ${{ env.NAME }}.bin
+            sdkconfig-${{ env.NAME }}
+            ${{ env.NAME }}.elf
