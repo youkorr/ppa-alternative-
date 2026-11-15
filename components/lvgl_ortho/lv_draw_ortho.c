@@ -1239,6 +1239,44 @@ static bool hidden_later(const lv_draw_task_t * t, const lv_area_t * todo)
     return false;
 }
 
+/* The largest part of `todo` an opaque picture drawn later in the same layer
+ * covers, in `out`. LVGL asks for a few pixels round what changed, so a
+ * picture smaller than the screen -- a camera canvas in a page -- has its
+ * background asked for in a rectangle a little wider than itself, which
+ * hidden_later() cannot call hidden: before this the whole rectangle was
+ * filled under the picture every frame (an 800x600 canvas: about 950 KB the
+ * PPA wrote for a ring five pixels wide, then turned the picture over). */
+static bool covered_later(const lv_draw_task_t * t, const lv_area_t * todo, lv_area_t * out)
+{
+    int64_t best = 0;
+    for(const lv_draw_task_t * c = t->next; c; c = c->next) {
+        const lv_image_dsc_t * img;
+        if(c->target_layer != t->target_layer || !plain_image(c, &img)) continue;
+        if(lv_color_format_has_alpha(img->header.cf)) continue;
+        lv_area_t covered, part;
+        if(!lv_area_intersect(&covered, &c->area, &c->clip_area)) continue;
+        if(!lv_area_intersect(&part, &covered, todo)) continue;
+        const int64_t size = (int64_t)lv_area_get_width(&part) * lv_area_get_height(&part);
+        if(size > best) {
+            best = size;
+            *out = part;
+        }
+    }
+    return best > 0;
+}
+
+/* `a` less `b`, which lies inside it: at most four rectangles, the bands
+ * above and below whole, the sides between them. */
+static int32_t area_minus(const lv_area_t * a, const lv_area_t * b, lv_area_t out[4])
+{
+    int32_t n = 0;
+    if(b->y1 > a->y1) lv_area_set(&out[n++], a->x1, a->y1, a->x2, b->y1 - 1);
+    if(b->y2 < a->y2) lv_area_set(&out[n++], a->x1, b->y2 + 1, a->x2, a->y2);
+    if(b->x1 > a->x1) lv_area_set(&out[n++], a->x1, b->y1, b->x1 - 1, b->y2);
+    if(b->x2 < a->x2) lv_area_set(&out[n++], b->x2 + 1, b->y1, a->x2, b->y2);
+    return n;
+}
+
 /* A solid fill turned is the fill of the turned rectangle: a corner radius is
  * the same on every side, so nothing about it changes. */
 static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * todo)
@@ -1252,10 +1290,17 @@ static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * to
         return true;
     }
 
-    lv_area_t area, clip, parts[4];
+    /* Only what the picture over it leaves: anything drawn under an opaque
+     * picture is drawn over again, as in hidden_later(). */
+    lv_area_t keep[4], covered;
+    int32_t nk = 1;
+    keep[0] = *todo;
+    if(covered_later(t, todo, &covered)) {
+        nk = area_minus(todo, &covered, keep);
+        g_stats.fills_trimmed++;
+    }
+    lv_area_t area;
     ortho_area(o, &t->area, &area);
-    ortho_area(o, todo, &clip);
-    const int32_t np = outside_window(t->target_layer, &clip, parts);
     /* A plain rectangle, opaque, straight into the frame buffer: the filler's
      * (the PPA's) when there is one -- a screen's background is 1.8 MB the CPU
      * would otherwise write through its cache into PSRAM. */
@@ -1269,17 +1314,22 @@ static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * to
     const lv_draw_ortho_pic_t dst = {nb->data, nb->header.stride, nb->header.stride / (uint32_t)px,
                                      (uint32_t)lv_area_get_height(&target->buf_area)
                                     };
-    for(int32_t i = 0; i < np; i++) {
-        lv_area_t clipped;
-        if(plain && lv_area_intersect(&clipped, &parts[i], &area)) {
-            lv_area_t rect = clipped;
-            lv_area_move(&rect, -target->buf_area.x1, -target->buf_area.y1);
-            if(g_fill(&dst, &rect, dsc->color, cf)) {
-                g_stats.fills_handed++;
-                continue;
+    for(int32_t k = 0; k < nk; k++) {
+        lv_area_t clip, parts[4];
+        ortho_area(o, &keep[k], &clip);
+        const int32_t np = outside_window(t->target_layer, &clip, parts);
+        for(int32_t i = 0; i < np; i++) {
+            lv_area_t clipped;
+            if(plain && lv_area_intersect(&clipped, &parts[i], &area)) {
+                lv_area_t rect = clipped;
+                lv_area_move(&rect, -target->buf_area.x1, -target->buf_area.y1);
+                if(g_fill(&dst, &rect, dsc->color, cf)) {
+                    g_stats.fills_handed++;
+                    continue;
+                }
             }
+            sw_execute_on(t, target, &area, &parts[i]);
         }
-        sw_execute_on(t, target, &area, &parts[i]);
     }
     g_stats.fills_direct++;
     return true;

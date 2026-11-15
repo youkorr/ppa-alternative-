@@ -2380,6 +2380,60 @@ static void check_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int3
     free(want[1]);
 }
 
+/* A frame smaller than the screen, as a camera canvas in a page: LVGL asks for
+ * its background a few pixels wider than the canvas, and only that ring may be
+ * filled -- not the whole rectangle the next frame is turned over. The frame
+ * buffer is scribbled over first, so a part of the ring left unfilled, or
+ * filled where it should not be, shows against LVGL's own drawing of the same
+ * frame (upright, then turned) over the same scribble. PPA on, for its fill
+ * counter. */
+static void check_camera_ring(int32_t nw, int32_t nh, lv_display_rotation_t rot, int32_t cw, int32_t ch)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const bool swap = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    lv_image_dsc_t * fr[2] = {image_of(cw, ch, cf, 31), image_of(cw, ch, cf, 47)};
+    const uint32_t nstride = lv_draw_buf_width_to_stride(nw, cf);
+
+    g_cam_first = fr[0];
+    screen_t * u = make_screen(swap ? nh : nw, swap ? nw : nh, cf, LV_DISPLAY_ROTATION_0, false, false);
+    lv_display_set_default(u->disp);
+    scene_camera(lv_display_get_screen_active(u->disp));
+    lv_refr_now(u->disp);
+    memset(u->buf, 0x5a, (size_t)u->stride * u->h);
+    cam_next(u->disp, fr[1]);
+    uint8_t * want = malloc((size_t)nstride * nh);
+    turn_buffer(u->buf, want, u->w, u->h, u->stride, nstride, rot, cf);
+    drop_screen(u);
+
+    g_cam_first = fr[0];
+    screen_t * s = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(s->disp);
+    scene_camera(lv_display_get_screen_active(s->disp));
+    lv_refr_now(s->disp);
+    memset(s->buf, 0x5a, (size_t)s->stride * s->h);
+    lv_draw_ortho_reset_stats();
+    const unsigned long long before = g_p4_fill_pixels;
+    cam_next(s->disp, fr[1]);
+    const unsigned long long filled = g_p4_fill_pixels - before;
+    const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+    char what[160];
+    snprintf(what, sizeof(what), "camera %dx%d on %dx%d at %s, the ring round it over a scribbled buffer", (int)cw,
+             (int)ch, (int)nw, (int)nh, rot_name(rot));
+    expect_same(what, s, want, cf);
+    g_cases++;
+    if(st->fills_trimmed >= 1 && filled > 0 && filled < (unsigned long long)cw * ch / 4) {
+        printf("  ok    camera %dx%d on %dx%d at %s: only the ring round the frame is filled (%llu pixels, "
+               "not the %d under it)\n", (int)cw, (int)ch, (int)nw, (int)nh, rot_name(rot), filled, (int)(cw * ch));
+    }
+    else {
+        g_failures++;
+        printf("  FAIL  camera %dx%d on %dx%d at %s: %llu pixels filled for a frame of %d (%u fills trimmed)\n",
+               (int)cw, (int)ch, (int)nw, (int)nh, rot_name(rot), filled, (int)(cw * ch), st->fills_trimmed);
+    }
+    drop_screen(s);
+    free(want);
+}
+
 /* A camera frame every time, the way lvgl_camera_display's timer does it. */
 static void bench_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int32_t cw, int32_t ch,
                          const char * board)
@@ -2915,6 +2969,9 @@ int main(int argc, char ** argv)
         check_camera(400, 640, LV_DISPLAY_ROTATION_90, 322, 182);
         check_camera(512, 300, LV_DISPLAY_ROTATION_180, 640, 480);
         check_camera(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
+        check_camera_ring(400, 640, LV_DISPLAY_ROTATION_90, 322, 182);
+        check_camera_ring(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
+        check_camera_ring(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300);
         lv_draw_ortho_ppa_deinit();
         g_cases++;
         /* The screen's plain background behind the frame is the PPA's fill. */

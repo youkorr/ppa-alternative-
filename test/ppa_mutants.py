@@ -152,6 +152,21 @@ MUTANTS = {
     "a border's rounded corners counted as clear": (
         "        cross(j, &t->area, d->width, LV_MAX(d->width, d->radius), &t->area);",
         "        cross(j, &t->area, d->width, d->width, &t->area);"),
+    # A camera canvas smaller than the screen: its background filled whole
+    # under the frame every time, as before, instead of the ring round it.
+    "a fill under a picture drawn whole": (
+        "    if(covered_later(t, todo, &covered)) {",
+        "    if(0 && covered_later(t, todo, &covered)) {"),
+    # ...and the ring round it left unfilled.
+    "the ring round a picture left unfilled": (
+        "        nk = area_minus(todo, &covered, keep);",
+        "        nk = 0;"),
+    # ...or one band of it.
+    "a band of the ring left unfilled": (
+        "    if(b->y2 < a->y2) lv_area_set(&out[n++], a->x1, b->y2 + 1, a->x2, a->y2);\n", ""),
+    # NOT here: a picture with alpha counted as covering a fill. plain_image()
+    # already wants the layer's own format, none of which has alpha, so
+    # covered_later()'s check is a guard that cannot fail.
     # The PPA's angle the wrong way round.
     "the PPA turning the other way": (
         "        case LV_DISPLAY_ROTATION_90:\n            return PPA_SRM_ROTATION_ANGLE_90;",

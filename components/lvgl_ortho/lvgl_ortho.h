@@ -125,6 +125,14 @@ class LvglOrtho : public Component {
 
   // Time spent, summed between two dump lines (see loop()).
   uint32_t flush_us_{0}, flush_rows_{0}, video_us_{0}, video_frames_{0}, last_report_{0};
+#ifdef LVGL_ORTHO_CPU_LOAD
+  // Each core's idle time when the last report was made (FreeRTOS run-time
+  // counter, in its own units), and how much the counter ran in all.
+  uint32_t idle_prev_[2]{0, 0};
+  uint32_t total_prev_{0};
+  bool idle_known_{false};
+  void report_cpu_load_();
+#endif
   bool use_panel_buffers_();
 };
 

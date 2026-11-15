@@ -80,6 +80,7 @@ typedef struct {
     uint32_t fills_direct;     /**< solid fills drawn as native rectangles */
     uint32_t fills_handed;     /**< of those, filled by a filler (the PPA) rather than the CPU */
     uint32_t fills_hidden;     /**< of those, not drawn at all: an opaque picture drawn later covers them */
+    uint32_t fills_trimmed;    /**< of those, drawn only round an opaque picture drawn later over the rest */
     uint32_t images_turned;    /**< images copied with their turn in one pass */
     uint32_t images_native;    /**< pre-turned images copied row by row */
     uint32_t tiles;            /**< upright tiles drawn by the software renderer */

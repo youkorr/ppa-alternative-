@@ -14,6 +14,11 @@
 #include "esp_idf_version.h"
 #include "lv_draw_ortho_ppa.h"
 #include "esp_heap_caps.h"
+#ifdef LVGL_ORTHO_CPU_LOAD
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <new>
+#endif
 
 namespace esphome {
 namespace lvgl_ortho {
@@ -514,12 +519,67 @@ void LvglOrtho::loop() {
         ESP_LOGI(TAG, "  %u of %u tiles painted on the second core", (unsigned) st->tiles_other_core,
                  (unsigned) st->tiles);
       }
+#ifdef LVGL_ORTHO_CPU_LOAD
+      this->report_cpu_load_();
+#endif
       lv_draw_ortho_reset_stats();
     }
+#ifdef LVGL_ORTHO_CPU_LOAD
+    else {
+      this->report_cpu_load_();  // the first report: only take the counters
+    }
+#endif
     this->last_report_ = now;
     this->video_us_ = this->video_frames_ = this->flush_us_ = this->flush_rows_ = this->presents_ = this->renders_ = 0;
   }
 }
+
+#ifdef LVGL_ORTHO_CPU_LOAD
+// What each core really did since the last report: the share of the time its
+// idle task did not run. The same count the A/B benchmark reads (AB_CPU), and
+// the one that says whether a wait was a sleep: a core waiting for the PPA is
+// idle here, and busy in LVGL's perf_monitor.
+void LvglOrtho::report_cpu_load_() {
+  UBaseType_t count = uxTaskGetNumberOfTasks() + 8;
+  auto *tasks = new (std::nothrow) TaskStatus_t[count];
+  if (tasks == nullptr)
+    return;
+  configRUN_TIME_COUNTER_TYPE total = 0;
+  count = uxTaskGetSystemState(tasks, count, &total);
+  uint32_t idle[2] = {0, 0};
+  int found = 0;
+  for (UBaseType_t i = 0; i < count; i++) {
+    const char *name = tasks[i].pcTaskName;
+    if (std::strncmp(name, "IDLE", 4) == 0 && (name[4] == '0' || name[4] == '1') && name[5] == 0) {
+      idle[name[4] - '0'] = (uint32_t) tasks[i].ulRunTimeCounter;
+      found++;
+    }
+  }
+  delete[] tasks;
+  if (found != 2) {
+    ESP_LOGW(TAG, "  processor: the idle tasks were not found (%d of 2); no load to report", found);
+    return;
+  }
+  if (this->idle_known_) {
+    // Unsigned differences: the counters wrap, the subtraction does not care.
+    const uint32_t elapsed = (uint32_t) total - this->total_prev_;
+    if (elapsed > 0) {
+      float busy[2];
+      for (int c = 0; c < 2; c++) {
+        const float free_share = (float) (idle[c] - this->idle_prev_[c]) / (float) elapsed;
+        busy[c] = 100.0f * (1.0f - (free_share > 1.0f ? 1.0f : free_share));
+      }
+      ESP_LOGI(TAG, "  processor really busy: core 0 %.0f%%, core 1 %.0f%% (FreeRTOS's idle time; "
+                    "LVGL's perf_monitor counts waiting for the PPA as work)",
+               busy[0], busy[1]);
+    }
+  }
+  this->idle_prev_[0] = idle[0];
+  this->idle_prev_[1] = idle[1];
+  this->total_prev_ = (uint32_t) total;
+  this->idle_known_ = true;
+}
+#endif
 
 }  // namespace lvgl_ortho
 }  // namespace esphome
