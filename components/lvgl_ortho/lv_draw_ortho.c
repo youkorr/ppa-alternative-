@@ -884,14 +884,29 @@ static void draw_tile(const job_t * jobs, int32_t n, const ortho_t * o, const lv
  * turn (turn_split). */
 typedef void (*helper_fn_t)(void * arg);
 
+#if ORTHO_HELPER == 2
+typedef struct {
+    TaskHandle_t task;
+    SemaphoreHandle_t go, done;
+    bool failed;   /* could not be started: this core is not asked again */
+} helper_task_t;
+#endif
+
 typedef struct {
     bool on;
     helper_fn_t volatile fn;
     void * volatile arg;
     volatile bool quit;
 #if ORTHO_HELPER == 2
-    TaskHandle_t task;
-    SemaphoreHandle_t go, done;
+    /* One task per core, pinned there. Work goes to the one on the core the
+     * drawing task is NOT on: LVGL's task has no core of its own, and an
+     * application may refresh from a task pinned anywhere, so a single task
+     * pinned once could be on the very core that hands it the work -- and the
+     * two halves were then done one after the other. The second is started
+     * the first time it is needed. */
+    helper_task_t on_core[2];
+    int busy;             /* the core of the task doing `fn` */
+    UBaseType_t prio;     /* LVGL's task's, when the first was started */
 #elif ORTHO_HELPER == 3
     pthread_t thread;
     pthread_mutex_t m;
@@ -905,15 +920,38 @@ static helper_t g_helper;
 #if ORTHO_HELPER == 2
 static void helper_main(void * arg)
 {
-    LV_UNUSED(arg);
+    helper_task_t * h = arg;
     for(;;) {
-        xSemaphoreTake(g_helper.go, portMAX_DELAY);
+        xSemaphoreTake(h->go, portMAX_DELAY);
         if(g_helper.quit) break;
         g_helper.fn(g_helper.arg);
-        xSemaphoreGive(g_helper.done);
+        xSemaphoreGive(h->done);
     }
-    xSemaphoreGive(g_helper.done);
+    xSemaphoreGive(h->done);
     vTaskDelete(NULL);
+}
+
+/* The task pinned to `core`, started now if it is not running yet. */
+static bool helper_on(int core)
+{
+    helper_task_t * h = &g_helper.on_core[core];
+    if(h->task) return true;
+    if(h->failed) return false;
+    h->go = xSemaphoreCreateBinary();
+    h->done = xSemaphoreCreateBinary();
+    if(h->go && h->done) {
+        const uint32_t stack = LV_MAX(LV_DRAW_THREAD_STACK_SIZE, 12 * 1024);
+        if(xTaskCreatePinnedToCore(helper_main, core ? "lv_ortho1" : "lv_ortho0", stack, h, g_helper.prio,
+                                   &h->task, core) == pdPASS) return true;
+    }
+    if(h->go) vSemaphoreDelete(h->go);
+    if(h->done) vSemaphoreDelete(h->done);
+    h->go = h->done = NULL;
+    h->task = NULL;
+    h->failed = true;
+    LV_LOG_WARN("ortho: the task for core %d could not be started; work handed from the other core is done "
+                "there", core);
+    return false;
 }
 #elif ORTHO_HELPER == 3
 static void * helper_main(void * arg)
@@ -940,19 +978,11 @@ static bool helper_start_thread(void)
 #if ORTHO_HELPER == 1
     return true;
 #elif ORTHO_HELPER == 2
-    g_helper.go = xSemaphoreCreateBinary();
-    g_helper.done = xSemaphoreCreateBinary();
-    if(g_helper.go && g_helper.done) {
-        /* On the core LVGL is not on, at LVGL's priority: it is LVGL's work. */
-        const BaseType_t core = xPortGetCoreID() ^ 1;
-        const uint32_t stack = LV_MAX(LV_DRAW_THREAD_STACK_SIZE, 12 * 1024);
-        if(xTaskCreatePinnedToCore(helper_main, "lv_ortho2", stack, NULL, uxTaskPriorityGet(NULL),
-                                   &g_helper.task, core) == pdPASS) return true;
-    }
-    if(g_helper.go) vSemaphoreDelete(g_helper.go);
-    if(g_helper.done) vSemaphoreDelete(g_helper.done);
-    g_helper.go = g_helper.done = NULL;
-    return false;
+    /* At LVGL's priority, since it is LVGL's work; the first on the core
+     * LVGL is not on now. */
+    g_helper.prio = uxTaskPriorityGet(NULL);
+    for(int k = 0; k < 2; k++) g_helper.on_core[k].failed = false;
+    return helper_on((int)xPortGetCoreID() ^ 1);
 #elif ORTHO_HELPER == 3
     pthread_mutex_init(&g_helper.m, NULL);
     pthread_cond_init(&g_helper.c, NULL);
@@ -970,11 +1000,17 @@ static void helper_stop_thread(void)
 {
 #if ORTHO_HELPER == 2
     g_helper.quit = true;   /* the semaphore orders it before the task reads it */
-    xSemaphoreGive(g_helper.go);
-    xSemaphoreTake(g_helper.done, portMAX_DELAY);
-    vSemaphoreDelete(g_helper.go);
-    vSemaphoreDelete(g_helper.done);
-    g_helper.go = g_helper.done = NULL;
+    for(int k = 0; k < 2; k++) {
+        helper_task_t * h = &g_helper.on_core[k];
+        if(h->task) {
+            xSemaphoreGive(h->go);
+            xSemaphoreTake(h->done, portMAX_DELAY);
+            vSemaphoreDelete(h->go);
+            vSemaphoreDelete(h->done);
+        }
+        h->go = h->done = NULL;
+        h->task = NULL;
+    }
 #elif ORTHO_HELPER == 3
     pthread_mutex_lock(&g_helper.m);
     g_helper.quit = true;
@@ -994,20 +1030,31 @@ static void helper_stop_thread(void)
 #define SIM_MARK(n) __asm__ volatile("addi x0, x0, %0" :: "i"(n) : "memory")
 #endif
 
-static void helper_run(helper_fn_t fn, void * arg)
+/* Hand `fn` to the other core. False when there is no task there to take
+ * it: this core does it then, after its own. */
+static bool helper_run(helper_fn_t fn, void * arg)
 {
+#if ORTHO_HELPER == 2
+    /* Read where this task runs now. A task with no core of its own may move
+     * before the join: that costs the overlap, never the work, since the
+     * join waits on the task the work was given to. */
+    const int core = (int)xPortGetCoreID() ^ 1;
+    if(!helper_on(core)) return false;
+    g_helper.busy = core;
+#endif
     g_helper.fn = fn;
     g_helper.arg = arg;
 #if ORTHO_HELPER == 1
     SIM_MARK(2042);
 #elif ORTHO_HELPER == 2
-    xSemaphoreGive(g_helper.go);
+    xSemaphoreGive(g_helper.on_core[g_helper.busy].go);
 #elif ORTHO_HELPER == 3
     pthread_mutex_lock(&g_helper.m);
     g_helper.state = 1;
     pthread_cond_broadcast(&g_helper.c);
     pthread_mutex_unlock(&g_helper.m);
 #endif
+    return true;
 }
 
 static void helper_join(void)
@@ -1018,7 +1065,7 @@ static void helper_join(void)
     SIM_MARK(2043);
     SIM_MARK(2041);
 #elif ORTHO_HELPER == 2
-    xSemaphoreTake(g_helper.done, portMAX_DELAY);
+    xSemaphoreTake(g_helper.on_core[g_helper.busy].done, portMAX_DELAY);
 #elif ORTHO_HELPER == 3
     pthread_mutex_lock(&g_helper.m);
     while(g_helper.state != 2) pthread_cond_wait(&g_helper.c, &g_helper.m);
@@ -1034,9 +1081,9 @@ static void paint_tile_job(void * arg)
     paint_tile((tile_work_t *)arg);
 }
 
-static void helper_paint(tile_work_t * w)
+static bool helper_paint(tile_work_t * w)
 {
-    helper_run(paint_tile_job, w);
+    return helper_run(paint_tile_job, w);
 }
 
 /* Two tiles at once: the second painted by the other core while this one
@@ -1053,17 +1100,18 @@ static void draw_pair(ortho_unit_t * u, const job_t * jobs, int32_t n, const ort
         u->pair ^= 1;
     }
     tile_work_t w[2];
-    bool ok[2];
+    bool ok[2], handed = false;
     wait_ticket(&u->ticket[base + 1]);
     ok[1] = prep_tile(jobs, n, o, &rect[1], u->tile[base + 1], u->tile_bytes, &w[1]);
-    if(ok[1]) helper_paint(&w[1]);
+    if(ok[1]) handed = helper_paint(&w[1]);
     wait_ticket(&u->ticket[base]);
     ok[0] = prep_tile(jobs, n, o, &rect[0], u->tile[base], u->tile_bytes, &w[0]);
     if(ok[0]) paint_tile(&w[0]);
-    if(ok[1]) {
+    if(handed) {
         helper_join();
         g_stats.tiles_other_core++;
     }
+    else if(ok[1]) paint_tile(&w[1]);
     if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);
     if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);
 }
@@ -1683,8 +1731,7 @@ static bool turn_split(const ortho_t * o, lv_color_format_t cf, int32_t px,
     band_t other = {o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, *rect};
     other.rect.y1 = r1;
     other.rect.y2 = r2 - 1;
-    const bool helped = r2 < end;
-    if(helped) helper_run(turn_band, &other);
+    const bool helped = r2 < end && helper_run(turn_band, &other);
     lv_area_t mine = *rect;
     mine.y1 = helped ? r2 : r1;
     move_turned_rows(o, px, nat, nat_stride, nat_buf_area, up, up_stride, up_area, &mine, true,
@@ -2578,6 +2625,9 @@ const lv_draw_ortho_stats_t * lv_draw_ortho_get_stats(void)
     g_stats.tile_internal = g_tile_internal;
     g_stats.tiles_in_turn = g_unit && g_unit->tile[1] && g_turn ? (g_helper.on && g_unit->tile[3] ? 4 : 2) : 1;
     g_stats.cores = g_helper.on ? 2 : 1;
+#if ORTHO_HELPER == 2
+    g_stats.helper_cores = (g_helper.on_core[0].task ? 1 : 0) | (g_helper.on_core[1].task ? 2 : 0);
+#endif
     g_stats.turner_failed = g_turner_failed;
     return &g_stats;
 }

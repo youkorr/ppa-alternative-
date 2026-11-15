@@ -487,12 +487,8 @@ static void check_scene(const char * scene, int32_t nw, int32_t nh, lv_color_for
     free(want);
 }
 
-/* A font whose engine is not safe on two cores at once, as ESPHome's is not:
- * esphome::font::Font keeps the last glyph it looked up in two plain members,
- * so a lookup on one core can hand the other core the wrong glyph, whose
- * bitmap is then written into a buffer sized for another -- on a Tab5, a
- * crash minutes into a moving screen with a large clock. This one counts the
- * cores inside it at once, and stays inside long enough to be met. */
+/* Cards as LVGL draws them: a shadow, a border, rounded corners. The
+ * dashboard and the cards below are built with these. */
 /* LVGL 9.6 deprecated the flag calls and 10 removed them. */
 static void no_scroll(lv_obj_t * o)
 {
@@ -523,6 +519,12 @@ static lv_obj_t * dash_card(lv_obj_t * parent, int32_t x, int32_t y, int32_t w, 
     return c;
 }
 
+/* A font whose engine is not safe on two cores at once, as ESPHome's is not:
+ * esphome::font::Font keeps the last glyph it looked up in two plain members,
+ * so a lookup on one core can hand the other core the wrong glyph, whose
+ * bitmap is then written into a buffer sized for another -- on a Tab5, a
+ * crash minutes into a moving screen with a large clock. This one counts the
+ * cores inside it at once, and stays inside long enough to be met. */
 #if LV_USE_OS != LV_OS_NONE
 #include <stdatomic.h>
 #include <unistd.h>

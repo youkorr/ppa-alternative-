@@ -162,10 +162,10 @@ CORES_MUTANTS = {
     "the other core's tile reused mid-turn": ("    wait_ticket(&u->ticket[base + 1]);\n", "", []),
     # The other core's tile turned out before it has finished painting it.
     "turned out before the other core finished": (
-        "    if(ok[1]) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n"
+        "    if(handed) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n    else if(ok[1]) paint_tile(&w[1]);\n"
         "    if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);\n    if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);\n",
         "    if(ok[0]) finish_tile(o, &w[0], &u->ticket[base]);\n    if(ok[1]) finish_tile(o, &w[1], &u->ticket[base + 1]);\n"
-        "    if(ok[1]) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n", []),
+        "    if(handed) {\n        helper_join();\n        g_stats.tiles_other_core++;\n    }\n    else if(ok[1]) paint_tile(&w[1]);\n", []),
     # Tiles cut from one block all at its start: the cores paint over each other.
     "tiles cut from a block overlapping": (
         "        u->tile[j] = j < want ? tile_aligned(u->tile_alloc[j / per]) + (size_t)(j % per) * bytes : NULL;\n",
