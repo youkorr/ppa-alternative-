@@ -132,6 +132,23 @@ MUTANTS = {
     "another copy left queued": ("            fence();\n            g_stats.sync_others++;", "            g_stats.sync_others++;"),
     # Buffers set again, and the copies left to LVGL from then on.
     "buffers set again, never taken again": ("        if(!sync_install(disp)) return;\n", "        return;\n"),
+    # A card's shadow taken as hidden only where its background is the same
+    # rectangle, as before: a card with a border has its background a pixel
+    # inside, so every tile in it was read back first.
+    "a shadow hidden only under a background of its own size": (
+        "            if(f->opa >= LV_OPA_MAX && f->grad.dir == LV_GRAD_DIR_NONE) {",
+        "            if(f->opa >= LV_OPA_MAX && f->grad.dir == LV_GRAD_DIR_NONE && lv_area_is_in(&t->area, &t->next->area, 0)) {"),
+    # The rounded corners of that background counted as painted.
+    "a background's rounded corners counted as covering the shadow": (
+        "                cross(j, fa, 0, r, &t->next->clip_area);", "                cross(j, fa, 0, 0, &t->next->clip_area);"),
+    # Only one arm of the cross: a run along a card, close to both its edges,
+    # read back.
+    "one arm of the cross": ("    for(int k = 0; k < 2; k++) {\n        lv_area_t h = *a;",
+                             "    for(int k = 1; k < 2; k++) {\n        lv_area_t h = *a;"),
+    # A rounded border's corners counted as clear of it.
+    "a border's rounded corners counted as clear": (
+        "        cross(j, &t->area, d->width, LV_MAX(d->width, d->radius), &t->area);",
+        "        cross(j, &t->area, d->width, d->width, &t->area);"),
     # The PPA's angle the wrong way round.
     "the PPA turning the other way": (
         "        case LV_DISPLAY_ROTATION_90:\n            return PPA_SRM_ROTATION_ANGLE_90;",

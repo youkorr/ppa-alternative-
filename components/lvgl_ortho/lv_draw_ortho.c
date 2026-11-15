@@ -630,7 +630,8 @@ static void tile_layer(lv_layer_t * tl, lv_draw_buf_t * tb, const lv_area_t * ar
 struct _job_t {
     lv_draw_task_t * t;
     lv_area_t todo;   /* upright: what the task may change */
-    lv_area_t hole;   /* upright: inside `todo` but certainly not changed, or x2 < x1 */
+    lv_area_t hole[2]; /* upright: inside `todo` but certainly not changed, or x2 < x1: a rounded
+                          rectangle's middle is a cross, the rectangle less its four corners */
 };
 
 /* Whether a fill paints every pixel of `tile` opaquely, so what was under the
@@ -663,33 +664,44 @@ static bool covers(const job_t * j, const lv_area_t * tile)
 /* The part of a task's area it is certain not to change. A border never
  * touches the middle of its rectangle; a shadow under an opaque background
  * is painted over by that background, which is the next task. Leaving these
- * out keeps a large panel from turning all its pixels for its outline. */
+ * out keeps a large panel from turning all its pixels for its outline, and
+ * keeps a tile inside a card from being read back for a shadow it cannot see.
+ * The middle of a rounded rectangle is a cross: the rectangle less its four
+ * corner squares, two rectangles. */
+static void cross(job_t * j, const lv_area_t * a, int32_t inset, int32_t corner, const lv_area_t * clip)
+{
+    for(int k = 0; k < 2; k++) {
+        lv_area_t h = *a;
+        lv_area_increase(&h, -(k ? corner : inset), -(k ? inset : corner));
+        if(lv_area_get_width(&h) <= 0 || lv_area_get_height(&h) <= 0 || !lv_area_intersect(&h, &h, clip))
+            lv_area_set(&h, 0, 0, -1, -1);
+        j->hole[k] = h;
+    }
+}
+
 static void find_hole(job_t * j)
 {
     const lv_draw_task_t * t = j->t;
-    lv_area_t h = {0, 0, -1, -1};
+    lv_area_set(&j->hole[0], 0, 0, -1, -1);
+    j->hole[1] = j->hole[0];
     if(t->type == LV_DRAW_DSC_TYPE_BORDER) {
         const lv_draw_border_dsc_t * d = t->draw_dsc;
-        int32_t in = LV_MAX(d->width, d->radius);
-        h = t->area;
-        lv_area_increase(&h, -in, -in);
+        cross(j, &t->area, d->width, LV_MAX(d->width, d->radius), &t->area);
     }
     else if(t->type == LV_DRAW_DSC_TYPE_BOX_SHADOW) {
         const lv_draw_box_shadow_dsc_t * d = t->draw_dsc;
-        if(d->bg_cover && t->next && t->next->type == LV_DRAW_DSC_TYPE_FILL) {
+        /* The background is drawn a pixel inside the object when it has a
+         * border (LVGL, lv_obj_draw), so it is the background's own area that
+         * is covered, not the shadow's. */
+        if(d->bg_cover && t->next && t->next->type == LV_DRAW_DSC_TYPE_FILL && t->next->opa >= LV_OPA_MAX) {
             const lv_draw_fill_dsc_t * f = t->next->draw_dsc;
-            if(f->opa >= LV_OPA_MAX && t->next->opa >= LV_OPA_MAX &&
-               lv_area_is_in(&t->area, &t->next->area, 0) && lv_area_is_in(&t->next->area, &t->area, 0)) {
-                h = t->area;
-                lv_area_increase(&h, -d->radius, -d->radius);
+            if(f->opa >= LV_OPA_MAX && f->grad.dir == LV_GRAD_DIR_NONE) {
+                const lv_area_t * fa = &t->next->area;
+                const int32_t r = LV_MIN(f->radius, LV_MIN(lv_area_get_width(fa), lv_area_get_height(fa)) / 2);
+                cross(j, fa, 0, r, &t->next->clip_area);
             }
         }
     }
-    if(lv_area_get_width(&h) <= 0 || lv_area_get_height(&h) <= 0) {
-        lv_area_set(&j->hole, 0, 0, -1, -1);
-        return;
-    }
-    j->hole = h;
 }
 
 static bool job_touches(const job_t * j, const lv_area_t * tile)
@@ -697,7 +709,8 @@ static bool job_touches(const job_t * j, const lv_area_t * tile)
     lv_area_t a;
     if(!lv_area_intersect(&a, &j->todo, tile)) return false;
     /* Wholly inside the hole: nothing to do here. */
-    if(j->hole.x2 >= j->hole.x1 && lv_area_is_in(&a, &j->hole, 0)) return false;
+    for(int k = 0; k < 2; k++)
+        if(j->hole[k].x2 >= j->hole[k].x1 && lv_area_is_in(&a, &j->hole[k], 0)) return false;
     return true;
 }
 

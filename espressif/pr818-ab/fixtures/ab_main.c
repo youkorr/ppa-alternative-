@@ -446,6 +446,21 @@ static void phase(const char *scene, unsigned kind, unsigned round,
              events.manual_starts, events.manual_ready, events.automatic_starts, events.automatic_ready,
              (unsigned long long)events.manual_us, (unsigned long long)events.automatic_us,
              events.requests, events.requests_running, events.strict_pauses, events.nested, events.unmatched_ready);
+#if AB_HAS_NATIVE
+    /* What the draw unit did, for reading a native capture: tiles read back
+     * from the frame buffer (tiles - tiles_unread), the second core's share,
+     * and the cores its tasks were started on. Not part of the comparison:
+     * parse_logs.py reads only the rows above. */
+    ESP_LOGI(TAG, "AB_NATIVE protocol=9 board=%s variant=%s sync_mode=%s scene=%s round=%u "
+             "tiles=%u tiles_unread=%u tiles_other_core=%u helper_cores=%u tasks=%u fills_direct=%u fills_handed=%u "
+             "images_turned=%u images_flash=%u sync_noted=%u sync_copies=%u sync_bytes_noted=%llu "
+             "sync_bytes_copied=%llu sync_others=%u",
+             AB_BOARD_NAME, AB_VARIANT, sync_mode, scene, round,
+             stats.tiles, stats.tiles_unread, stats.tiles_other_core, (unsigned)stats.helper_cores,
+             stats.tasks_general, stats.fills_direct, stats.fills_handed, stats.images_turned, stats.images_flash,
+             stats.sync_noted, stats.sync_copies, (unsigned long long)stats.sync_bytes_noted,
+             (unsigned long long)stats.sync_bytes_copied, stats.sync_others);
+#endif
     log_costs(scene, sync_mode, round, costs);
     assert(heap_ok && !turner_failed && !probe.failures && residual_us >= 0);
     assert(events.manual_starts == AB_FRAMES && events.manual_ready == AB_FRAMES);

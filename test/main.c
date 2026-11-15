@@ -493,6 +493,36 @@ static void check_scene(const char * scene, int32_t nw, int32_t nh, lv_color_for
  * bitmap is then written into a buffer sized for another -- on a Tab5, a
  * crash minutes into a moving screen with a large clock. This one counts the
  * cores inside it at once, and stays inside long enough to be met. */
+/* LVGL 9.6 deprecated the flag calls and 10 removed them. */
+static void no_scroll(lv_obj_t * o)
+{
+#if LVGL_VERSION_MAJOR > 9 || (LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR >= 6)
+    lv_obj_set_scrollable(o, false);
+#else
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+#endif
+}
+
+static lv_obj_t * dash_card(lv_obj_t * parent, int32_t x, int32_t y, int32_t w, int32_t h, const char * title)
+{
+    lv_obj_t * c = lv_obj_create(parent);
+    lv_obj_set_pos(c, x, y);
+    lv_obj_set_size(c, w, h);
+    no_scroll(c);
+    lv_obj_set_style_bg_color(c, lv_color_hex(0x203048), 0);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(c, 15, 0);
+    lv_obj_set_style_border_color(c, lv_color_hex(0x526078), 0);
+    lv_obj_set_style_border_width(c, 2, 0);
+    lv_obj_set_style_shadow_width(c, 18, 0);
+    lv_obj_set_style_shadow_opa(c, LV_OPA_40, 0);
+    lv_obj_t * l = lv_label_create(c);
+    lv_label_set_text(l, title);
+    lv_obj_set_style_text_color(l, lv_color_white(), 0);
+    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, 0);
+    return c;
+}
+
 #if LV_USE_OS != LV_OS_NONE
 #include <stdatomic.h>
 #include <unistd.h>
@@ -542,36 +572,6 @@ static void scene_text(lv_obj_t * scr)
  * two, one half a core. */
 static lv_obj_t * g_dash_arc, * g_dash_bar, * g_dash_slider, * g_dash_counter, * g_dash_marker;
 static uint32_t g_dash_frame;
-
-/* LVGL 9.6 deprecated the flag calls and 10 removed them. */
-static void no_scroll(lv_obj_t * o)
-{
-#if LVGL_VERSION_MAJOR > 9 || (LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR >= 6)
-    lv_obj_set_scrollable(o, false);
-#else
-    lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
-#endif
-}
-
-static lv_obj_t * dash_card(lv_obj_t * parent, int32_t x, int32_t y, int32_t w, int32_t h, const char * title)
-{
-    lv_obj_t * c = lv_obj_create(parent);
-    lv_obj_set_pos(c, x, y);
-    lv_obj_set_size(c, w, h);
-    no_scroll(c);
-    lv_obj_set_style_bg_color(c, lv_color_hex(0x203048), 0);
-    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(c, 15, 0);
-    lv_obj_set_style_border_color(c, lv_color_hex(0x526078), 0);
-    lv_obj_set_style_border_width(c, 2, 0);
-    lv_obj_set_style_shadow_width(c, 18, 0);
-    lv_obj_set_style_shadow_opa(c, LV_OPA_40, 0);
-    lv_obj_t * l = lv_label_create(c);
-    lv_label_set_text(l, title);
-    lv_obj_set_style_text_color(l, lv_color_white(), 0);
-    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, 0);
-    return c;
-}
 
 static void dash_update(uint32_t frame)
 {
@@ -1514,6 +1514,102 @@ static void check_flashes(void)
         for(int mode = 0; mode < 4; mode++) check_flash(320, 480, rots[r], mode & 1, mode & 2, true);
         /* The control: in RAM, the PPA turns it as it always did. */
         check_flash(320, 480, rots[r], false, false, false);
+    }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Cards: a shadow hidden under a background drawn a pixel inside it        */
+/* ------------------------------------------------------------------------ */
+
+/* A card as LVGL draws one with a border: its shadow, then its background a
+ * pixel inside the object (lv_obj_draw makes room for the border's
+ * anti-aliasing), then the border. Under the background the shadow cannot
+ * show, so a tile there need not be read back -- but only where the
+ * background really paints: not in its rounded corners, where the shadow and
+ * the screen behind it are what is seen. Half-transparent boxes change every
+ * frame in the middle of a card, along it close to both edges, and in a
+ * corner. On the Waveshare 7B and the Tab5, every area such a dashboard
+ * redrew used to be read back first, by the PPA, while the CPU waited. */
+static uint32_t g_cards_frame;
+
+static void scene_cards(lv_obj_t * scr)
+{
+    no_scroll(scr);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x081220), 0);
+    lv_obj_set_style_bg_grad_color(scr, lv_color_hex(0x5070a0), 0);
+    lv_obj_set_style_bg_grad_dir(scr, LV_GRAD_DIR_VER, 0);
+    const int32_t x = 30, y = 30, w = 220, h = 160;
+    lv_obj_t * c = dash_card(scr, x, y, w, h, "");
+    lv_obj_set_style_radius(c, 20, 0);
+    lv_obj_set_style_shadow_color(c, lv_color_hex(0xffe000), 0);
+    /* LVGL redraws 5 pixels around each: the run along the card and the box
+     * in its corner are placed so that what is redrawn is still inside the
+     * background's rectangle -- and so inside its corners for the box. */
+    const struct { int32_t x, y, w, h; } box[] = {
+        {x + 70, y + 60, 40, 30},          /* the middle */
+        {x + 6, y + 110, w - 12, 12},      /* close to both edges, clear of the corners */
+        {x + 8, y + 8, 6, 6},              /* in the top-left corner, where the shadow shows */
+    };
+    for(uint32_t i = 0; i < 3; i++) {
+        lv_obj_t * b = lv_obj_create(scr);
+        lv_obj_remove_style_all(b);
+        lv_obj_set_pos(b, box[i].x, box[i].y);
+        lv_obj_set_size(b, box[i].w, box[i].h);
+        lv_obj_set_style_bg_opa(b, LV_OPA_50, 0);
+        const uint32_t f = g_cards_frame + i * 5;
+        lv_obj_set_style_bg_color(b, lv_color_hex(((f * 37) & 255) << 16 | ((f * 71) & 255) << 8 | ((f * 109) & 255)), 0);
+    }
+}
+
+static void check_cards(int32_t nw, int32_t nh, lv_display_rotation_t rot, bool ppa)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const uint32_t frames = 6;
+    g_cards_frame = frames - 1;
+    uint8_t * want = reference(nw, nh, cf, rot, scene_cards);
+    if(ppa) lv_draw_ortho_ppa_init();
+    g_cards_frame = 0;
+    screen_t * nat = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(nat->disp);
+    lv_obj_t * scr = lv_display_get_screen_active(nat->disp);
+    scene_cards(scr);
+    lv_refr_now(nat->disp);
+    lv_draw_ortho_reset_stats();
+    for(g_cards_frame = 1; g_cards_frame < frames; g_cards_frame++) {
+        /* The same objects, recoloured: only they are redrawn. */
+        for(uint32_t i = 0; i < 3; i++) {
+            const uint32_t f = g_cards_frame + i * 5;
+            lv_obj_set_style_bg_color(lv_obj_get_child(scr, (int32_t)i + 1),
+                                      lv_color_hex(((f * 37) & 255) << 16 | ((f * 71) & 255) << 8 | ((f * 109) & 255)), 0);
+        }
+        lv_refr_now(nat->disp);
+    }
+    const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+    const uint64_t back = st->bytes_read_back, tiles = st->tiles;
+    if(ppa) lv_draw_ortho_ppa_deinit();
+    char what[200];
+    snprintf(what, sizeof(what), "cards %dx%d at %s%s, %u frames of changes in a card, along it and in its corner",
+             (int)nw, (int)nh, rot_name(rot), ppa ? ", PPA" : "", (unsigned)(frames - 1));
+    expect_same(what, nat, want, cf);
+    g_cases++;
+    if(tiles > 0 && back == 0)
+        printf("  ok    ...and none of their %u tiles was read back: the shadow is hidden there\n", (unsigned)tiles);
+    else {
+        g_failures++;
+        printf("  FAIL  ...and %llu bytes of their %u tiles were read back, under a background that hides them\n",
+               (unsigned long long)back, (unsigned)tiles);
+    }
+    drop_screen(nat);
+    free(want);
+}
+
+static void check_all_cards(void)
+{
+    const lv_display_rotation_t rots[] = {LV_DISPLAY_ROTATION_90, LV_DISPLAY_ROTATION_180, LV_DISPLAY_ROTATION_270};
+    for(unsigned r = 0; r < 3; r++) {
+        check_cards(320, 480, rots[r], false);
+        check_cards(320, 480, rots[r], true);
     }
 }
 
@@ -2738,6 +2834,7 @@ int main(int argc, char ** argv)
 
     check_image_caches();
     check_flashes();
+    check_all_cards();
     check_syncs();
     check_splits();
     {

@@ -131,6 +131,79 @@ Pour chaque carte : flasher le `.bin` à **0x0**, ouvrir le journal à
 et envoyer le journal complet. Puis la même chose avec l'autre firmware.
 `python3 test_pr818/depouiller.py` lit les journaux.
 
+## Le 15 novembre, mesuré sur carte
+
+Les quatre firmwares ci-dessus, mêmes scènes, même jour (journaux
+`*-v10 ESP-logs.txt` dans ce dossier). Images par seconde, médiane de deux
+passages :
+
+| Scène | Waveshare officiel | Waveshare PR (`deferred`) | Tab5 officiel | Tab5 PR (`deferred`) |
+|---|---|---|---|---|
+| tableau de bord | **61,2** | 52,0 | **48,9** | 40,4 |
+| images changeantes | 15,2 | **29,8** (×1,95) | 13,1 | **15,5** (+18 %) |
+| image en flash, sans cache | 5,1 | **5,7** (+11 %) | 3,75 | **4,0** (+7 %) |
+| image en flash, avec cache | (pas de cache) | **30,0** | (pas de cache) | **15,5** |
+
+Ce qu'apportent les trois corrections, d'après les mesures précédentes :
+
+- **Image en flash** : 4,0 → 5,2 images/s sur le Waveshare et 2,6 → 3,7
+  sur le Tab5, sans même la reprise des recopies (`eager`). La PR passe
+  devant l'officiel.
+- **Recopies reprises par le moteur** : le tableau de bord passe de 38,4 à
+  52,0 sur le Waveshare et de 30,0 à 40,4 sur le Tab5 (`eager` →
+  `deferred`). Sur le Tab5 c'est mieux que le correctif V9 de Codex, qui
+  modifiait LVGL (35,1).
+- **Les deux cœurs sur le tableau de bord** : rien. 38,58 → 38,41 sur le
+  Waveshare, 29,4 → 30,0 sur le Tab5 (`eager`).
+
+**Le tableau de bord reste derrière l'officiel**, de 15 % et 17 %. L'officiel
+y est au rythme de l'écran (16,1 ms par image = une image par balayage) ; la
+PR met 19,3 ms par image sur le Waveshare et 24,7 ms sur le Tab5.
+
+### Pourquoi : chaque tuile d'une carte était relue avant d'être peinte
+
+Le banc du PC refait le tableau de bord aux tailles des deux cartes et
+compte ce que fait le moteur, image par image. Sur le Waveshare : **82 000
+pixels tournés par le PPA pour 48 800 redessinés**, dont 33 000 relus depuis
+l'écran. La carte dit la même chose : 151 Kio tournés par image dans son
+journal.
+
+Une tuile commence par ce qu'il y a déjà sous elle, sauf si la première
+chose dessinée la couvre entièrement. Dans une carte, la première chose
+dessinée est l'ombre, que le fond de la carte recouvre ensuite. Le moteur le
+savait, mais seulement si le fond occupe exactement le rectangle de l'ombre.
+Or une carte avec une bordure a son fond dessiné **un pixel en retrait**
+(LVGL laisse la place à l'anticrénelage de la bordure). La règle ne
+s'appliquait donc jamais. Chaque tuile d'une carte était d'abord relue
+depuis la PSRAM par le PPA pendant que le CPU attendait, puis l'ombre était
+peinte pour rien sous le fond.
+
+La correction : ce qu'un fond arrondi recouvre à coup sûr est sa **croix**,
+le rectangle moins ses quatre coins. Même chose pour l'intérieur d'une
+bordure arrondie. Sur le PC, aux tailles des deux cartes : **plus aucune
+tuile relue**, 48 800 pixels tournés pour 48 800 redessinés (au lieu de
+82 000), et 35 % de pixels peints en moins par le CPU.
+
+Le nouveau test des cartes met des objets au milieu d'une carte, le long de
+ses bords et dans son coin arrondi, sur trois rotations, au CPU et au PPA.
+Il échoue sur l'ancien moteur (tuiles relues), et quatre erreurs
+volontaires sont attrapées : l'ancienne règle, les coins comptés comme
+couverts, un seul bras de la croix, et les coins d'une bordure comptés comme
+vides.
+
+**C'est probablement aussi pourquoi les deux cœurs n'apportaient rien** : la
+relecture de chaque tuile passait par le PPA, l'un après l'autre, et les
+deux cœurs l'attendaient. Il reste un second défaut possible, corrigé dans
+le même temps. La tâche qui peint sur le second cœur était fixée une fois
+pour toutes au cœur opposé à celui où se trouvait LVGL au démarrage. Mais la
+tâche de LVGL n'a pas de cœur attitré, et dans le banc, c'est la tâche
+principale (cœur 0) qui rafraîchit. Si les deux se retrouvaient sur le même
+cœur, les deux moitiés de chaque zone étaient peintes l'une après l'autre.
+Il y a maintenant une tâche par cœur, la seconde démarrée la première fois
+qu'elle sert, et le travail va toujours à celle de l'autre cœur. Une ligne
+`AB_NATIVE` dans le journal donne désormais les tuiles relues, la part du
+second cœur et les cœurs où tournent ces tâches.
+
 ## Ce que ces journaux ne disent pas
 
 - Rien sur le Tab5 en V7 (officiel + PPA, lots de 128), ni l'officiel V7 du
