@@ -51,7 +51,11 @@ jobs:
         shell: bash
         run: |
           set -e
-          git config --global --add safe.directory "$GITHUB_WORKSPACE/iots"
+          git config --global --add safe.directory '*'
+          # The image is a git checkout of ESP-IDF, which has no version.txt;
+          # the scanout probe is audited for v5.5.6 exactly and checks it.
+          [ -f "$IDF_PATH/version.txt" ] || git -C "$IDF_PATH" describe --tags --exact-match > "$IDF_PATH/version.txt"
+          cat "$IDF_PATH/version.txt"
           python3 ppa/espressif/pr818-ab/prepare.py --repo iots --ref HEAD --variant ${{ matrix.variant }} \
             --board ${{ matrix.board }} --idf "$IDF_PATH" --out work
       - name: Build
