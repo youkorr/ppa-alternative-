@@ -80,6 +80,10 @@ class LvglOrtho : public Component {
   bool is_ready() const { return this->ready_; }
   /// True when LVGL draws straight into the panel's own frame buffers.
   bool on_panel_buffers() const { return this->panel_fbs_ > 0; }
+  // LVGL's copies between the panel's buffers made by lv_draw_ortho instead
+  // (lv_draw_ortho_take_sync): only what the next frame does not draw, by
+  // the PPA.
+  bool copies_taken() const { return this->sync_on_; }
 
  protected:
   static void flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map);
@@ -92,6 +96,7 @@ class LvglOrtho : public Component {
   bool ppa_{true};
   int cores_{1};
   bool cores_on_{false};
+  bool sync_on_{false};
   size_t image_cache_{0};
   int tile_width_{0};
   bool split_{false};
