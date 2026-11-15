@@ -1588,7 +1588,7 @@ static void check_cards(int32_t nw, int32_t nh, lv_display_rotation_t rot, bool 
         lv_refr_now(nat->disp);
     }
     const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
-    const uint64_t back = st->bytes_read_back, tiles = st->tiles;
+    const uint32_t tiles = st->tiles, back = st->tiles - st->tiles_unread;
     if(ppa) lv_draw_ortho_ppa_deinit();
     char what[200];
     snprintf(what, sizeof(what), "cards %dx%d at %s%s, %u frames of changes in a card, along it and in its corner",
@@ -1599,8 +1599,8 @@ static void check_cards(int32_t nw, int32_t nh, lv_display_rotation_t rot, bool 
         printf("  ok    ...and none of their %u tiles was read back: the shadow is hidden there\n", (unsigned)tiles);
     else {
         g_failures++;
-        printf("  FAIL  ...and %llu bytes of their %u tiles were read back, under a background that hides them\n",
-               (unsigned long long)back, (unsigned)tiles);
+        printf("  FAIL  ...and %u of their %u tiles were read back, under a background that hides them\n",
+               (unsigned)back, (unsigned)tiles);
     }
     drop_screen(nat);
     free(want);
