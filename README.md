@@ -481,6 +481,22 @@ panel's buffers; elsewhere, `lv_draw_ortho_take_sync()`. The ten-second line
 says how much LVGL would have copied and how much was ("buffers kept in
 step").
 
+### Cards: a tile under a background is not read back
+
+A tile starts as what is already on the glass under it -- turned back out of
+the frame buffer, by the PPA, while the CPU waits -- unless the first thing
+drawn there paints all of it. In a card, the first thing drawn is its shadow,
+which its background then covers. That was recognised only where the
+background is the shadow's own rectangle, and a card with a border has its
+background drawn a pixel inside (LVGL leaves the border's anti-aliasing room).
+So every tile inside such a card was read back first, and the shadow painted
+under the background for nothing: on the dashboard of `test_pr818/` at a
+Waveshare 7B's size, **82,000 pixels turned a frame for 48,800 drawn**, and
+the board's own log said the same (151 KiB turned a frame). What a rounded
+background certainly covers is now its cross, the rectangle less its four
+corners, and the same for the inside of a rounded border: no tile of that
+dashboard is read back, 48,800 pixels are turned, and 35% fewer are painted.
+
 ### Two cores
 
 With the PPA turning, what is left of a redraw is LVGL drawing, on one core
@@ -521,6 +537,14 @@ Those are simulated. Measured, the second core gains 10 % on the Tab5 at 270
 limit, and 16 % on the Waveshare at 180 (57.0 to 47.7 ms), where drawing is.
 It costs the second core's time and a 12 KiB stack, so it is off by default:
 compare `ortho` and `ortho_2cores` with `lvgl_bench` and keep the faster.
+
+**The second core's tile goes to the other core than the drawing task**,
+whichever that is: there is a task pinned to each core, the second started
+the first time it is needed (a second stack). LVGL's task has no core of its
+own, and an application may refresh from a task pinned anywhere; a single
+task pinned once, opposite the core LVGL happened to be on, could be on the
+very core that hands it the tile, and both halves were then painted one after
+the other. `helper_cores` in the stats says which cores have one.
 
 **A pair is two tiles of one redraw**, and a redraw that fits in one tile is
 cut in two for it. It was not until November 2026: a redraw of one tile was
@@ -675,7 +699,7 @@ quote.
 ```
 git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 615 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 627 cases, and the ESPHome component at four angles
 build/ortho_test --ppa             # the PPA's cases alone
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case
