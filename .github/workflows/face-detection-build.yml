@@ -30,6 +30,7 @@ jobs:
           cat > fd/common.yaml <<'YAML'
           esp32:
             board: esp32-p4-evboard
+            flash_size: 16MB
             framework:
               type: esp-idf
               log_level: ERROR
