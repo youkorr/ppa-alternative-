@@ -63,6 +63,41 @@ void lv_draw_ortho_ppa_deinit(void);
  *  ignored. For lv_draw_ortho_video.c. */
 esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * op);
 
+/**
+ * Turn a big picture in PSRAM -- a camera frame -- through internal RAM: two
+ * bands of `bytes` each are taken from internal DMA-capable RAM, and an AXI
+ * GDMA copy is installed (esp_async_memcpy). Such a picture turned into a
+ * frame buffer then has its rows copied into a band in one run while the PPA
+ * turns the band before out of RAM: the PPA reading PSRAM in macro blocks is
+ * what made the turn slow (a 1280x720 camera frame turned 270 on a Tab5, the
+ * camera streaming: 44.3 ms straight, 18.6 through two bands of 32 rows). A
+ * band holds as many whole rows of the picture as fit, a multiple of 8; under
+ * 8, or whatever cannot be done that way, is turned the plain way. 0 releases
+ * them. ESP_ERR_NO_MEM when internal RAM has no room: the plain turn, then.
+ */
+esp_err_t lv_draw_ortho_ppa_set_stage(size_t bytes);
+
+/**
+ * The same, with no RAM of its own: while lv_draw_ortho turns a picture whole
+ * it draws no tile, so it lends the turner its first tile
+ * (lv_draw_ortho_set_loan), and the halves of that tile are the bands -- 64 KiB
+ * each with the default tiles. Bands of set_stage() win when there are any.
+ * Installs the GDMA copy; false stops it. After lv_draw_ortho_ppa_init().
+ */
+esp_err_t lv_draw_ortho_ppa_use_tiles(bool on);
+
+/** What lv_draw_ortho_ppa_set_stage() and _use_tiles() changed. */
+typedef struct {
+    uint32_t pictures;    /**< blocks turned through the bands */
+    uint32_t bands;       /**< bands they were turned in */
+    uint32_t declined;    /**< big blocks in PSRAM turned the plain way, or partly */
+    uint32_t rows;        /**< rows in a band, the last time */
+    uint32_t band_bytes;  /**< each band's size: set_stage()'s, else the last lent tile's half, else 0 */
+    uint64_t us;          /**< spent turning them, but the wait for the last band (the caller's) */
+} lv_draw_ortho_ppa_stage_stats_t;
+
+void lv_draw_ortho_ppa_get_stage_stats(lv_draw_ortho_ppa_stage_stats_t * out, bool reset);
+
 /** How long a PPA transaction may take before the PPA is taken for stuck. A
  *  whole 1280x720 turn takes 15 to 45 ms on a P4. */
 #ifndef LV_DRAW_ORTHO_PPA_TIMEOUT_MS

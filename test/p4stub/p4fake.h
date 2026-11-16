@@ -13,6 +13,11 @@ typedef struct {
 } p4fake_t;
 extern unsigned long long g_p4_pixels;
 extern int g_p4_runs;
+/* GDMA copies whose destination no esp_cache_msync() written back AND dropped
+ * covers since p4fake_synced_forget(): a CPU line still dirty there would be
+ * written back over the copy's rows. */
+extern int g_p4_copy_unsynced;
+void p4fake_synced_forget(void);
 /* A non-blocking transaction runs only when time is let pass
  * (esp_rom_delay_us) or a blocking one follows it, so a caller that does not
  * wait sees the frame buffer as it was. */
@@ -49,3 +54,13 @@ typedef struct {
 #define P4FAKE_EVENTS 8192
 extern p4fake_event_t g_p4_ev[P4FAKE_EVENTS];
 extern int g_p4_nev;
+/* The AXI GDMA's copies (esp_async_memcpy): how many, and how many bytes.
+ * Late, a copy lands only once the PPA has nothing queued; else at once.
+ * Let `after` copies through, then refuse `n`, as a busy GDMA would. */
+extern int g_p4_copies;
+extern unsigned long long g_p4_copy_bytes;
+void p4fake_copy_late(int late);
+void p4fake_copy_refuse(int after, int n);
+/* `n` bytes at `buf` stand for PSRAM (esp_ptr_external_ram); NULL forgets
+ * every range given. */
+void p4fake_external(const void * buf, size_t n);

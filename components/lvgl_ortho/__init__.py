@@ -17,7 +17,7 @@ it is drawn. A camera is shown with id(...).show_video().
 import esphome.codegen as cg
 from esphome.coroutine import CoroPriority, coroutine_with_priority
 from esphome.components import display
-from esphome.components.esp32 import VARIANT_ESP32P4, only_on_variant
+from esphome.components.esp32 import VARIANT_ESP32P4, add_idf_sdkconfig_option, only_on_variant
 import esphome.config_validation as cv
 from esphome.const import CONF_DISPLAY_ID, CONF_ID, CONF_ROTATION
 import esphome.final_validate as fv
@@ -72,6 +72,22 @@ CONFIG_SCHEMA = cv.All(
             # time, this core and with cores: 2 the other one. The PPA alone
             # turns a quarter at about 15 Mpx/s on a Tab5.
             cv.Optional("split", default=False): cv.boolean,
+            # The processor's real load, core by core, in the ten-second
+            # report: FreeRTOS's own count of the time each core spent idle.
+            # LVGL's perf_monitor counts the time spent inside LVGL, waiting
+            # for the PPA or for the panel included, so it reads near 100%
+            # while the cores sleep. Off by default: it turns on FreeRTOS's
+            # run-time statistics for the whole firmware.
+            cv.Optional("cpu_load", default=False): cv.boolean,
+            # Internal RAM for turning a big picture in PSRAM -- a camera
+            # frame -- in two bands: the GDMA copies a band of its rows into
+            # internal RAM while the PPA turns the band before from there,
+            # because the PPA reading PSRAM is what makes the turn slow
+            # (measured with the camera streaming: 44 to 24 ms on a Tab5 with
+            # 80KB, 19 with 160KB; 32 to 14 ms on a Waveshare with 64KB). With
+            # 0, or no room at boot, the bands are the halves of the first
+            # tile, lent while the picture is turned: no RAM of their own.
+            cv.Optional("camera_ram", default="80KB"): _bytes,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     only_on_variant(supported=[VARIANT_ESP32P4]),
@@ -156,4 +172,9 @@ async def to_code(config):
     cg.add(var.set_image_cache(config["image_cache"]))
     cg.add(var.set_tile_width(config["tile_width"]))
     cg.add(var.set_split(config["split"]))
+    cg.add(var.set_camera_ram(config["camera_ram"]))
+    if config["cpu_load"]:
+        add_idf_sdkconfig_option("CONFIG_FREERTOS_USE_TRACE_FACILITY", True)
+        add_idf_sdkconfig_option("CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS", True)
+        cg.add_define("LVGL_ORTHO_CPU_LOAD")
     cg.add_define("USE_LVGL_ORTHO")

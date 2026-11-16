@@ -201,6 +201,54 @@ panel scans out of. That is the likely cause and it is not measured apart.
 Lowering it means a smaller sensor format; one of exactly 1024x600 would also
 stop at the sensor's 30 frames a second.
 
+**A camera canvas smaller than the screen no longer has its background
+filled under it every frame.** LVGL asks for a few pixels round what changed,
+so a canvas in a page (800x600 in the household's camera UIs) has its
+background asked for in a rectangle five pixels wider all round, which the
+engine could not call hidden by the frame: the PPA filled 810x610 pixels,
+about 950 KB, then turned the frame over 800x600 of them, every frame. Only
+the ring is filled now (on a PC, 5 140 pixels instead of the 58 604 under a
+322x182 frame), checked pixel for pixel against LVGL's own drawing over a
+scribbled frame buffer. Not measured on a board.
+
+**A camera picture is now turned through internal RAM** (`camera_ram:`,
+80KB by default). The PPA writing PSRAM costs it nothing over writing
+internal RAM, but its reading PSRAM in 16x16 macro blocks doubles its time,
+and that read is what the panel's scan-out and the camera slow down. So the
+picture's rows are copied into internal RAM a band at a time by the AXI GDMA,
+in one run, while the PPA turns the band before out of RAM. Measured on both
+boards with `espressif/ppa-probe`, the camera streaming, a whole picture:
+
+| | straight from PSRAM | bands of 16 rows | bands of 32 rows |
+|---|---|---|---|
+| Waveshare 7B, 1024x600 at 180 | 31.6 ms | 13.8 ms | 12.4 ms |
+| Tab5, 1280x720 at 270 | 44.3 ms | 24.4 ms | 18.7 ms |
+
+A band of a 1280-wide picture is 2.5 KB a row: 80KB holds two bands of 16
+rows, 160KB two of 32.
+
+Those were measured with the DMA2D copy; the engine uses the GDMA's, public
+in ESP-IDF 5.5 and 6 where the DMA2D one is private and gone in 6.0, and the
+probe measures that one too. A band is whole rows of the picture, a multiple
+of 8. Anything else -- no room at boot, a band shape the PPA cannot take
+whole (DIG-734), a copy refused -- is the plain turn, said in the
+ten-second report. Checked on a PC at every angle with copies landing at
+once and late, pixel for pixel; not yet run inside the engine on a board.
+
+**Without RAM of its own the first tile is lent instead.** esp-iot-solution's
+lvgl9 test app showed why it is needed: with an LVGL task, two draw threads
+and LVGL's own objects in internal RAM, the 80 KB were not there (80 KB free
+in pieces, the largest 31 KB) and every picture was turned straight. While a
+picture is turned whole no tile is drawn and the second core is idle, so the
+engine lends its first tile (`lv_draw_ortho_set_loan`): the PPA writes the
+tile back out of the cache and drops it, and uses its two halves as the
+bands. On a PC: every angle, copies landing at once and late, a gradient
+and a caption drawn in tiles before and after every frame, and three
+mutants -- the write-back, the two halves one band, the tile never lent --
+each caught. A fourth guard, the wait for the tile's own turns before the
+first copy, cannot be: the engine takes a picture alone, after a fence, so
+nothing is ever queued then.
+
 On the Tab5 it is the same shape: 49 ms a frame, **44.3 ms of it waiting for
 the PPA** to turn the 1280x720 picture a quarter turn, one picture of 1800 KiB
 a screen. That is about 21 Mpx/s, faster than the 15-18 a quarter turn reads
@@ -267,6 +315,8 @@ lvgl_ortho:
   # image_cache: 4MB      # the default: pictures that do not change are turned once
   # tile_width: 256       # off by default: narrower, taller tiles (slower on a Tab5)
   # split: true           # off by default: the PPA and the CPU together (slower on a Tab5)
+  # cpu_load: true        # off by default: each core's real load in the ten-second report
+  # camera_ram: 160KB     # 80KB by default: internal RAM to turn a camera picture through, 0 the first tile
 ```
 
 It takes LVGL's display over once ESPHome's lvgl has built it: one
@@ -299,6 +349,21 @@ display's rotation itself.
 - **`cores: 2`** draws every other tile on the second core (see
   [Two cores](#two-cores)). It needs LVGL built with an OS, which
   youkorr/lvgl_9.5 is, and is refused otherwise.
+- **`camera_ram:`** is the internal RAM, both bands together, a big picture
+  in PSRAM is turned through: a camera frame, a wallpaper in PSRAM. 80KB by
+  default; on a Tab5 160KB takes the turn from 24 to 19 ms if internal RAM
+  has room for it. The boot log says whether it was taken and how much
+  internal RAM is left; the ten-second report how many pictures went through
+  it. With `0`, or no room at boot, the bands are the two halves of the first
+  tile, lent while the picture is turned: no tile is drawn then, so they cost
+  no RAM at all, and with the default 128 KB tiles they are 64 KB each.
+- **`cpu_load: true`** adds each core's real load to the ten-second report,
+  from FreeRTOS's count of the time each core's idle task ran:
+  `processor really busy: core 0 12%, core 1 4%`. LVGL's `perf_monitor`
+  counts the time spent inside LVGL, so a wait for the PPA -- a sleep since
+  the PPA's interrupt wakes it -- reads there as work, near 100 % while the
+  cores do little. It turns on FreeRTOS's run-time statistics for the whole
+  firmware, which is why it is off by default.
 
 Every ten seconds the log says how much was turned, how much of it the PPA
 did, how often the CPU waited for it, and how many tiles the second core drew,
@@ -722,6 +787,10 @@ read a circle-cache field outside its mutex) and says why it is harmless.
 
 ## Without ESPHome
 
+In an ESP-IDF project the engine is a component of its own,
+[`registry/lv_draw_ortho`](registry/lv_draw_ortho), packed for the ESP
+Component Registry with a complete example for the Waveshare 7B:
+
 ```c
 #include "lv_draw_ortho.h"
 #include "lv_draw_ortho_ppa.h"
@@ -754,9 +823,13 @@ free rotation angle is not a quarter turn, so it is counted in
 ## Going upstream
 
 For Espressif, [esp-iot-solution PR #818](https://github.com/espressif/esp-iot-solution/pull/818)
-brings `lv_draw_ortho` into `esp_lvgl_adapter` as
-`CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`, off by default, with the
-measurements above; it is open for review. Nothing here is specific to
+brought `lv_draw_ortho` into `esp_lvgl_adapter` as
+`CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`. Espressif measured it on their own
+boards (refreshes a second from about 29.5 to 60.9 and from 25.0 to 38.8, the
+CPU from 39 % to 2 %) and decided not to merge it into the general-purpose
+adapter, for its internal RAM, its reliance on LVGL's internals and its
+maintenance; they keep it as a reference for the adapter's v1.0. The
+component in `registry/lv_draw_ortho` is the optional backend instead. Nothing here is specific to
 Espressif except `lv_draw_ortho_ppa.c`: any MCU driving a panel on its side
 has the same problem. For LVGL, three separate
 things: the draw unit as the software renderer's answer to matrix rotation;

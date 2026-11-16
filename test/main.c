@@ -2380,6 +2380,270 @@ static void check_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int3
     free(want[1]);
 }
 
+/* A frame smaller than the screen, as a camera canvas in a page: LVGL asks for
+ * its background a few pixels wider than the canvas, and only that ring may be
+ * filled -- not the whole rectangle the next frame is turned over. The frame
+ * buffer is scribbled over first, so a part of the ring left unfilled, or
+ * filled where it should not be, shows against LVGL's own drawing of the same
+ * frame (upright, then turned) over the same scribble. PPA on, for its fill
+ * counter. */
+static void check_camera_ring(int32_t nw, int32_t nh, lv_display_rotation_t rot, int32_t cw, int32_t ch)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const bool swap = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    lv_image_dsc_t * fr[2] = {image_of(cw, ch, cf, 31), image_of(cw, ch, cf, 47)};
+    const uint32_t nstride = lv_draw_buf_width_to_stride(nw, cf);
+
+    g_cam_first = fr[0];
+    screen_t * u = make_screen(swap ? nh : nw, swap ? nw : nh, cf, LV_DISPLAY_ROTATION_0, false, false);
+    lv_display_set_default(u->disp);
+    scene_camera(lv_display_get_screen_active(u->disp));
+    lv_refr_now(u->disp);
+    memset(u->buf, 0x5a, (size_t)u->stride * u->h);
+    cam_next(u->disp, fr[1]);
+    uint8_t * want = malloc((size_t)nstride * nh);
+    turn_buffer(u->buf, want, u->w, u->h, u->stride, nstride, rot, cf);
+    drop_screen(u);
+
+    g_cam_first = fr[0];
+    screen_t * s = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(s->disp);
+    scene_camera(lv_display_get_screen_active(s->disp));
+    lv_refr_now(s->disp);
+    memset(s->buf, 0x5a, (size_t)s->stride * s->h);
+    lv_draw_ortho_reset_stats();
+    const unsigned long long before = g_p4_fill_pixels;
+    cam_next(s->disp, fr[1]);
+    const unsigned long long filled = g_p4_fill_pixels - before;
+    const lv_draw_ortho_stats_t * st = lv_draw_ortho_get_stats();
+    char what[160];
+    snprintf(what, sizeof(what), "camera %dx%d on %dx%d at %s, the ring round it over a scribbled buffer", (int)cw,
+             (int)ch, (int)nw, (int)nh, rot_name(rot));
+    expect_same(what, s, want, cf);
+    g_cases++;
+    if(st->fills_trimmed >= 1 && filled > 0 && filled < (unsigned long long)cw * ch / 4) {
+        printf("  ok    camera %dx%d on %dx%d at %s: only the ring round the frame is filled (%llu pixels, "
+               "not the %d under it)\n", (int)cw, (int)ch, (int)nw, (int)nh, rot_name(rot), filled, (int)(cw * ch));
+    }
+    else {
+        g_failures++;
+        printf("  FAIL  camera %dx%d on %dx%d at %s: %llu pixels filled for a frame of %d (%u fills trimmed)\n",
+               (int)cw, (int)ch, (int)nw, (int)nh, rot_name(rot), filled, (int)(cw * ch), st->fills_trimmed);
+    }
+    drop_screen(s);
+    free(want);
+}
+
+/* A camera frame in PSRAM, turned through two bands of internal RAM
+ * (lv_draw_ortho_ppa_set_stage): the frame buffer, scribbled over first, must
+ * come out as LVGL's own drawing of the same frame, upright then turned. Early
+ * copies show a band copied over one the PPA had yet to read; late ones a band
+ * turned before it arrived. `refuse_after` >= 0 refuses the GDMA's copies from
+ * that one on: the rest is turned straight, the same pixels. The frame must
+ * have gone through the bands in as many as its rows need, or -- where the
+ * engine says it would decline (too few rows, a band shape the PPA cannot
+ * take, the frame not in PSRAM) -- not at all. */
+static void check_camera_staged(int32_t nw, int32_t nh, lv_display_rotation_t rot, int32_t cw, int32_t ch,
+                                int32_t band_rows, int late, bool in_psram, int refuse_after)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const bool swap = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    lv_image_dsc_t * fr[2] = {image_of(cw, ch, cf, 53), image_of(cw, ch, cf, 91)};
+    const uint32_t nstride = lv_draw_buf_width_to_stride(nw, cf);
+    const size_t band = (size_t)band_rows * cw * 2;
+
+    g_cam_first = fr[0];
+    screen_t * u = make_screen(swap ? nh : nw, swap ? nw : nh, cf, LV_DISPLAY_ROTATION_0, false, false);
+    lv_display_set_default(u->disp);
+    scene_camera(lv_display_get_screen_active(u->disp));
+    lv_refr_now(u->disp);
+    memset(u->buf, 0x5a, (size_t)u->stride * u->h);
+    cam_next(u->disp, fr[1]);
+    uint8_t * want = malloc((size_t)nstride * nh);
+    turn_buffer(u->buf, want, u->w, u->h, u->stride, nstride, rot, cf);
+    drop_screen(u);
+
+    p4fake_external(NULL, 0);
+    if(in_psram) {
+        p4fake_external(fr[0]->data, fr[0]->data_size);
+        p4fake_external(fr[1]->data, fr[1]->data_size);
+    }
+    const esp_err_t set = lv_draw_ortho_ppa_set_stage(band);
+    p4fake_copy_late(late);
+    g_cam_first = fr[0];
+    screen_t * s = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(s->disp);
+    scene_camera(lv_display_get_screen_active(s->disp));
+    lv_refr_now(s->disp);
+    memset(s->buf, 0x5a, (size_t)s->stride * s->h);
+    lv_draw_ortho_ppa_stage_stats_t st;
+    lv_draw_ortho_ppa_get_stage_stats(&st, true);
+    const int copies = g_p4_copies;
+    if(refuse_after >= 0) p4fake_copy_refuse(refuse_after, 1000);
+    cam_next(s->disp, fr[1]);
+    p4fake_copy_refuse(0, 0);
+    lv_draw_ortho_ppa_get_stage_stats(&st, true);
+
+    char what[200];
+    snprintf(what, sizeof(what), "camera %dx%d on %dx%d at %s through bands of %d rows, %s copies%s%s", (int)cw, (int)ch,
+             (int)nw, (int)nh, rot_name(rot), (int)band_rows, late ? "late" : "early", in_psram ? "" : ", in internal RAM",
+             refuse_after >= 0 ? ", the GDMA refusing" : "");
+    expect_same(what, s, want, cf);
+
+    /* What the engine should have done, worked out here: a band is as many
+     * whole rows as fit, a multiple of 8, or the whole frame; it goes through
+     * the bands only if each band's shape is one the PPA takes whole. */
+    int32_t k = band_rows >= ch ? ch : band_rows - band_rows % 8;
+    const int32_t rest = k ? ch % k : 0;
+    uint32_t pieces[8][4];
+    const bool shapes = k >= 8 && lv_draw_ortho_ppa_cut((uint32_t)cw, (uint32_t)k, rot, 16, pieces, 8) > 0 &&
+                        (rest == 0 || lv_draw_ortho_ppa_cut((uint32_t)cw, (uint32_t)rest, rot, 16, pieces, 8) > 0);
+    const bool staged = in_psram && shapes && refuse_after < 0;
+    const uint32_t bands = k ? (uint32_t)((ch + k - 1) / k) : 0;
+    g_cases++;
+    bool ok;
+    if(set != ESP_OK) ok = false;
+    else if(staged) ok = st.pictures == 1 && st.bands == bands && st.rows == (uint32_t)k && st.declined == 0 &&
+                             g_p4_copies - copies == (int)bands;
+    else if(!in_psram) ok = st.pictures == 0 && st.declined == 0 && g_p4_copies == copies;
+    else ok = st.pictures == 0 && st.declined >= 1 && st.bands == (uint32_t)LV_MAX(refuse_after, 0);
+    if(ok) {
+        printf("  ok    %s: %s\n", what, staged ? "turned in its bands" : "turned straight, as it should be");
+    }
+    else {
+        g_failures++;
+        printf("  FAIL  %s: set %d, %u pictures in %u bands of %u rows (%u declined, %d copies; %s %u bands)\n", what,
+               (int)set, st.pictures, st.bands, st.rows, st.declined, g_p4_copies - copies,
+               staged ? "wanted" : "wanted none, of", bands);
+    }
+    lv_draw_ortho_ppa_set_stage(0);
+    p4fake_copy_late(0);
+    p4fake_external(NULL, 0);
+    drop_screen(s);
+    free(want);
+}
+
+/* A camera frame under a caption, over a gradient the whole screen redrawn
+ * with each frame: a gradient is drawn in tiles, and the whole screen takes
+ * more tiles than there are, so the first tile is drawn in just before the
+ * frame is turned through it and again after -- neither may leave anything
+ * of itself in the other. */
+static lv_obj_t * g_cam_caption;
+
+static void scene_camera_caption(lv_obj_t * scr)
+{
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x102030), 0);
+    lv_obj_set_style_bg_grad_color(scr, lv_color_hex(0x406080), 0);
+    lv_obj_set_style_bg_grad_dir(scr, LV_GRAD_DIR_VER, 0);
+    g_cam_caption = lv_label_create(scr);
+    lv_obj_set_style_text_color(g_cam_caption, lv_color_hex(0xf0d890), 0);
+    lv_label_set_text(g_cam_caption, "Front door");
+    lv_obj_set_pos(g_cam_caption, 6, 4);
+    cam_point(g_cam_first);
+    g_cam_canvas = lv_canvas_create(scr);
+    lv_canvas_set_draw_buf(g_cam_canvas, &g_cam);
+    lv_obj_center(g_cam_canvas);
+}
+
+static void cam_next_captioned(lv_display_t * disp, const lv_image_dsc_t * frame)
+{
+    lv_label_set_text(g_cam_caption, "Front door, 2");
+    lv_obj_invalidate(lv_obj_get_parent(g_cam_canvas));
+    cam_next(disp, frame);
+}
+
+/* The same frame turned through the bands lv_draw_ortho_ppa_use_tiles() makes
+ * of the first tile, lent while the frame is turned: it must come out as
+ * LVGL's own drawing, caption included -- a band copied into the tile while
+ * the PPA had yet to turn the caption out of it shows there -- every copy
+ * must land in memory written back and dropped from the cache since the
+ * loan, and the frame must have gone through the bands, or not at all when
+ * it is not in PSRAM or tiles are not lent. With `stage`, bands of their own
+ * as well: those win. */
+static void check_camera_lent(int32_t nw, int32_t nh, lv_display_rotation_t rot, int32_t cw, int32_t ch, int late,
+                              bool in_psram, bool lent, size_t stage)
+{
+    const lv_color_format_t cf = LV_COLOR_FORMAT_RGB565;
+    const bool swap = rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270;
+    lv_image_dsc_t * fr[2] = {image_of(cw, ch, cf, 61), image_of(cw, ch, cf, 73)};
+    const uint32_t nstride = lv_draw_buf_width_to_stride(nw, cf);
+
+    g_cam_first = fr[0];
+    screen_t * u = make_screen(swap ? nh : nw, swap ? nw : nh, cf, LV_DISPLAY_ROTATION_0, false, false);
+    lv_display_set_default(u->disp);
+    scene_camera_caption(lv_display_get_screen_active(u->disp));
+    lv_refr_now(u->disp);
+    memset(u->buf, 0x5a, (size_t)u->stride * u->h);
+    cam_next_captioned(u->disp, fr[1]);
+    uint8_t * want = malloc((size_t)nstride * nh);
+    turn_buffer(u->buf, want, u->w, u->h, u->stride, nstride, rot, cf);
+    drop_screen(u);
+
+    p4fake_external(NULL, 0);
+    if(in_psram) {
+        p4fake_external(fr[0]->data, fr[0]->data_size);
+        p4fake_external(fr[1]->data, fr[1]->data_size);
+    }
+    const esp_err_t set = (stage ? lv_draw_ortho_ppa_set_stage(stage) : ESP_OK) |
+                          (lent ? lv_draw_ortho_ppa_use_tiles(true) : ESP_OK);
+    p4fake_copy_late(late);
+    g_cam_first = fr[0];
+    screen_t * s = make_screen(nw, nh, cf, rot, true, false);
+    lv_display_set_default(s->disp);
+    scene_camera_caption(lv_display_get_screen_active(s->disp));
+    lv_refr_now(s->disp);
+    memset(s->buf, 0x5a, (size_t)s->stride * s->h);
+    lv_draw_ortho_ppa_stage_stats_t st;
+    lv_draw_ortho_ppa_get_stage_stats(&st, true);
+    const int copies = g_p4_copies;
+    p4fake_synced_forget();
+    cam_next_captioned(s->disp, fr[1]);
+    lv_draw_ortho_ppa_get_stage_stats(&st, true);
+
+    char what[200];
+    snprintf(what, sizeof(what), "captioned camera %dx%d on %dx%d at %s, %s, %s copies%s", (int)cw, (int)ch, (int)nw,
+             (int)nh, rot_name(rot), stage ? "bands of its own and a lent tile" : lent ? "through a lent tile" :
+             "no tile lent", late ? "late" : "early", in_psram ? "" : ", in internal RAM");
+    expect_same(what, s, want, cf);
+
+    /* The bands the engine should have used, worked out here. */
+    const size_t line = 128;
+    const size_t band = stage ? ((stage + line - 1) & ~(line - 1)) : (LV_DRAW_ORTHO_TILE_BYTES / 2) & ~(line - 1);
+    const int32_t fit = (int32_t)(band / ((size_t)cw * 2));
+    const int32_t k = fit >= ch ? ch : fit - fit % 8;
+    const int32_t rest = k ? ch % k : 0;
+    uint32_t pieces[8][4];
+    const bool shapes = k >= 8 && lv_draw_ortho_ppa_cut((uint32_t)cw, (uint32_t)k, rot, 16, pieces, 8) > 0 &&
+                        (rest == 0 || lv_draw_ortho_ppa_cut((uint32_t)cw, (uint32_t)rest, rot, 16, pieces, 8) > 0);
+    const bool staged = in_psram && (lent || stage) && shapes;
+    const uint32_t bands = k ? (uint32_t)((ch + k - 1) / k) : 0;
+    g_cases++;
+    bool ok;
+    if(set != ESP_OK) ok = false;
+    else if(staged) ok = st.pictures == 1 && st.bands == bands && st.rows == (uint32_t)k && st.declined == 0 &&
+                             st.band_bytes == band && g_p4_copies - copies == (int)bands &&
+                             /* bands of its own were dropped from the cache when they were taken */
+                             (stage || g_p4_copy_unsynced == 0);
+    else ok = st.pictures == 0 && g_p4_copies == copies;
+    if(ok) {
+        printf("  ok    %s: %s\n", what, staged ? "turned in its bands, every copy into memory out of the cache"
+               : "turned straight, as it should be");
+    }
+    else {
+        g_failures++;
+        printf("  FAIL  %s: set %d, %u pictures in %u bands of %u rows and %u bytes (%u declined, %d copies, %d into "
+               "lines still cached; %s %u bands of %d rows and %u bytes)\n", what, (int)set, st.pictures, st.bands,
+               st.rows, st.band_bytes, st.declined, g_p4_copies - copies, g_p4_copy_unsynced,
+               staged ? "wanted" : "wanted none, of", bands, (int)k, (unsigned)band);
+    }
+    lv_draw_ortho_ppa_use_tiles(false);
+    lv_draw_ortho_ppa_set_stage(0);
+    p4fake_copy_late(0);
+    p4fake_external(NULL, 0);
+    drop_screen(s);
+    free(want);
+}
+
 /* A camera frame every time, the way lvgl_camera_display's timer does it. */
 static void bench_camera(int32_t nw, int32_t nh, lv_display_rotation_t rot, int32_t cw, int32_t ch,
                          const char * board)
@@ -2915,6 +3179,34 @@ int main(int argc, char ** argv)
         check_camera(400, 640, LV_DISPLAY_ROTATION_90, 322, 182);
         check_camera(512, 300, LV_DISPLAY_ROTATION_180, 640, 480);
         check_camera(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
+        check_camera_ring(400, 640, LV_DISPLAY_ROTATION_90, 322, 182);
+        check_camera_ring(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
+        check_camera_ring(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300);
+        /* Through internal RAM: every rotation, early and late copies, a
+         * last band shorter than the others, one band for the whole frame,
+         * and the ways out. */
+        for(int late = 0; late < 2; late++) {
+            check_camera_staged(400, 640, LV_DISPLAY_ROTATION_90, 322, 182, 16, late, true, -1);
+            check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, late, true, -1);
+            check_camera_staged(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 8, late, true, -1);
+            check_camera_staged(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 24, late, true, -1);
+        }
+        check_camera_staged(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 300, 0, true, -1);
+        check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 4, 0, true, -1);
+        check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, 0, false, -1);
+        check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, 0, true, 0);
+        check_camera_staged(400, 640, LV_DISPLAY_ROTATION_90, 322, 182, 16, 1, true, 3);
+        /* The first tile lent instead: every rotation, early and late copies,
+         * the caption's tiles still queued when the frame begins; the frame in
+         * internal RAM, no tile lent, and bands of its own beside a lent tile. */
+        for(int late = 0; late < 2; late++) {
+            check_camera_lent(400, 640, LV_DISPLAY_ROTATION_90, 322, 182, late, true, true, 0);
+            check_camera_lent(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, late, true, true, 0);
+            check_camera_lent(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, late, true, true, 0);
+        }
+        check_camera_lent(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 0, false, true, 0);
+        check_camera_lent(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 0, true, false, 0);
+        check_camera_lent(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 0, true, true, (size_t)24 * 800);
         lv_draw_ortho_ppa_deinit();
         g_cases++;
         /* The screen's plain background behind the frame is the PPA's fill. */

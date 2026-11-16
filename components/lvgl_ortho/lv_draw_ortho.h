@@ -80,6 +80,7 @@ typedef struct {
     uint32_t fills_direct;     /**< solid fills drawn as native rectangles */
     uint32_t fills_handed;     /**< of those, filled by a filler (the PPA) rather than the CPU */
     uint32_t fills_hidden;     /**< of those, not drawn at all: an opaque picture drawn later covers them */
+    uint32_t fills_trimmed;    /**< of those, drawn only round an opaque picture drawn later over the rest */
     uint32_t images_turned;    /**< images copied with their turn in one pass */
     uint32_t images_native;    /**< pre-turned images copied row by row */
     uint32_t tiles;            /**< upright tiles drawn by the software renderer */
@@ -174,6 +175,19 @@ typedef bool (*lv_draw_ortho_wait_cb_t)(uint32_t ticket);
  * instead). Nothing it queued is left running when it hands a layer back.
  */
 void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait);
+
+/**
+ * Lend the first tile to a turner while it turns a picture handed to it whole
+ * (an image drawn straight into the frame buffer): no tile is drawn then, and
+ * the other core is idle. `loan` is called with the tile's memory before the
+ * picture's first turn, and with NULL, 0 once its last has finished. Turns
+ * queued before may still read the tile when it is lent, and the CPU's lines
+ * of it may still be dirty in the cache: a turner writing to it by DMA waits
+ * for the first and writes back and drops the second. Only a tile in internal
+ * RAM is lent. NULL stops lending.
+ */
+typedef void (*lv_draw_ortho_loan_cb_t)(void * mem, size_t bytes);
+void lv_draw_ortho_set_loan(lv_draw_ortho_loan_cb_t loan);
 
 /**
  * Fill a rectangle of `dst` with one opaque colour, by DMA -- the ESP32-P4's

@@ -94,6 +94,9 @@ static lv_draw_ortho_turn_cb_t g_turn;
 static lv_draw_ortho_wait_cb_t g_wait;
 static lv_draw_ortho_fill_cb_t g_fill;
 static uint32_t g_last;
+/* Who borrows the first tile while a picture is turned whole
+ * (lv_draw_ortho_set_loan). */
+static lv_draw_ortho_loan_cb_t g_loan;
 static const void * g_last_picture;   /* the pixels of the last picture turned, for images_again */
 static bool g_turner_failed;
 
@@ -1239,6 +1242,44 @@ static bool hidden_later(const lv_draw_task_t * t, const lv_area_t * todo)
     return false;
 }
 
+/* The largest part of `todo` an opaque picture drawn later in the same layer
+ * covers, in `out`. LVGL asks for a few pixels round what changed, so a
+ * picture smaller than the screen -- a camera canvas in a page -- has its
+ * background asked for in a rectangle a little wider than itself, which
+ * hidden_later() cannot call hidden: before this the whole rectangle was
+ * filled under the picture every frame (an 800x600 canvas: about 950 KB the
+ * PPA wrote for a ring five pixels wide, then turned the picture over). */
+static bool covered_later(const lv_draw_task_t * t, const lv_area_t * todo, lv_area_t * out)
+{
+    int64_t best = 0;
+    for(const lv_draw_task_t * c = t->next; c; c = c->next) {
+        const lv_image_dsc_t * img;
+        if(c->target_layer != t->target_layer || !plain_image(c, &img)) continue;
+        if(lv_color_format_has_alpha(img->header.cf)) continue;
+        lv_area_t covered, part;
+        if(!lv_area_intersect(&covered, &c->area, &c->clip_area)) continue;
+        if(!lv_area_intersect(&part, &covered, todo)) continue;
+        const int64_t size = (int64_t)lv_area_get_width(&part) * lv_area_get_height(&part);
+        if(size > best) {
+            best = size;
+            *out = part;
+        }
+    }
+    return best > 0;
+}
+
+/* `a` less `b`, which lies inside it: at most four rectangles, the bands
+ * above and below whole, the sides between them. */
+static int32_t area_minus(const lv_area_t * a, const lv_area_t * b, lv_area_t out[4])
+{
+    int32_t n = 0;
+    if(b->y1 > a->y1) lv_area_set(&out[n++], a->x1, a->y1, a->x2, b->y1 - 1);
+    if(b->y2 < a->y2) lv_area_set(&out[n++], a->x1, b->y2 + 1, a->x2, a->y2);
+    if(b->x1 > a->x1) lv_area_set(&out[n++], a->x1, b->y1, b->x1 - 1, b->y2);
+    if(b->x2 < a->x2) lv_area_set(&out[n++], b->x2 + 1, b->y1, a->x2, b->y2);
+    return n;
+}
+
 /* A solid fill turned is the fill of the turned rectangle: a corner radius is
  * the same on every side, so nothing about it changes. */
 static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * todo)
@@ -1252,10 +1293,17 @@ static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * to
         return true;
     }
 
-    lv_area_t area, clip, parts[4];
+    /* Only what the picture over it leaves: anything drawn under an opaque
+     * picture is drawn over again, as in hidden_later(). */
+    lv_area_t keep[4], covered;
+    int32_t nk = 1;
+    keep[0] = *todo;
+    if(covered_later(t, todo, &covered)) {
+        nk = area_minus(todo, &covered, keep);
+        g_stats.fills_trimmed++;
+    }
+    lv_area_t area;
     ortho_area(o, &t->area, &area);
-    ortho_area(o, todo, &clip);
-    const int32_t np = outside_window(t->target_layer, &clip, parts);
     /* A plain rectangle, opaque, straight into the frame buffer: the filler's
      * (the PPA's) when there is one -- a screen's background is 1.8 MB the CPU
      * would otherwise write through its cache into PSRAM. */
@@ -1269,17 +1317,22 @@ static bool try_fill(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * to
     const lv_draw_ortho_pic_t dst = {nb->data, nb->header.stride, nb->header.stride / (uint32_t)px,
                                      (uint32_t)lv_area_get_height(&target->buf_area)
                                     };
-    for(int32_t i = 0; i < np; i++) {
-        lv_area_t clipped;
-        if(plain && lv_area_intersect(&clipped, &parts[i], &area)) {
-            lv_area_t rect = clipped;
-            lv_area_move(&rect, -target->buf_area.x1, -target->buf_area.y1);
-            if(g_fill(&dst, &rect, dsc->color, cf)) {
-                g_stats.fills_handed++;
-                continue;
+    for(int32_t k = 0; k < nk; k++) {
+        lv_area_t clip, parts[4];
+        ortho_area(o, &keep[k], &clip);
+        const int32_t np = outside_window(t->target_layer, &clip, parts);
+        for(int32_t i = 0; i < np; i++) {
+            lv_area_t clipped;
+            if(plain && lv_area_intersect(&clipped, &parts[i], &area)) {
+                lv_area_t rect = clipped;
+                lv_area_move(&rect, -target->buf_area.x1, -target->buf_area.y1);
+                if(g_fill(&dst, &rect, dsc->color, cf)) {
+                    g_stats.fills_handed++;
+                    continue;
+                }
             }
+            sw_execute_on(t, target, &area, &parts[i]);
         }
-        sw_execute_on(t, target, &area, &parts[i]);
     }
     g_stats.fills_direct++;
     return true;
@@ -1810,6 +1863,16 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
         return false;
     }
     const uint64_t before = g_stats.bytes_turned;
+    /* No tile is drawn while the picture is turned and the other core is idle
+     * (it is joined at the end of every pair), so the first tile is lent to
+     * the turner: a picture in PSRAM can go through it a band at a time. The
+     * fence below hands it back. */
+#if defined(ESP_PLATFORM)
+    const bool lend = g_loan && g_unit && g_tile_internal;
+#else
+    const bool lend = g_loan && g_unit;   /* a PC has one kind of memory */
+#endif
+    if(lend) g_loan(tile_aligned(g_unit->tile_alloc[0]), LV_DRAW_ORTHO_TILE_BYTES);
     for(int32_t i = 0; i < np; i++) {
         if(turn_split(o, nb->header.cf, px, nb->data, nb->header.stride, &target->buf_area,
                       (uint8_t *)img->data, sstride, &t->area, &parts[i])) continue;
@@ -1817,6 +1880,7 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
                     (uint8_t *)img->data, sstride, &t->area, &parts[i], true);
     }
     fence();   /* the picture is the application's again when the task is finished */
+    if(lend) g_loan(NULL, 0);
     g_stats.images_turned++;
     g_stats.bytes_turned_images += g_stats.bytes_turned - before;
     if(img->data == g_last_picture) g_stats.images_again++;
@@ -2550,6 +2614,12 @@ void lv_draw_ortho_init(void)
 void lv_draw_ortho_set_filler(lv_draw_ortho_fill_cb_t fill)
 {
     g_fill = fill;
+}
+
+void lv_draw_ortho_set_loan(lv_draw_ortho_loan_cb_t loan)
+{
+    fence();
+    g_loan = loan;
 }
 
 void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait)

@@ -14,6 +14,11 @@
 #include "esp_idf_version.h"
 #include "lv_draw_ortho_ppa.h"
 #include "esp_heap_caps.h"
+#ifdef LVGL_ORTHO_CPU_LOAD
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <new>
+#endif
 
 namespace esphome {
 namespace lvgl_ortho {
@@ -97,6 +102,35 @@ void LvglOrtho::setup() {
     this->ppa_on_ = err == ESP_OK;
     if (!this->ppa_on_)
       ESP_LOGW(TAG, "No PPA client (error 0x%x): the CPU turns the tiles", (unsigned) err);
+  }
+  // Two bands of internal RAM for a big picture in PSRAM: taken now or never,
+  // and said either way, since internal RAM is what Wi-Fi and the rest live on.
+  // Without them the halves of the first tile are the bands, lent while the
+  // picture is turned: no RAM of their own.
+  if (this->ppa_on_) {
+    bool own = false;
+    if (this->camera_ram_ > 0) {
+      const size_t band = this->camera_ram_ / 2;
+      const esp_err_t err = lv_draw_ortho_ppa_set_stage(band);
+      own = err == ESP_OK;
+      if (own) {
+        ESP_LOGI(TAG, "A camera picture is turned through 2 x %u KiB of internal RAM (%u KiB of it left)",
+                 (unsigned) (band / 1024), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+      } else {
+        ESP_LOGW(TAG, "No 2 x %u KiB of internal RAM for camera_ram (error 0x%x, %u KiB free)",
+                 (unsigned) (band / 1024), (unsigned) err,
+                 (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+      }
+    }
+    if (!own) {
+      const esp_err_t err = lv_draw_ortho_ppa_use_tiles(true);
+      if (err == ESP_OK) {
+        ESP_LOGI(TAG, "A camera picture is turned through the halves of the first tile, lent while it is turned");
+      } else {
+        ESP_LOGW(TAG, "No GDMA copy for the bands (error 0x%x): pictures are turned straight from PSRAM",
+                 (unsigned) err);
+      }
+    }
   }
   lv_draw_ortho_set_image_cache(this->image_cache_);
   lv_draw_ortho_set_tile_width(this->tile_width_);
@@ -510,16 +544,84 @@ void LvglOrtho::loop() {
       }
       if (st->images_flash > 0)
         ESP_LOGI(TAG, "  %.1f big pictures/s in the flash drawn in the tiles", st->images_flash / s);
+      // A picture in PSRAM turned through internal RAM, and how often it
+      // could not be: a band shape the PPA cannot take, or the GDMA refusing.
+      lv_draw_ortho_ppa_stage_stats_t ss;
+      lv_draw_ortho_ppa_get_stage_stats(&ss, true);
+      if (ss.pictures > 0 || ss.declined > 0) {
+        // The CPU's wait above is only for the last band now: this is the
+        // turn's own time, a picture.
+        ESP_LOGI(TAG, "  %.1f pictures/s turned through internal RAM, in bands of %u rows, %.1f ms each",
+                 ss.pictures / s, (unsigned) ss.rows, ss.pictures ? ss.us / 1000.0f / ss.pictures : 0.0f);
+        if (ss.declined > 0)
+          ESP_LOGI(TAG, "    %.1f/s turned straight, or partly: a band the PPA cannot take whole, or the copy refused",
+                   ss.declined / s);
+      }
       if (this->cores_on_ && st->tiles > 0) {
         ESP_LOGI(TAG, "  %u of %u tiles painted on the second core", (unsigned) st->tiles_other_core,
                  (unsigned) st->tiles);
       }
+#ifdef LVGL_ORTHO_CPU_LOAD
+      this->report_cpu_load_();
+#endif
       lv_draw_ortho_reset_stats();
     }
+#ifdef LVGL_ORTHO_CPU_LOAD
+    else {
+      this->report_cpu_load_();  // the first report: only take the counters
+    }
+#endif
     this->last_report_ = now;
     this->video_us_ = this->video_frames_ = this->flush_us_ = this->flush_rows_ = this->presents_ = this->renders_ = 0;
   }
 }
+
+#ifdef LVGL_ORTHO_CPU_LOAD
+// What each core really did since the last report: the share of the time its
+// idle task did not run. The same count the A/B benchmark reads (AB_CPU), and
+// the one that says whether a wait was a sleep: a core waiting for the PPA is
+// idle here, and busy in LVGL's perf_monitor.
+void LvglOrtho::report_cpu_load_() {
+  UBaseType_t count = uxTaskGetNumberOfTasks() + 8;
+  auto *tasks = new (std::nothrow) TaskStatus_t[count];
+  if (tasks == nullptr)
+    return;
+  configRUN_TIME_COUNTER_TYPE total = 0;
+  count = uxTaskGetSystemState(tasks, count, &total);
+  uint32_t idle[2] = {0, 0};
+  int found = 0;
+  for (UBaseType_t i = 0; i < count; i++) {
+    const char *name = tasks[i].pcTaskName;
+    if (std::strncmp(name, "IDLE", 4) == 0 && (name[4] == '0' || name[4] == '1') && name[5] == 0) {
+      idle[name[4] - '0'] = (uint32_t) tasks[i].ulRunTimeCounter;
+      found++;
+    }
+  }
+  delete[] tasks;
+  if (found != 2) {
+    ESP_LOGW(TAG, "  processor: the idle tasks were not found (%d of 2); no load to report", found);
+    return;
+  }
+  if (this->idle_known_) {
+    // Unsigned differences: the counters wrap, the subtraction does not care.
+    const uint32_t elapsed = (uint32_t) total - this->total_prev_;
+    if (elapsed > 0) {
+      float busy[2];
+      for (int c = 0; c < 2; c++) {
+        const float free_share = (float) (idle[c] - this->idle_prev_[c]) / (float) elapsed;
+        busy[c] = 100.0f * (1.0f - (free_share > 1.0f ? 1.0f : free_share));
+      }
+      ESP_LOGI(TAG, "  processor really busy: core 0 %.0f%%, core 1 %.0f%% (FreeRTOS's idle time; "
+                    "LVGL's perf_monitor counts waiting for the PPA as work)",
+               busy[0], busy[1]);
+    }
+  }
+  this->idle_prev_[0] = idle[0];
+  this->idle_prev_[1] = idle[1];
+  this->total_prev_ = (uint32_t) total;
+  this->idle_known_ = true;
+}
+#endif
 
 }  // namespace lvgl_ortho
 }  // namespace esphome

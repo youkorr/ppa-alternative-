@@ -6,7 +6,10 @@
 
 #include "lv_draw_ortho_ppa.h"
 #include "driver/ppa.h"
+#include "esp_async_memcpy.h"
 #include "esp_cache.h"
+#include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "esp_rom_sys.h"
 #include <stdio.h>
 #if defined(ESP_PLATFORM)
@@ -249,12 +252,9 @@ static void note(uint8_t kind, uint32_t ticket, const void * in, uint32_t in_w, 
     }
 }
 
-static bool on_done(ppa_client_handle_t client, ppa_event_data_t * event, void * user)
+/* From an interrupt: wake whoever sleeps in pause_for_ppa(). */
+static bool wake_sleepers(void)
 {
-    (void)event;
-    (void)user;
-    if(client == g_fill_client) g_fill_done++;
-    else g_done++;
 #if defined(ESP_PLATFORM)
     BaseType_t woken = pdFALSE;
     if(g_wake) {
@@ -269,6 +269,15 @@ static bool on_done(ppa_client_handle_t client, ppa_event_data_t * event, void *
 #else
     return false;
 #endif
+}
+
+static bool on_done(ppa_client_handle_t client, ppa_event_data_t * event, void * user)
+{
+    (void)event;
+    (void)user;
+    if(client == g_fill_client) g_fill_done++;
+    else g_done++;
+    return wake_sleepers();
 }
 
 /* Let time pass while the PPA works, at most `max_us`, and say how much.
@@ -334,6 +343,396 @@ static ppa_srm_rotation_angle_t ppa_angle(lv_display_rotation_t r)
     }
 }
 
+/* ------------------------------------------------------------------------ */
+/* A big picture turned through internal RAM                                 */
+/* ------------------------------------------------------------------------ */
+
+/* Measured on a Waveshare 7B and a Tab5 (espressif/ppa-probe, November 2026):
+ * the PPA writing PSRAM costs it nothing over writing internal RAM, but its
+ * reading PSRAM in 16x16 macro blocks doubles its time, and is what the
+ * panel's scan-out and a camera sharing PSRAM slow down. A camera picture
+ * turned straight from PSRAM into the frame buffer took 31.6 ms on the
+ * Waveshare (180) and 44.3 on the Tab5 (270), the camera streaming; copied
+ * into internal RAM a band of rows at a time, in one run, while the PPA
+ * turned the band before from there, 11.8 and 18.6.
+ *
+ * The copy is esp_async_memcpy over the AXI GDMA: public in ESP-IDF 5.5 and
+ * 6, where the DMA2D copy the probe also measured is private to esp_lcd and
+ * gone in 6.0. It copies runs only, so a band is whole rows of the picture,
+ * and the PPA reads the block's columns out of them. Every way out is the
+ * plain turn: a band shape the PPA cannot take whole (DIG-734), no room for
+ * eight rows, a copy refused. */
+
+#ifndef LV_DRAW_ORTHO_STAGE_MIN_PIXELS
+#define LV_DRAW_ORTHO_STAGE_MIN_PIXELS (128 * 128)
+#endif
+/* A band's rows are a multiple of this, and never fewer: under it the fixed
+ * cost of a transaction is a large share of a band (the probe: 8 rows was the
+ * worst of 8, 16, 32 and 64 on both boards). */
+#define STAGE_STEP 8
+/* A copy is a few milliseconds; one that has not finished in this long is a
+ * GDMA that will not, and the rest of the picture is turned straight. */
+#define STAGE_COPY_TIMEOUT_MS 100
+
+static bool wait(uint32_t ticket);
+
+static uint8_t * g_stage[2];
+static size_t g_stage_bytes;
+static async_memcpy_handle_t g_copier;
+static volatile uint32_t g_copied;     /* counted by the copy's interrupt */
+static uint32_t g_copies;              /* copies asked for */
+/* The last ticket that reads each band: nothing is copied into a band before
+ * it has finished, across pictures too. */
+static uint32_t g_stage_reader[2];
+static lv_draw_ortho_ppa_stage_stats_t g_stage_stats;
+/* A copy that never landed: it may still, so the bands are neither used nor
+ * freed again. */
+static bool g_stage_broken;
+/* The two bands a picture goes through: those above when there are any, else
+ * the halves of the first tile, which lv_draw_ortho lends while it hands a
+ * picture over whole (lv_draw_ortho_ppa_use_tiles). */
+static uint8_t * g_band[2];
+static size_t g_band_bytes;
+static bool g_use_tiles;
+static uint8_t * g_loan;
+static size_t g_loan_bytes;
+static bool g_loan_ready;   /* waited for and out of the cache since it was lent */
+
+/* Microseconds, for the time a picture spends in its bands; 0 off the board. */
+static int64_t now_us(void)
+{
+#if defined(ESP_PLATFORM)
+    return esp_timer_get_time();
+#else
+    return 0;
+#endif
+}
+
+static bool on_copied(async_memcpy_handle_t mcp, async_memcpy_event_t * event, void * user)
+{
+    (void)mcp;
+    (void)event;
+    (void)user;
+    g_copied++;
+    return wake_sleepers();
+}
+
+static bool copy_rows(const lv_draw_ortho_pic_t * src, uint32_t row, uint32_t rows, uint8_t * to)
+{
+    const size_t n = (size_t)rows * src->stride;
+    if(g_copier == NULL || n > g_band_bytes) return false;
+    ++g_copies;
+    if(esp_async_memcpy(g_copier, to, (uint8_t *)src->buf + (size_t)row * src->stride, n, on_copied, NULL) != ESP_OK) {
+        --g_copies;
+        return false;
+    }
+    return true;
+}
+
+/* Until every copy asked for has landed, bounded. */
+static bool copies_done(void)
+{
+    const uint32_t limit = STAGE_COPY_TIMEOUT_MS * 1000u;
+    uint32_t idle_us = 0;
+    while((int32_t)(g_copied - g_copies) < 0) {
+        if(idle_us >= limit) return false;
+        idle_us += pause_for_ppa(limit - idle_us);
+    }
+    return true;
+}
+
+/* Where the block's piece (x, y, w, h) lands in the turned block: the PPA
+ * turns counter-clockwise on the screen (see turn()). */
+static void place(lv_display_rotation_t rot, uint32_t bw, uint32_t bh, uint32_t x, uint32_t y, uint32_t w,
+                  uint32_t h, uint32_t * ox, uint32_t * oy)
+{
+    switch(rot) {
+        case LV_DISPLAY_ROTATION_90:
+            *ox = y;
+            *oy = bw - x - w;
+            break;
+        case LV_DISPLAY_ROTATION_180:
+            *ox = bw - x - w;
+            *oy = bh - y - h;
+            break;
+        case LV_DISPLAY_ROTATION_270:
+            *ox = bh - y - h;
+            *oy = x;
+            break;
+        default:
+            *ox = x;
+            *oy = y;
+            break;
+    }
+}
+
+/* Queue the PPA on the block's rows from `row` on, cut as `pieces`, read out
+ * of `from`: those rows, whole, starting at its row `from_row` (0 for a band,
+ * the block's own row for the picture itself). False when one is refused: what
+ * was queued before it is waited for, so nothing reads a band afterwards. */
+static bool queue_rows(const lv_draw_ortho_pic_t * src, const lv_area_t * block, const lv_draw_ortho_pic_t * dst,
+                       int32_t dx, int32_t dy, lv_display_rotation_t rot, ppa_srm_color_mode_t cm, uint32_t px,
+                       uint32_t size, uint32_t row, const void * from, uint32_t from_h, uint32_t from_row,
+                       const piece_t * pieces, int n)
+{
+    const uint32_t bw = (uint32_t)lv_area_get_width(block), bh = (uint32_t)lv_area_get_height(block);
+    if(g_queued - g_done + (uint32_t)n > PENDING && !wait(g_queued - (PENDING - (uint32_t)n))) return false;
+    ppa_srm_oper_config_t op;
+    lv_memzero(&op, sizeof(op));
+    op.in.buffer = from;
+    op.in.pic_w = src->w;
+    op.in.pic_h = from_h;
+    op.in.srm_cm = cm;
+    op.out.buffer = dst->buf;
+    op.out.buffer_size = size;
+    op.out.pic_w = dst->w;
+    op.out.pic_h = dst->h;
+    op.out.srm_cm = cm;
+    op.rotation_angle = ppa_angle(rot);
+    op.scale_x = 1.0f;
+    op.scale_y = 1.0f;
+    op.mode = PPA_TRANS_MODE_NON_BLOCKING;
+    for(int i = 0; i < n; i++) {
+        const piece_t * p = &pieces[i];
+        uint32_t ox, oy;
+        place(rot, bw, bh, p->x, row + p->y, p->w, p->h, &ox, &oy);
+        op.in.block_w = p->w;
+        op.in.block_h = p->h;
+        op.in.block_offset_x = (uint32_t)block->x1 + p->x;
+        op.in.block_offset_y = from_row + p->y;
+        op.out.block_offset_x = (uint32_t)dx + ox;
+        op.out.block_offset_y = (uint32_t)dy + oy;
+        if(ppa_do_scale_rotate_mirror(g_client, &op) != ESP_OK) {
+            wait(g_queued);
+            return false;
+        }
+        ++g_queued;
+        note(0, g_queued, from, src->w, from_h, op.in.block_offset_x, op.in.block_offset_y, p->w, p->h, dst->buf,
+             dst->w, dst->h, op.out.block_offset_x, op.out.block_offset_y, rot, px * 8, 1.0f, 1.0f);
+    }
+    return true;
+}
+
+/* The block of a picture in PSRAM, turned through the two bands. Returns the
+ * last ticket, or 0 when it declined before queueing anything (the caller
+ * turns it the plain way) or a transaction was refused (what was queued has
+ * finished, and the caller turns the whole block over it -- the same
+ * pixels). */
+static uint32_t staged_bands(const lv_draw_ortho_pic_t * src, const lv_area_t * block, const lv_draw_ortho_pic_t * dst,
+                             int32_t dx, int32_t dy, lv_display_rotation_t rot, ppa_srm_color_mode_t cm, uint32_t px,
+                             uint32_t size);
+
+/* Timed: the caller waits only for the last band's turn, so its wait no
+ * longer says how long a picture took -- this does. */
+static uint32_t staged(const lv_draw_ortho_pic_t * src, const lv_area_t * block, const lv_draw_ortho_pic_t * dst,
+                       int32_t dx, int32_t dy, lv_display_rotation_t rot, ppa_srm_color_mode_t cm, uint32_t px,
+                       uint32_t size)
+{
+    const int64_t t0 = now_us();
+    const uint32_t t = staged_bands(src, block, dst, dx, dy, rot, cm, px, size);
+    if(t) g_stage_stats.us += (uint64_t)(now_us() - t0);
+    return t;
+}
+
+static uint32_t staged_bands(const lv_draw_ortho_pic_t * src, const lv_area_t * block, const lv_draw_ortho_pic_t * dst,
+                             int32_t dx, int32_t dy, lv_display_rotation_t rot, ppa_srm_color_mode_t cm, uint32_t px,
+                             uint32_t size)
+{
+    const uint32_t bw = (uint32_t)lv_area_get_width(block), bh = (uint32_t)lv_area_get_height(block);
+    uint32_t k = (uint32_t)(g_band_bytes / src->stride);
+    if(k >= bh) k = bh;
+    else k -= k % STAGE_STEP;
+    const uint32_t rest = k ? bh % k : 0;
+    piece_t full[MAX_PIECES], last[MAX_PIECES];
+    int nf = 0, nl = 0;
+    if(k < STAGE_STEP || !cut(0, 0, bw, k, rot, px * 8, full, &nf, 0) ||
+       (rest && !cut(0, 0, bw, rest, rot, px * 8, last, &nl, 0))) {
+        g_stage_stats.declined++;
+        return 0;
+    }
+    const uint32_t count = (bh + k - 1) / k;
+
+    /* Nothing of an earlier picture may still read the first band. */
+    if(g_stage_reader[0] && !wait(g_stage_reader[0])) return 0;
+    if(!copy_rows(src, (uint32_t)block->y1, LV_MIN(k, bh), g_band[0])) {
+        g_stage_stats.declined++;
+        return 0;
+    }
+    for(uint32_t i = 0; i < count; i++) {
+        const uint32_t row = i * k, rows = LV_MIN(k, bh - row);
+        const piece_t * pieces = rows == k ? full : last;
+        const int n = rows == k ? nf : nl;
+        uint8_t * band = g_band[i & 1];
+        if(!copies_done()) {
+            /* The GDMA stopped: the rest straight from the picture. */
+            g_stage_broken = true;
+            g_stage_stats.declined++;
+            for(uint32_t r = row; r < bh; r += k) {
+                const uint32_t h = LV_MIN(k, bh - r);
+                if(!queue_rows(src, block, dst, dx, dy, rot, cm, px, size, r, src->buf, src->h,
+                               (uint32_t)block->y1 + r, h == k ? full : last, h == k ? nf : nl))
+                    return 0;
+            }
+            return g_queued;
+        }
+        if(!queue_rows(src, block, dst, dx, dy, rot, cm, px, size, row, band, rows, 0, pieces, n)) return 0;
+        g_stage_reader[i & 1] = g_queued;
+        g_stage_stats.bands++;
+        if(i + 1 < count) {
+            /* The band the next rows go into was read by the band before this one. */
+            const uint32_t next_rows = LV_MIN(k, bh - row - k);
+            if(g_stage_reader[(i + 1) & 1] && !wait(g_stage_reader[(i + 1) & 1])) return g_queued;
+            if(!copy_rows(src, (uint32_t)block->y1 + row + k, next_rows, g_band[(i + 1) & 1])) {
+                g_stage_stats.declined++;
+                for(uint32_t r = row + k; r < bh; r += k) {
+                    const uint32_t h = LV_MIN(k, bh - r);
+                    if(!queue_rows(src, block, dst, dx, dy, rot, cm, px, size, r, src->buf, src->h,
+                                   (uint32_t)block->y1 + r, h == k ? full : last, h == k ? nf : nl))
+                        return 0;
+                }
+                return g_queued;
+            }
+        }
+    }
+    g_stage_stats.pictures++;
+    g_stage_stats.rows = k;
+    return g_queued;
+}
+
+/* The GDMA copy, for either kind of band. */
+static esp_err_t install_copier(void)
+{
+    if(g_copier) return ESP_OK;
+    esp_err_t err = ESP_ERR_NOT_SUPPORTED;
+#if SOC_AXI_GDMA_SUPPORTED
+    for(size_t burst = 64; burst >= 16 && err != ESP_OK; burst /= 2) {
+        async_memcpy_config_t cfg = ASYNC_MEMCPY_DEFAULT_CONFIG();
+        cfg.backlog = 2;
+        cfg.dma_burst_size = burst;
+        err = esp_async_memcpy_install_gdma_axi(&cfg, &g_copier);
+    }
+#endif
+    if(err != ESP_OK) {
+        g_copier = NULL;
+        return err;
+    }
+#if defined(ESP_PLATFORM)
+    if(g_wake == NULL && (g_wake = xSemaphoreCreateCounting(WAKE_MAX, 0)) == NULL) return ESP_ERR_NO_MEM;
+#endif
+    g_copied = g_copies = 0;
+    return ESP_OK;
+}
+
+static void uninstall_copier(void)
+{
+    if(g_copier) {
+        copies_done();
+        esp_async_memcpy_uninstall(g_copier);
+        g_copier = NULL;
+    }
+}
+
+/* Which bands a picture goes through, made ready: its own when there are any,
+ * else the halves of the lent tile. The tile was the tiles' a moment ago:
+ * lines the CPU drew may still be dirty in the cache -- written back after the
+ * GDMA's copy, they would go over its rows. Turns queued before could still
+ * read it too; lv_draw_ortho fences before it takes a picture alone, so the
+ * wait returns at once, and is there for a caller that lends without one. */
+static bool choose_bands(void)
+{
+    if(g_stage_bytes) {
+        g_band[0] = g_stage[0];
+        g_band[1] = g_stage[1];
+        g_band_bytes = g_stage_bytes;
+        return true;
+    }
+    if(g_loan == NULL || g_copier == NULL || ((uintptr_t)g_loan % LINE) != 0) return false;
+    const size_t half = (g_loan_bytes / 2) & ~(size_t)(LINE - 1);
+    if(half == 0) return false;
+    if(!g_loan_ready) {
+        if(!wait(g_queued)) return false;
+        if(esp_cache_msync(g_loan, 2 * half, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE) != ESP_OK)
+            return false;
+        g_loan_ready = true;
+    }
+    g_band[0] = g_loan;
+    g_band[1] = g_loan + half;
+    g_band_bytes = half;
+    return true;
+}
+
+/* lv_draw_ortho's first tile, lent while it turns a picture and handed back
+ * (NULL) once its turns have finished -- the bands' readers among them. */
+static void take_loan(void * mem, size_t bytes)
+{
+    if(mem == NULL && g_stage_bytes == 0) g_stage_reader[0] = g_stage_reader[1] = 0;
+    g_loan = (uint8_t *)mem;
+    g_loan_bytes = mem ? bytes : 0;
+    g_loan_ready = false;
+}
+
+esp_err_t lv_draw_ortho_ppa_use_tiles(bool on)
+{
+    if(!on) {
+        lv_draw_ortho_set_loan(NULL);   /* waits for whatever still reads the tile */
+        g_use_tiles = false;
+        if(g_stage_bytes == 0) uninstall_copier();
+        return ESP_OK;
+    }
+    if(g_client == NULL || g_stage_broken) return ESP_ERR_INVALID_STATE;
+    const esp_err_t err = install_copier();
+    if(err != ESP_OK) {
+        if(g_stage_bytes == 0) uninstall_copier();
+        return err;
+    }
+    g_use_tiles = true;
+    lv_draw_ortho_set_loan(take_loan);
+    return ESP_OK;
+}
+
+esp_err_t lv_draw_ortho_ppa_set_stage(size_t bytes)
+{
+    /* Nothing of ours may still read the bands when they go. */
+    if(g_client && (g_stage_reader[0] || g_stage_reader[1])) wait(g_queued);
+    if(g_stage_broken) return bytes ? ESP_ERR_INVALID_STATE : ESP_OK;
+    if(g_use_tiles) copies_done();
+    else uninstall_copier();
+    for(int i = 0; i < 2; i++) {
+        heap_caps_free(g_stage[i]);
+        g_stage[i] = NULL;
+    }
+    g_stage_bytes = 0;
+    g_stage_reader[0] = g_stage_reader[1] = 0;
+    if(bytes == 0) return ESP_OK;
+
+    bytes = (bytes + LINE - 1) & ~(size_t)(LINE - 1);
+    for(int i = 0; i < 2; i++) {
+        g_stage[i] = heap_caps_aligned_calloc(LINE, 1, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+        if(g_stage[i] == NULL) {
+            lv_draw_ortho_ppa_set_stage(0);
+            return ESP_ERR_NO_MEM;
+        }
+        /* calloc zeroed it through the cache: the PPA driver writes its input
+         * back before reading it, and a dirty line left here would put those
+         * zeros over rows the GDMA had just copied. */
+        esp_cache_msync(g_stage[i], bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);
+    }
+    const esp_err_t err = install_copier();
+    if(err != ESP_OK) {
+        lv_draw_ortho_ppa_set_stage(0);
+        return err;
+    }
+    g_stage_bytes = bytes;
+    return ESP_OK;
+}
+
+void lv_draw_ortho_ppa_get_stage_stats(lv_draw_ortho_ppa_stage_stats_t * out, bool reset)
+{
+    *out = g_stage_stats;
+    out->band_bytes = (uint32_t)(g_stage_bytes ? g_stage_bytes : g_band_bytes);
+    if(reset) lv_memzero(&g_stage_stats, sizeof(g_stage_stats));
+}
+
 static uint32_t turn(const lv_draw_ortho_pic_t * src, const lv_area_t * block, const lv_draw_ortho_pic_t * dst,
                      int32_t dx, int32_t dy, lv_display_rotation_t rot, lv_color_format_t cf)
 {
@@ -355,6 +754,17 @@ static uint32_t turn(const lv_draw_ortho_pic_t * src, const lv_area_t * block, c
     uintptr_t a = (uintptr_t)dst->buf + (uintptr_t)dy * dst->stride;
     uintptr_t b = a + (uintptr_t)rows * dst->stride;
     if(b > (uintptr_t)dst->buf + size) return 0;
+
+    /* A big picture in PSRAM: through internal RAM, when it can be. The
+     * output rows are written back and dropped first, as below. */
+    const bool big = (uint64_t)bw * bh >= LV_DRAW_ORTHO_STAGE_MIN_PIXELS;
+    if(!g_stage_broken && big && esp_ptr_external_ram(src->buf) && choose_bands()) {
+        const uintptr_t sa = a & ~(uintptr_t)(LINE - 1), sb = (b + LINE - 1) & ~(uintptr_t)(LINE - 1);
+        if(esp_cache_msync((void *)sa, sb - sa, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE) != ESP_OK)
+            return 0;
+        const uint32_t t = staged(src, block, dst, dx, dy, rot, cm, px, size);
+        if(t) return t;
+    }
 
     /* Cut first: a block left to the CPU needs nothing written back. */
     piece_t pieces[MAX_PIECES];
@@ -605,7 +1015,9 @@ esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * in)
 
 void lv_draw_ortho_ppa_deinit(void)
 {
+    lv_draw_ortho_ppa_use_tiles(false);
     lv_draw_ortho_set_turner(NULL, NULL);
+    lv_draw_ortho_ppa_set_stage(0);
     lv_draw_ortho_set_filler(NULL);
     if(g_fill_client && wait_on(&g_fill_done, g_fill_queued)) {
         ppa_unregister_client(g_fill_client);
