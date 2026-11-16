@@ -2,12 +2,11 @@
 # Copyright (c) 2026 youkorr
 # Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
 #
-# Temporary: real ESP-IDF builds of youkorr/face_detection against the two
-# cameras it reads (esp_video_camera from youkorr/esphome, and esp_cam_sensor
-# from youkorr/esphome_esp-video), with Espressif's models taken from the
-# component registry. Proves what esphome config cannot: that the registry
-# versions resolve, that the code compiles against esp-dl 3.3's real headers,
-# and that the models end up in the firmware.
+# Temporary: a real ESP-IDF build of a Guition JC8012P4A1 with youkorr/lvgl_9.5
+# (the branch that drops the patched lv_freertos.c), youkorr/esphome's
+# esp_video_camera and lvgl_camera_display, and youkorr/face_detection. Proves
+# what esphome config cannot: that LVGL now compiles in ESPHome's native
+# ESP-IDF build, and links beside the camera and the face models.
 name: face_detection build
 on: [push, workflow_dispatch]
 jobs:
@@ -17,8 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        setup: [video-recognition, video-espdet, cam-sensor]
+        lvgl: [claude/native-idf-lv-freertos, main]
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -27,149 +27,59 @@ jobs:
       - name: The configuration
         run: |
           mkdir fd
-          cat > fd/common.yaml <<'YAML'
-          esp32:
-            board: esp32-p4-evboard
-            flash_size: 16MB
-            framework:
-              type: esp-idf
-              log_level: ERROR
-          psram:
-            mode: hex
-            speed: 200MHz
+          cp yaml/boards/guition.yaml fd/guition.yaml
+          cat > fd/fd.yaml <<YAML
+          esphome:
+            name: camera-test-guition
+          packages:
+            board: !include guition.yaml
+          external_components:
+            - source:
+                type: git
+                url: https://github.com/youkorr/lvgl_9.5
+                ref: ${{ matrix.lvgl }}
+              components: [lvgl]
+              refresh: 0s
+            - source:
+                type: git
+                url: https://github.com/youkorr/esphome
+                ref: esp_video_camera-lvgl
+              components: [esp_video_camera, lvgl_camera_display]
+              refresh: 0s
+            - source:
+                type: git
+                url: https://github.com/youkorr/face_detection
+                ref: claude/esphome-face-detection-mit-71f1lr
+              components: [face_detection]
+              refresh: 0s
           logger:
           i2c:
             - id: i2c_bus
               sda: GPIO7
               scl: GPIO8
-          YAML
-          case "${{ matrix.setup }}" in
-          video-recognition)
-            cat > fd/fd.yaml <<'YAML'
-          esphome:
-            name: fd
-          packages:
-            common: !include common.yaml
-          external_components:
-            - source:
-                type: git
-                url: https://github.com/youkorr/esphome
-                ref: esp_video_camera-lvgl-face-check
-              components: [esp_video_camera]
-              refresh: 0s
-            - source:
-                type: git
-                url: https://github.com/youkorr/face_detection
-                ref: claude/face-detection-check
-              components: [face_detection]
-              refresh: 0s
           esp_video_camera:
             id: cam
             name: Camera
             i2c_id: i2c_bus
             device: jpeg
-            sensor_model: ov02c10
-            resolution: 1288x728
+          lvgl:
+            displays: [panel]
+            pages:
+              - id: main_page
+                widgets:
+                  - canvas:
+                      id: cam_canvas
+                      width: 640
+                      height: 480
+          lvgl_camera_display:
+            camera_id: cam
+            canvas_id: cam_canvas
           face_detection:
             id: faces
             camera_id: cam
             recognition_enabled: true
             face_db_path: /sdcard/faces/faces.db
-            on_face_recognized:
-              - logger.log:
-                  format: "hello %d %.2f"
-                  args: [face_id, similarity]
-          button:
-            - platform: template
-              name: Enroll
-              on_press:
-                - face_detection.enroll_with_name:
-                    name: Bob
-                - face_detection.delete:
-                    face_id: 2
-                - face_detection.clear_all:
-                - face_detection.set_name:
-                    face_id: 1
-                    name: Alice
-          sensor:
-            - platform: template
-              name: Enrolled
-              lambda: return id(faces).get_enrolled_count();
           YAML
-            ;;
-          video-espdet)
-            cat > fd/fd.yaml <<'YAML'
-          esphome:
-            name: fd
-          packages:
-            common: !include common.yaml
-          external_components:
-            - source:
-                type: git
-                url: https://github.com/youkorr/esphome
-                ref: esp_video_camera-lvgl-face-check
-              components: [esp_video_camera]
-              refresh: 0s
-            - source:
-                type: git
-                url: https://github.com/youkorr/face_detection
-                ref: claude/face-detection-check
-              components: [face_detection]
-              refresh: 0s
-          esp_video_camera:
-            id: cam
-            name: Camera
-            i2c_id: i2c_bus
-            device: jpeg
-          face_detection:
-            id: faces
-            camera_id: cam
-            model: espdet_pico_416_416_face
-            on_face_detected:
-              - logger.log:
-                  format: "%d faces"
-                  args: [face_count]
-          YAML
-            ;;
-          cam-sensor)
-            cat > fd/fd.yaml <<'YAML'
-          esphome:
-            name: fd
-          packages:
-            common: !include common.yaml
-          external_components:
-            - source:
-                type: git
-                url: https://github.com/youkorr/esphome_esp-video
-                ref: main
-              components: [esp_video, esp_cam_sensor]
-              refresh: 0s
-            - source:
-                type: git
-                url: https://github.com/youkorr/face_detection
-                ref: claude/face-detection-check
-              components: [face_detection]
-              refresh: 0s
-          esp_video:
-            i2c_id: i2c_bus
-            xclk_pin: GPIO36
-            xclk_freq: 24000000
-            enable_jpeg: true
-            enable_isp: true
-          esp_cam_sensor:
-            id: cam
-            i2c_id: i2c_bus
-            sensor_type: sc202cs
-            resolution: "720P"
-            pixel_format: RGB565
-            framerate: 30
-          face_detection:
-            id: faces
-            camera_id: cam
-            recognition_enabled: true
-          YAML
-            ;;
-          esac
           cat fd/fd.yaml
       - name: esphome compile
         run: |
@@ -179,13 +89,9 @@ jobs:
         if: always()
         run: |
           set -x
-          B=fd/.esphome/build/fd
-          cat $B/src/idf_component.yml || true
-          find $B -name dependencies.lock -maxdepth 2 | head -1 | xargs -r grep -A3 -E "esp-dl|human_face" || true
-          grep -E "HUMAN_FACE|ESPDET" $B/build/config/sdkconfig.h || true
-          MAP=$B/build/fd.map
-          grep -c "face_detection" "$MAP" || true
-          grep -n "human_face_detect_espdl\|human_face_feat_espdl" "$MAP" | head || true
-          grep -n "add_raw_frame_listener\|on_raw_frame_seen" "$MAP" | head || true
+          B=fd/.esphome/build/camera-test-guition
+          ls $B/src/esphome/components/lvgl/ | grep -i freertos || echo "no lv_freertos.c in src"
+          grep -n "lv_freertos\|lv_os_private" build.log | head || true
+          MAP=$B/build/camera-test-guition.map
+          grep -n "lv_thread_init" "$MAP" | head -5 || true
           ls -la $B/build/*.bin || true
-          grep -iE "warning: .*face_detection" build.log | head -40 || true
