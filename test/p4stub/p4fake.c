@@ -70,8 +70,38 @@ esp_err_t ppa_client_register_event_callbacks(ppa_client_handle_t c, const ppa_e
     return ESP_OK;
 }
 
+#define SYNCED 64
+static struct {
+    uintptr_t lo, hi;
+} g_synced[SYNCED];
+static int g_nsynced;
+int g_p4_copy_unsynced;
+
+void p4fake_synced_forget(void)
+{
+    g_nsynced = 0;
+    g_p4_copy_unsynced = 0;
+}
+
+static bool synced(const void * p, size_t n)
+{
+    for(int i = 0; i < g_nsynced; i++) {
+        if((uintptr_t)p >= g_synced[i].lo && (uintptr_t)p + n <= g_synced[i].hi) return true;
+    }
+    return false;
+}
+
 esp_err_t esp_cache_msync(void * addr, size_t size, int flags)
 {
+    if((flags & ESP_CACHE_MSYNC_FLAG_DIR_C2M) && (flags & ESP_CACHE_MSYNC_FLAG_INVALIDATE)) {
+        if(g_nsynced == SYNCED) {
+            memmove(&g_synced[0], &g_synced[1], sizeof(g_synced[0]) * (SYNCED - 1));
+            g_nsynced--;
+        }
+        g_synced[g_nsynced].lo = (uintptr_t)addr;
+        g_synced[g_nsynced].hi = (uintptr_t)addr + size;
+        g_nsynced++;
+    }
     g_p4.msync_addr = (uintptr_t)addr;
     g_p4.msync_size = size;
     g_p4.msync_flags = flags;
@@ -290,6 +320,7 @@ esp_err_t esp_async_memcpy(async_memcpy_handle_t mcp, void * dst, void * src, si
     if(g_copy_count == COPIES) return ESP_ERR_INVALID_STATE;
     g_p4_copies++;
     g_p4_copy_bytes += n;
+    if(!synced(dst, n)) g_p4_copy_unsynced++;
     const int i = (g_copy_head + g_copy_count) % COPIES;
     g_copy[i].h = mcp;
     g_copy[i].dst = dst;

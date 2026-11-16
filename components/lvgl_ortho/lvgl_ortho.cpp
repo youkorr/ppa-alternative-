@@ -105,16 +105,31 @@ void LvglOrtho::setup() {
   }
   // Two bands of internal RAM for a big picture in PSRAM: taken now or never,
   // and said either way, since internal RAM is what Wi-Fi and the rest live on.
-  if (this->ppa_on_ && this->camera_ram_ > 0) {
-    const size_t band = this->camera_ram_ / 2;
-    const esp_err_t err = lv_draw_ortho_ppa_set_stage(band);
-    if (err == ESP_OK) {
-      ESP_LOGI(TAG, "A camera picture is turned through 2 x %u KiB of internal RAM (%u KiB of it left)",
-               (unsigned) (band / 1024), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
-    } else {
-      ESP_LOGW(TAG, "No 2 x %u KiB of internal RAM for camera_ram (error 0x%x, %u KiB free): pictures are turned "
-               "straight from PSRAM", (unsigned) (band / 1024), (unsigned) err,
-               (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+  // Without them the halves of the first tile are the bands, lent while the
+  // picture is turned: no RAM of their own.
+  if (this->ppa_on_) {
+    bool own = false;
+    if (this->camera_ram_ > 0) {
+      const size_t band = this->camera_ram_ / 2;
+      const esp_err_t err = lv_draw_ortho_ppa_set_stage(band);
+      own = err == ESP_OK;
+      if (own) {
+        ESP_LOGI(TAG, "A camera picture is turned through 2 x %u KiB of internal RAM (%u KiB of it left)",
+                 (unsigned) (band / 1024), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+      } else {
+        ESP_LOGW(TAG, "No 2 x %u KiB of internal RAM for camera_ram (error 0x%x, %u KiB free)",
+                 (unsigned) (band / 1024), (unsigned) err,
+                 (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+      }
+    }
+    if (!own) {
+      const esp_err_t err = lv_draw_ortho_ppa_use_tiles(true);
+      if (err == ESP_OK) {
+        ESP_LOGI(TAG, "A camera picture is turned through the halves of the first tile, lent while it is turned");
+      } else {
+        ESP_LOGW(TAG, "No GDMA copy for the bands (error 0x%x): pictures are turned straight from PSRAM",
+                 (unsigned) err);
+      }
     }
   }
   lv_draw_ortho_set_image_cache(this->image_cache_);

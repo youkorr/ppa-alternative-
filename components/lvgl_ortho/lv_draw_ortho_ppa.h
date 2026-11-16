@@ -77,13 +77,22 @@ esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * op);
  */
 esp_err_t lv_draw_ortho_ppa_set_stage(size_t bytes);
 
-/** What lv_draw_ortho_ppa_set_stage() changed. */
+/**
+ * The same, with no RAM of its own: while lv_draw_ortho turns a picture whole
+ * it draws no tile, so it lends the turner its first tile
+ * (lv_draw_ortho_set_loan), and the halves of that tile are the bands -- 64 KiB
+ * each with the default tiles. Bands of set_stage() win when there are any.
+ * Installs the GDMA copy; false stops it. After lv_draw_ortho_ppa_init().
+ */
+esp_err_t lv_draw_ortho_ppa_use_tiles(bool on);
+
+/** What lv_draw_ortho_ppa_set_stage() and _use_tiles() changed. */
 typedef struct {
     uint32_t pictures;    /**< blocks turned through the bands */
     uint32_t bands;       /**< bands they were turned in */
     uint32_t declined;    /**< big blocks in PSRAM turned the plain way, or partly */
     uint32_t rows;        /**< rows in a band, the last time */
-    uint32_t band_bytes;  /**< each band's size, 0 when there are none */
+    uint32_t band_bytes;  /**< each band's size: set_stage()'s, else the last lent tile's half, else 0 */
     uint64_t us;          /**< spent turning them, but the wait for the last band (the caller's) */
 } lv_draw_ortho_ppa_stage_stats_t;
 

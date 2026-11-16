@@ -13,6 +13,11 @@ typedef struct {
 } p4fake_t;
 extern unsigned long long g_p4_pixels;
 extern int g_p4_runs;
+/* GDMA copies whose destination no esp_cache_msync() written back AND dropped
+ * covers since p4fake_synced_forget(): a CPU line still dirty there would be
+ * written back over the copy's rows. */
+extern int g_p4_copy_unsynced;
+void p4fake_synced_forget(void);
 /* A non-blocking transaction runs only when time is let pass
  * (esp_rom_delay_us) or a blocking one follows it, so a caller that does not
  * wait sees the frame buffer as it was. */

@@ -174,8 +174,8 @@ MUTANTS = {
     "a band turned before it arrived": ("        if(!copies_done()) {", "        if(0) {"),
     # ...the next band's rows taken from the wrong place in the picture.
     "the next band copied from this band's rows": (
-        "            if(!copy_rows(src, (uint32_t)block->y1 + row + k, next_rows, g_stage[(i + 1) & 1])) {",
-        "            if(!copy_rows(src, (uint32_t)block->y1 + row, next_rows, g_stage[(i + 1) & 1])) {"),
+        "            if(!copy_rows(src, (uint32_t)block->y1 + row + k, next_rows, g_band[(i + 1) & 1])) {",
+        "            if(!copy_rows(src, (uint32_t)block->y1 + row, next_rows, g_band[(i + 1) & 1])) {"),
     # ...every band put where the first one goes.
     "every band placed as the first": (
         "        place(rot, bw, bh, p->x, row + p->y, p->w, p->h, &ox, &oy);",
@@ -187,11 +187,26 @@ MUTANTS = {
     "a refused copy leaving the rest unturned": (
         "                g_stage_stats.declined++;\n                for(uint32_t r = row + k; r < bh; r += k) {",
         "                g_stage_stats.declined++;\n                for(uint32_t r = bh; r < bh; r += k) {"),
-    # NOT here: the bands written back out of the cache once taken, and the
-    # wait for an earlier picture still reading the first band. The fake PPA
-    # has no cache, and every picture lv_draw_ortho turns is fenced before
-    # the next: both guards are for the board, where a dirty line or an
-    # interrupted picture (a part outside a video window) can meet them.
+    # The first tile lent as bands: copied into over lines the CPU may still
+    # have dirty in the cache...
+    "a lent tile left in the cache": (
+        "        if(esp_cache_msync(g_loan, 2 * half, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE) != ESP_OK)\n"
+        "            return false;\n", ""),
+    # ...its two halves made one band...
+    "the lent tile's two bands the same": ("    g_band[1] = g_loan + half;", "    g_band[1] = g_loan;"),
+    # ...and the tile never lent at all.
+    "no tile lent": ("    if(lend) g_loan(tile_aligned(g_unit->tile_alloc[0]), LV_DRAW_ORTHO_TILE_BYTES);",
+                     "    if(0) g_loan(tile_aligned(g_unit->tile_alloc[0]), LV_DRAW_ORTHO_TILE_BYTES);"),
+    # NOT here: the wait for the lent tile's own turns before the first copy.
+    # lv_draw_ortho takes a picture alone, and the run of tasks before it ends
+    # with a fence, so nothing is queued when the tile is lent: the wait
+    # returns at once, a guard for a caller that lends without one.
+    # NOT here: the dedicated bands written back out of the cache once taken
+    # (set_stage), and the wait for an earlier picture still reading the
+    # first band. The first is outside every frame a test can watch, and
+    # every picture lv_draw_ortho turns is fenced before the next: both
+    # guards are for the board, where a dirty line or an interrupted picture
+    # (a part outside a video window) can meet them.
     # The PPA's angle the wrong way round.
     "the PPA turning the other way": (
         "        case LV_DISPLAY_ROTATION_90:\n            return PPA_SRM_ROTATION_ANGLE_90;",

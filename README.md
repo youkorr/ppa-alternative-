@@ -235,6 +235,20 @@ whole (DIG-734), a copy refused -- is the plain turn, said in the
 ten-second report. Checked on a PC at every angle with copies landing at
 once and late, pixel for pixel; not yet run inside the engine on a board.
 
+**Without RAM of its own the first tile is lent instead.** esp-iot-solution's
+lvgl9 test app showed why it is needed: with an LVGL task, two draw threads
+and LVGL's own objects in internal RAM, the 80 KB were not there (80 KB free
+in pieces, the largest 31 KB) and every picture was turned straight. While a
+picture is turned whole no tile is drawn and the second core is idle, so the
+engine lends its first tile (`lv_draw_ortho_set_loan`): the PPA writes the
+tile back out of the cache and drops it, and uses its two halves as the
+bands. On a PC: every angle, copies landing at once and late, a gradient
+and a caption drawn in tiles before and after every frame, and three
+mutants -- the write-back, the two halves one band, the tile never lent --
+each caught. A fourth guard, the wait for the tile's own turns before the
+first copy, cannot be: the engine takes a picture alone, after a fence, so
+nothing is ever queued then.
+
 On the Tab5 it is the same shape: 49 ms a frame, **44.3 ms of it waiting for
 the PPA** to turn the 1280x720 picture a quarter turn, one picture of 1800 KiB
 a screen. That is about 21 Mpx/s, faster than the 15-18 a quarter turn reads
@@ -302,7 +316,7 @@ lvgl_ortho:
   # tile_width: 256       # off by default: narrower, taller tiles (slower on a Tab5)
   # split: true           # off by default: the PPA and the CPU together (slower on a Tab5)
   # cpu_load: true        # off by default: each core's real load in the ten-second report
-  # camera_ram: 160KB     # 80KB by default: internal RAM to turn a camera picture through, 0 off
+  # camera_ram: 160KB     # 80KB by default: internal RAM to turn a camera picture through, 0 the first tile
 ```
 
 It takes LVGL's display over once ESPHome's lvgl has built it: one
@@ -340,7 +354,9 @@ display's rotation itself.
   default; on a Tab5 160KB takes the turn from 24 to 19 ms if internal RAM
   has room for it. The boot log says whether it was taken and how much
   internal RAM is left; the ten-second report how many pictures went through
-  it. `0` turns every picture straight from PSRAM, as before.
+  it. With `0`, or no room at boot, the bands are the two halves of the first
+  tile, lent while the picture is turned: no tile is drawn then, so they cost
+  no RAM at all, and with the default 128 KB tiles they are 64 KB each.
 - **`cpu_load: true`** adds each core's real load to the ten-second report,
   from FreeRTOS's count of the time each core's idle task ran:
   `processor really busy: core 0 12%, core 1 4%`. LVGL's `perf_monitor`

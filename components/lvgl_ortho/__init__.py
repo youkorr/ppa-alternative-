@@ -84,8 +84,9 @@ CONFIG_SCHEMA = cv.All(
             # internal RAM while the PPA turns the band before from there,
             # because the PPA reading PSRAM is what makes the turn slow
             # (measured with the camera streaming: 44 to 24 ms on a Tab5 with
-            # 80KB, 19 with 160KB; 32 to 14 ms on a Waveshare with 64KB). No
-            # room at boot, and pictures are turned straight, as with 0.
+            # 80KB, 19 with 160KB; 32 to 14 ms on a Waveshare with 64KB). With
+            # 0, or no room at boot, the bands are the halves of the first
+            # tile, lent while the picture is turned: no RAM of their own.
             cv.Optional("camera_ram", default="80KB"): _bytes,
         }
     ).extend(cv.COMPONENT_SCHEMA),

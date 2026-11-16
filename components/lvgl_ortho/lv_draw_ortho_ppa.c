@@ -388,6 +388,15 @@ static lv_draw_ortho_ppa_stage_stats_t g_stage_stats;
 /* A copy that never landed: it may still, so the bands are neither used nor
  * freed again. */
 static bool g_stage_broken;
+/* The two bands a picture goes through: those above when there are any, else
+ * the halves of the first tile, which lv_draw_ortho lends while it hands a
+ * picture over whole (lv_draw_ortho_ppa_use_tiles). */
+static uint8_t * g_band[2];
+static size_t g_band_bytes;
+static bool g_use_tiles;
+static uint8_t * g_loan;
+static size_t g_loan_bytes;
+static bool g_loan_ready;   /* waited for and out of the cache since it was lent */
 
 /* Microseconds, for the time a picture spends in its bands; 0 off the board. */
 static int64_t now_us(void)
@@ -411,7 +420,7 @@ static bool on_copied(async_memcpy_handle_t mcp, async_memcpy_event_t * event, v
 static bool copy_rows(const lv_draw_ortho_pic_t * src, uint32_t row, uint32_t rows, uint8_t * to)
 {
     const size_t n = (size_t)rows * src->stride;
-    if(g_copier == NULL || n > g_stage_bytes) return false;
+    if(g_copier == NULL || n > g_band_bytes) return false;
     ++g_copies;
     if(esp_async_memcpy(g_copier, to, (uint8_t *)src->buf + (size_t)row * src->stride, n, on_copied, NULL) != ESP_OK) {
         --g_copies;
@@ -530,7 +539,7 @@ static uint32_t staged_bands(const lv_draw_ortho_pic_t * src, const lv_area_t * 
                              uint32_t size)
 {
     const uint32_t bw = (uint32_t)lv_area_get_width(block), bh = (uint32_t)lv_area_get_height(block);
-    uint32_t k = (uint32_t)(g_stage_bytes / src->stride);
+    uint32_t k = (uint32_t)(g_band_bytes / src->stride);
     if(k >= bh) k = bh;
     else k -= k % STAGE_STEP;
     const uint32_t rest = k ? bh % k : 0;
@@ -545,7 +554,7 @@ static uint32_t staged_bands(const lv_draw_ortho_pic_t * src, const lv_area_t * 
 
     /* Nothing of an earlier picture may still read the first band. */
     if(g_stage_reader[0] && !wait(g_stage_reader[0])) return 0;
-    if(!copy_rows(src, (uint32_t)block->y1, LV_MIN(k, bh), g_stage[0])) {
+    if(!copy_rows(src, (uint32_t)block->y1, LV_MIN(k, bh), g_band[0])) {
         g_stage_stats.declined++;
         return 0;
     }
@@ -553,7 +562,7 @@ static uint32_t staged_bands(const lv_draw_ortho_pic_t * src, const lv_area_t * 
         const uint32_t row = i * k, rows = LV_MIN(k, bh - row);
         const piece_t * pieces = rows == k ? full : last;
         const int n = rows == k ? nf : nl;
-        uint8_t * band = g_stage[i & 1];
+        uint8_t * band = g_band[i & 1];
         if(!copies_done()) {
             /* The GDMA stopped: the rest straight from the picture. */
             g_stage_broken = true;
@@ -573,7 +582,7 @@ static uint32_t staged_bands(const lv_draw_ortho_pic_t * src, const lv_area_t * 
             /* The band the next rows go into was read by the band before this one. */
             const uint32_t next_rows = LV_MIN(k, bh - row - k);
             if(g_stage_reader[(i + 1) & 1] && !wait(g_stage_reader[(i + 1) & 1])) return g_queued;
-            if(!copy_rows(src, (uint32_t)block->y1 + row + k, next_rows, g_stage[(i + 1) & 1])) {
+            if(!copy_rows(src, (uint32_t)block->y1 + row + k, next_rows, g_band[(i + 1) & 1])) {
                 g_stage_stats.declined++;
                 for(uint32_t r = row + k; r < bh; r += k) {
                     const uint32_t h = LV_MIN(k, bh - r);
@@ -590,16 +599,104 @@ static uint32_t staged_bands(const lv_draw_ortho_pic_t * src, const lv_area_t * 
     return g_queued;
 }
 
-esp_err_t lv_draw_ortho_ppa_set_stage(size_t bytes)
+/* The GDMA copy, for either kind of band. */
+static esp_err_t install_copier(void)
 {
-    /* Nothing of ours may still read the bands when they go. */
-    if(g_client && (g_stage_reader[0] || g_stage_reader[1])) wait(g_queued);
-    if(g_stage_broken) return bytes ? ESP_ERR_INVALID_STATE : ESP_OK;
+    if(g_copier) return ESP_OK;
+    esp_err_t err = ESP_ERR_NOT_SUPPORTED;
+#if SOC_AXI_GDMA_SUPPORTED
+    for(size_t burst = 64; burst >= 16 && err != ESP_OK; burst /= 2) {
+        async_memcpy_config_t cfg = ASYNC_MEMCPY_DEFAULT_CONFIG();
+        cfg.backlog = 2;
+        cfg.dma_burst_size = burst;
+        err = esp_async_memcpy_install_gdma_axi(&cfg, &g_copier);
+    }
+#endif
+    if(err != ESP_OK) {
+        g_copier = NULL;
+        return err;
+    }
+#if defined(ESP_PLATFORM)
+    if(g_wake == NULL && (g_wake = xSemaphoreCreateCounting(WAKE_MAX, 0)) == NULL) return ESP_ERR_NO_MEM;
+#endif
+    g_copied = g_copies = 0;
+    return ESP_OK;
+}
+
+static void uninstall_copier(void)
+{
     if(g_copier) {
         copies_done();
         esp_async_memcpy_uninstall(g_copier);
         g_copier = NULL;
     }
+}
+
+/* Which bands a picture goes through, made ready: its own when there are any,
+ * else the halves of the lent tile. The tile was the tiles' a moment ago:
+ * lines the CPU drew may still be dirty in the cache -- written back after the
+ * GDMA's copy, they would go over its rows. Turns queued before could still
+ * read it too; lv_draw_ortho fences before it takes a picture alone, so the
+ * wait returns at once, and is there for a caller that lends without one. */
+static bool choose_bands(void)
+{
+    if(g_stage_bytes) {
+        g_band[0] = g_stage[0];
+        g_band[1] = g_stage[1];
+        g_band_bytes = g_stage_bytes;
+        return true;
+    }
+    if(g_loan == NULL || g_copier == NULL || ((uintptr_t)g_loan % LINE) != 0) return false;
+    const size_t half = (g_loan_bytes / 2) & ~(size_t)(LINE - 1);
+    if(half == 0) return false;
+    if(!g_loan_ready) {
+        if(!wait(g_queued)) return false;
+        if(esp_cache_msync(g_loan, 2 * half, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE) != ESP_OK)
+            return false;
+        g_loan_ready = true;
+    }
+    g_band[0] = g_loan;
+    g_band[1] = g_loan + half;
+    g_band_bytes = half;
+    return true;
+}
+
+/* lv_draw_ortho's first tile, lent while it turns a picture and handed back
+ * (NULL) once its turns have finished -- the bands' readers among them. */
+static void take_loan(void * mem, size_t bytes)
+{
+    if(mem == NULL && g_stage_bytes == 0) g_stage_reader[0] = g_stage_reader[1] = 0;
+    g_loan = (uint8_t *)mem;
+    g_loan_bytes = mem ? bytes : 0;
+    g_loan_ready = false;
+}
+
+esp_err_t lv_draw_ortho_ppa_use_tiles(bool on)
+{
+    if(!on) {
+        lv_draw_ortho_set_loan(NULL);   /* waits for whatever still reads the tile */
+        g_use_tiles = false;
+        if(g_stage_bytes == 0) uninstall_copier();
+        return ESP_OK;
+    }
+    if(g_client == NULL || g_stage_broken) return ESP_ERR_INVALID_STATE;
+    const esp_err_t err = install_copier();
+    if(err != ESP_OK) {
+        if(g_stage_bytes == 0) uninstall_copier();
+        return err;
+    }
+    g_use_tiles = true;
+    lv_draw_ortho_set_loan(take_loan);
+    return ESP_OK;
+}
+
+esp_err_t lv_draw_ortho_ppa_set_stage(size_t bytes)
+{
+    /* Nothing of ours may still read the bands when they go. */
+    if(g_client && (g_stage_reader[0] || g_stage_reader[1])) wait(g_queued);
+    if(g_stage_broken) return bytes ? ESP_ERR_INVALID_STATE : ESP_OK;
+    if(g_use_tiles) copies_done();
+    else uninstall_copier();
     for(int i = 0; i < 2; i++) {
         heap_caps_free(g_stage[i]);
         g_stage[i] = NULL;
@@ -620,35 +717,19 @@ esp_err_t lv_draw_ortho_ppa_set_stage(size_t bytes)
          * zeros over rows the GDMA had just copied. */
         esp_cache_msync(g_stage[i], bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);
     }
-    esp_err_t err = ESP_ERR_NOT_SUPPORTED;
-#if SOC_AXI_GDMA_SUPPORTED
-    for(size_t burst = 64; burst >= 16 && err != ESP_OK; burst /= 2) {
-        async_memcpy_config_t cfg = ASYNC_MEMCPY_DEFAULT_CONFIG();
-        cfg.backlog = 2;
-        cfg.dma_burst_size = burst;
-        err = esp_async_memcpy_install_gdma_axi(&cfg, &g_copier);
-    }
-#endif
+    const esp_err_t err = install_copier();
     if(err != ESP_OK) {
-        g_copier = NULL;
         lv_draw_ortho_ppa_set_stage(0);
         return err;
     }
-#if defined(ESP_PLATFORM)
-    if(g_wake == NULL && (g_wake = xSemaphoreCreateCounting(WAKE_MAX, 0)) == NULL) {
-        lv_draw_ortho_ppa_set_stage(0);
-        return ESP_ERR_NO_MEM;
-    }
-#endif
     g_stage_bytes = bytes;
-    g_copied = g_copies = 0;
     return ESP_OK;
 }
 
 void lv_draw_ortho_ppa_get_stage_stats(lv_draw_ortho_ppa_stage_stats_t * out, bool reset)
 {
     *out = g_stage_stats;
-    out->band_bytes = (uint32_t)g_stage_bytes;
+    out->band_bytes = (uint32_t)(g_stage_bytes ? g_stage_bytes : g_band_bytes);
     if(reset) lv_memzero(&g_stage_stats, sizeof(g_stage_stats));
 }
 
@@ -677,7 +758,7 @@ static uint32_t turn(const lv_draw_ortho_pic_t * src, const lv_area_t * block, c
     /* A big picture in PSRAM: through internal RAM, when it can be. The
      * output rows are written back and dropped first, as below. */
     const bool big = (uint64_t)bw * bh >= LV_DRAW_ORTHO_STAGE_MIN_PIXELS;
-    if(g_stage_bytes && !g_stage_broken && big && esp_ptr_external_ram(src->buf)) {
+    if(!g_stage_broken && big && esp_ptr_external_ram(src->buf) && choose_bands()) {
         const uintptr_t sa = a & ~(uintptr_t)(LINE - 1), sb = (b + LINE - 1) & ~(uintptr_t)(LINE - 1);
         if(esp_cache_msync((void *)sa, sb - sa, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE) != ESP_OK)
             return 0;
@@ -934,6 +1015,7 @@ esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * in)
 
 void lv_draw_ortho_ppa_deinit(void)
 {
+    lv_draw_ortho_ppa_use_tiles(false);
     lv_draw_ortho_set_turner(NULL, NULL);
     lv_draw_ortho_ppa_set_stage(0);
     lv_draw_ortho_set_filler(NULL);

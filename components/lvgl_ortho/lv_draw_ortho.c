@@ -94,6 +94,9 @@ static lv_draw_ortho_turn_cb_t g_turn;
 static lv_draw_ortho_wait_cb_t g_wait;
 static lv_draw_ortho_fill_cb_t g_fill;
 static uint32_t g_last;
+/* Who borrows the first tile while a picture is turned whole
+ * (lv_draw_ortho_set_loan). */
+static lv_draw_ortho_loan_cb_t g_loan;
 static const void * g_last_picture;   /* the pixels of the last picture turned, for images_again */
 static bool g_turner_failed;
 
@@ -1860,6 +1863,16 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
         return false;
     }
     const uint64_t before = g_stats.bytes_turned;
+    /* No tile is drawn while the picture is turned and the other core is idle
+     * (it is joined at the end of every pair), so the first tile is lent to
+     * the turner: a picture in PSRAM can go through it a band at a time. The
+     * fence below hands it back. */
+#if defined(ESP_PLATFORM)
+    const bool lend = g_loan && g_unit && g_tile_internal;
+#else
+    const bool lend = g_loan && g_unit;   /* a PC has one kind of memory */
+#endif
+    if(lend) g_loan(tile_aligned(g_unit->tile_alloc[0]), LV_DRAW_ORTHO_TILE_BYTES);
     for(int32_t i = 0; i < np; i++) {
         if(turn_split(o, nb->header.cf, px, nb->data, nb->header.stride, &target->buf_area,
                       (uint8_t *)img->data, sstride, &t->area, &parts[i])) continue;
@@ -1867,6 +1880,7 @@ static bool try_image(lv_draw_task_t * t, const ortho_t * o, const lv_area_t * t
                     (uint8_t *)img->data, sstride, &t->area, &parts[i], true);
     }
     fence();   /* the picture is the application's again when the task is finished */
+    if(lend) g_loan(NULL, 0);
     g_stats.images_turned++;
     g_stats.bytes_turned_images += g_stats.bytes_turned - before;
     if(img->data == g_last_picture) g_stats.images_again++;
@@ -2600,6 +2614,12 @@ void lv_draw_ortho_init(void)
 void lv_draw_ortho_set_filler(lv_draw_ortho_fill_cb_t fill)
 {
     g_fill = fill;
+}
+
+void lv_draw_ortho_set_loan(lv_draw_ortho_loan_cb_t loan)
+{
+    fence();
+    g_loan = loan;
 }
 
 void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_cb_t wait)
