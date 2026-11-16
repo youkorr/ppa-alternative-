@@ -389,6 +389,16 @@ static lv_draw_ortho_ppa_stage_stats_t g_stage_stats;
  * freed again. */
 static bool g_stage_broken;
 
+/* Microseconds, for the time a picture spends in its bands; 0 off the board. */
+static int64_t now_us(void)
+{
+#if defined(ESP_PLATFORM)
+    return esp_timer_get_time();
+#else
+    return 0;
+#endif
+}
+
 static bool on_copied(async_memcpy_handle_t mcp, async_memcpy_event_t * event, void * user)
 {
     (void)mcp;
@@ -499,9 +509,25 @@ static bool queue_rows(const lv_draw_ortho_pic_t * src, const lv_area_t * block,
  * turns it the plain way) or a transaction was refused (what was queued has
  * finished, and the caller turns the whole block over it -- the same
  * pixels). */
+static uint32_t staged_bands(const lv_draw_ortho_pic_t * src, const lv_area_t * block, const lv_draw_ortho_pic_t * dst,
+                             int32_t dx, int32_t dy, lv_display_rotation_t rot, ppa_srm_color_mode_t cm, uint32_t px,
+                             uint32_t size);
+
+/* Timed: the caller waits only for the last band's turn, so its wait no
+ * longer says how long a picture took -- this does. */
 static uint32_t staged(const lv_draw_ortho_pic_t * src, const lv_area_t * block, const lv_draw_ortho_pic_t * dst,
                        int32_t dx, int32_t dy, lv_display_rotation_t rot, ppa_srm_color_mode_t cm, uint32_t px,
                        uint32_t size)
+{
+    const int64_t t0 = now_us();
+    const uint32_t t = staged_bands(src, block, dst, dx, dy, rot, cm, px, size);
+    if(t) g_stage_stats.us += (uint64_t)(now_us() - t0);
+    return t;
+}
+
+static uint32_t staged_bands(const lv_draw_ortho_pic_t * src, const lv_area_t * block, const lv_draw_ortho_pic_t * dst,
+                             int32_t dx, int32_t dy, lv_display_rotation_t rot, ppa_srm_color_mode_t cm, uint32_t px,
+                             uint32_t size)
 {
     const uint32_t bw = (uint32_t)lv_area_get_width(block), bh = (uint32_t)lv_area_get_height(block);
     uint32_t k = (uint32_t)(g_stage_bytes / src->stride);

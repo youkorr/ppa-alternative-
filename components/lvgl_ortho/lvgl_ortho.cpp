@@ -534,8 +534,10 @@ void LvglOrtho::loop() {
       lv_draw_ortho_ppa_stage_stats_t ss;
       lv_draw_ortho_ppa_get_stage_stats(&ss, true);
       if (ss.pictures > 0 || ss.declined > 0) {
-        ESP_LOGI(TAG, "  %.1f pictures/s turned through internal RAM, in bands of %u rows", ss.pictures / s,
-                 (unsigned) ss.rows);
+        // The CPU's wait above is only for the last band now: this is the
+        // turn's own time, a picture.
+        ESP_LOGI(TAG, "  %.1f pictures/s turned through internal RAM, in bands of %u rows, %.1f ms each",
+                 ss.pictures / s, (unsigned) ss.rows, ss.pictures ? ss.us / 1000.0f / ss.pictures : 0.0f);
         if (ss.declined > 0)
           ESP_LOGI(TAG, "    %.1f/s turned straight, or partly: a band the PPA cannot take whole, or the copy refused",
                    ss.declined / s);

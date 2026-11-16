@@ -84,6 +84,7 @@ typedef struct {
     uint32_t declined;    /**< big blocks in PSRAM turned the plain way, or partly */
     uint32_t rows;        /**< rows in a band, the last time */
     uint32_t band_bytes;  /**< each band's size, 0 when there are none */
+    uint64_t us;          /**< spent turning them, but the wait for the last band (the caller's) */
 } lv_draw_ortho_ppa_stage_stats_t;
 
 void lv_draw_ortho_ppa_get_stage_stats(lv_draw_ortho_ppa_stage_stats_t * out, bool reset);
