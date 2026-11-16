@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# Temporary: a real ESP-IDF build of youkorr/esphome's esp_video_camera with
+# sensor_model: ov02c10, whose driver that component now carries as an IDF
+# component of its own. Proves what esphome config cannot: that the component
+# manager takes the local dependency, the Kconfig is read, ov02c10.c compiles
+# against the esp_cam_sensor esp_video pulls, -u keeps it in the link, and
+# esp_ipa compiles its tuning in.
+name: OV02C10 build
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        esphome: [release, dev]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - if: matrix.esphome == 'release'
+        run: pip install esphome
+      - if: matrix.esphome == 'dev'
+        run: pip install "git+https://github.com/esphome/esphome@dev"
+      - run: esphome version
+      - name: The configuration
+        run: |
+          mkdir cam && cat > cam/cam-ov02c10.yaml <<'YAML'
+          esphome:
+            name: cam-ov02c10
+          external_components:
+            - source:
+                type: git
+                url: https://github.com/youkorr/esphome
+                ref: esp_video_camera-lvgl-ov02c10-check
+              components: [esp_video_camera]
+              refresh: 0s
+          esp32:
+            board: esp32-p4-evboard
+            framework:
+              type: esp-idf
+              log_level: ERROR
+          psram:
+            mode: hex
+            speed: 200MHz
+          logger:
+          i2c:
+            - id: i2c_bus
+              sda: GPIO7
+              scl: GPIO8
+          esp_video_camera:
+            name: Camera
+            i2c_id: i2c_bus
+            device: jpeg
+            sensor_model: ov02c10
+            resolution: 1288x728
+          YAML
+      - name: esphome compile
+        run: |
+          set -o pipefail
+          esphome compile cam/cam-ov02c10.yaml 2>&1 | tee build.log
+      - name: The driver is in the firmware
+        run: |
+          set -x
+          B=cam/.esphome/build/cam-ov02c10
+          grep -n "ov02c10" $B/src/idf_component.yml
+          grep -n "OV02C10" $B/sdkconfig.cam-ov02c10
+          grep -c "ov02c10.c" build.log
+          MAP=$(find $B -name "*.map" | head -1); echo "$MAP"
+          grep -n "ov02c10_detect" "$MAP" | head
+          grep -n "esp_cam_sensor_detect_fn_ov02c10" "$MAP" | head
+          IPA=$(find $B -name esp_video_ipa_config.c | head -1); echo "$IPA"
+          grep -n '"OV02C10"' "$IPA"
+          grep -n "CONFIG_CAMERA_OV02C10" $(find $B -name sdkconfig.h | head -1)
