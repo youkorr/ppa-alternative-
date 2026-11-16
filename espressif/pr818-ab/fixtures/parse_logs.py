@@ -79,8 +79,8 @@ def parse(path):
                 raise ValueError(f'missing header field {key}')
         if header['protocol'] != '9' or done['protocol'] != '9':
             raise ValueError('only protocol9 captures can be compared with this parser')
-        if header['variant'] not in ('native64',):
-            raise ValueError('V9 capture must identify official or native64')
+        if header['variant'] not in ('official', 'native64', 'native64-ram80'):
+            raise ValueError('V9 capture must identify official, native64 or native64-ram80')
         if header['board'] not in ('tab5', 'waveshare-7b'):
             raise ValueError('unknown board')
         if header['sync_modes'] != 'eager,deferred' or header['paired_order'] != 'alternating':
@@ -93,7 +93,7 @@ def parse(path):
             raise ValueError('unexpected sensor/draw-worker/PPA profile for V9 kit')
         if integer(header, 'panel_buffers', 1) != 3:
             raise ValueError('V9 requires three physical panel buffers')
-        native = header['variant'] == 'native64'
+        native = header['variant'].startswith('native64')
         if integer(header, 'batch') != (64 if native else 0):
             raise ValueError('variant batch limit does not match header')
         frames, rounds = integer(header, 'frames', 16), integer(header, 'rounds', 1)
