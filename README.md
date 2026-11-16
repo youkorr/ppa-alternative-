@@ -787,6 +787,10 @@ read a circle-cache field outside its mutex) and says why it is harmless.
 
 ## Without ESPHome
 
+In an ESP-IDF project the engine is a component of its own,
+[`registry/lv_draw_ortho`](registry/lv_draw_ortho), packed for the ESP
+Component Registry with a complete example for the Waveshare 7B:
+
 ```c
 #include "lv_draw_ortho.h"
 #include "lv_draw_ortho_ppa.h"
@@ -819,9 +823,13 @@ free rotation angle is not a quarter turn, so it is counted in
 ## Going upstream
 
 For Espressif, [esp-iot-solution PR #818](https://github.com/espressif/esp-iot-solution/pull/818)
-brings `lv_draw_ortho` into `esp_lvgl_adapter` as
-`CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`, off by default, with the
-measurements above; it is open for review. Nothing here is specific to
+brought `lv_draw_ortho` into `esp_lvgl_adapter` as
+`CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`. Espressif measured it on their own
+boards (refreshes a second from about 29.5 to 60.9 and from 25.0 to 38.8, the
+CPU from 39 % to 2 %) and decided not to merge it into the general-purpose
+adapter, for its internal RAM, its reliance on LVGL's internals and its
+maintenance; they keep it as a reference for the adapter's v1.0. The
+component in `registry/lv_draw_ortho` is the optional backend instead. Nothing here is specific to
 Espressif except `lv_draw_ortho_ppa.c`: any MCU driving a panel on its side
 has the same problem. For LVGL, three separate
 things: the draw unit as the software renderer's answer to matrix rotation;

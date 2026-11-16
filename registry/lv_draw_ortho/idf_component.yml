@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+version: "0.1.0"
+description: >-
+  LVGL draw unit that draws a rotated display in the panel's own orientation:
+  tiles turned by the ESP32-P4's PPA while the next ones are drawn, plain
+  rectangles filled by the PPA, big PSRAM pictures (a camera frame, a video)
+  turned straight into the frame buffer through internal RAM, and LVGL's
+  copies between frame buffers kept to what the next frame does not draw.
+url: https://github.com/youkorr/ppa-alternative-
+repository: https://github.com/youkorr/ppa-alternative-.git
+repository_info:
+  path: registry/lv_draw_ortho
+documentation: https://github.com/youkorr/ppa-alternative-/tree/main/registry/lv_draw_ortho
+issues: https://github.com/youkorr/ppa-alternative-/issues
+license: MIT
+tags:
+  - lvgl
+  - rotation
+  - ppa
+  - display
+  - esp32p4
+targets:
+  - esp32p4
+dependencies:
+  idf: ">=5.5,<6.0"
+  lvgl/lvgl:
+    version: ">=9.5.0,<9.7.0"
+    public: true
