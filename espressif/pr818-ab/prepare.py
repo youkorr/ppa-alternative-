@@ -15,9 +15,10 @@ PR's are measured by the same firmware code, on the same day:
                        adapter (TRIPLE_PARTIAL), as Espressif ships it
   --variant native     the adapter at --ref drawn in the panel's orientation
                        (ROTATE_IN_DRAW, DOUBLE_DIRECT)
-  --video-ram KB       with native: CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB,
-                       the camera picture turned through two bands of internal
-                       RAM; the variant is then named native64-ramKB
+  --no-bands           with native: CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_BANDS
+                       off, the camera picture turned straight from PSRAM
+                       rather than through the first tile lent as two bands;
+                       the variant is then named native64-nobands
 
 The two modes are V9's, mapped onto what the PR does now: "eager" is LVGL
 keeping its frame buffers in step itself, "deferred" is lv_draw_ortho doing
@@ -124,8 +125,8 @@ def prepare(args):
     out.mkdir(parents=True, exist_ok=True)
     sha, tree = export(args.repo.resolve(), args.ref, out)
     native = args.variant == 'native'
-    if args.video_ram and not native:
-        raise ValueError('--video-ram needs --variant native')
+    if args.no_bands and not native:
+        raise ValueError('--no-bands needs --variant native')
     width, height, rotation, flash = SIZES[args.board]
     app = out / ADAPTER / 'test_apps/lvgl9'
 
@@ -177,13 +178,13 @@ factory, app, factory, , 0x600000,
             (('ab_camera.c', 'ab_camera.h') if camera else ()):
         shutil.copy2(HERE / 'fixtures' / name, main / name)
     patch_main(main / 'ab_main.c')
-    variant = ('native64' + (f'-ram{args.video_ram}' if args.video_ram else '')) if native else 'official'
+    variant = ('native64' + ('-nobands' if args.no_bands else '')) if native else 'official'
     header = {
         'AB_PROTOCOL_VERSION': 9, 'AB_BOARD_NAME': args.board, 'AB_VARIANT': variant,
         'AB_SOURCE_COMMIT': sha, 'AB_SOURCE_TREE': tree, 'AB_WIDTH': width, 'AB_HEIGHT': height,
         'AB_BATCH_LIMIT': 64 if native else 0, 'AB_HAS_NATIVE': int(native), 'AB_HAS_DPI_PROBE': 1,
         'AB_STOCK_PPA': 0, 'AB_DASHBOARD_FULL': 0, 'AB_FRAMES': 64, 'AB_ROUNDS': 2, 'AB_WARMUP': 16,
-        'AB_HAS_CAMERA': int(camera), 'AB_VIDEO_RAM_KB': args.video_ram,
+        'AB_HAS_CAMERA': int(camera), 'AB_VIDEO_BANDS': int(native and not args.no_bands),
     }
     config = ''.join(f'#define {k} ' + (f'"{v}"' if isinstance(v, str) else f'{v}u') + '\n' for k, v in header.items())
     config += f'#define AB_ROTATION ESP_LV_ADAPTER_ROTATE_{rotation}\n'
@@ -244,7 +245,7 @@ CONFIG_ESP_LVGL_ADAPTER_ENABLE_FS=n
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
 CONFIG_ESP_LVGL_ADAPTER_ROTATE_IMAGE_CACHE_SIZE_KB=0
-CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB=''' + str(args.video_ram) + '''
+CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_BANDS=''' + ('n' if args.no_bands else 'y') + '''
 CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
 # AB_CPU: each core's idle time, from FreeRTOS's run-time counters.
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
@@ -274,6 +275,6 @@ if __name__ == '__main__':
     p.add_argument('--idf', type=Path, default=Path(os.environ.get('IDF_PATH', '')))
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--video', type=Path, help='an espressif/esp-video-components checkout: adds the camera scene')
-    p.add_argument('--video-ram', type=int, default=0, metavar='KB',
-                   help='with native: internal RAM a big PSRAM picture is turned through (both bands)')
+    p.add_argument('--no-bands', action='store_true',
+                   help='with native: turn a big PSRAM picture straight, not through the lent tile')
     prepare(p.parse_args())

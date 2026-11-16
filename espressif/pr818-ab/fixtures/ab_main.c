@@ -24,7 +24,7 @@
 #if AB_HAS_NATIVE
 #include "../../../src/display/rotate_in_draw/lv_draw_ortho.h"
 #endif
-#if AB_HAS_NATIVE && AB_VIDEO_RAM_KB
+#if AB_HAS_NATIVE && AB_VIDEO_BANDS
 #include "../../../src/display/rotate_in_draw/lv_draw_ortho_ppa.h"
 #endif
 #if AB_HAS_CAMERA
@@ -400,7 +400,7 @@ static void phase(const char *scene, unsigned kind, unsigned round,
 #if AB_HAS_NATIVE
     lv_draw_ortho_reset_stats();
 #endif
-#if AB_HAS_NATIVE && AB_VIDEO_RAM_KB
+#if AB_HAS_NATIVE && AB_VIDEO_BANDS
     lv_draw_ortho_ppa_stage_stats_t stage_before;
     lv_draw_ortho_ppa_get_stage_stats(&stage_before, true);
 #endif
@@ -551,16 +551,15 @@ static void phase(const char *scene, unsigned kind, unsigned round,
                  s_camera.width, s_camera.height, cam.received, cam.shown, cam.skipped, cam.errors,
                  (unsigned long long)cam.wait_us, (long long)produced_us,
                  cam.received * 1e6 / produced_us, cam.shown * 1e6 / produced_us);
-#if AB_HAS_NATIVE && AB_VIDEO_RAM_KB
+#if AB_HAS_NATIVE && AB_VIDEO_BANDS
         /* Whether the pictures really went through the internal-RAM bands:
          * one that could not is counted as declined and turned straight. */
         lv_draw_ortho_ppa_stage_stats_t stage;
         lv_draw_ortho_ppa_get_stage_stats(&stage, true);
         ESP_LOGI(TAG, "AB_STAGE protocol=9 board=%s variant=%s sync_mode=%s scene=%s round=%u frames=%u "
-                 "video_ram_kib=%u band_bytes=%" PRIu32 " rows=%" PRIu32 " pictures=%" PRIu32 " bands=%" PRIu32
+                 "band_bytes=%" PRIu32 " rows=%" PRIu32 " pictures=%" PRIu32 " bands=%" PRIu32
                  " declined=%" PRIu32 " stage_us=%llu",
-                 AB_BOARD_NAME, AB_VARIANT, sync_mode, scene, round, AB_FRAMES, (unsigned)AB_VIDEO_RAM_KB,
-                 stage.band_bytes, stage.rows, stage.pictures, stage.bands, stage.declined,
+                 AB_BOARD_NAME, AB_VARIANT, sync_mode, scene, round, AB_FRAMES, stage.band_bytes, stage.rows, stage.pictures, stage.bands, stage.declined,
                  (unsigned long long)stage.us);
 #endif
     }

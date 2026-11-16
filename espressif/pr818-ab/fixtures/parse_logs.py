@@ -79,8 +79,8 @@ def parse(path):
                 raise ValueError(f'missing header field {key}')
         if header['protocol'] != '9' or done['protocol'] != '9':
             raise ValueError('only protocol9 captures can be compared with this parser')
-        if header['variant'] not in ('official', 'native64', 'native64-ram80'):
-            raise ValueError('V9 capture must identify official, native64 or native64-ram80')
+        if header['variant'] not in ('official', 'native64', 'native64-nobands'):
+            raise ValueError('V9 capture must identify official, native64 or native64-nobands')
         if header['board'] not in ('tab5', 'waveshare-7b'):
             raise ValueError('unknown board')
         if header['sync_modes'] != 'eager,deferred' or header['paired_order'] != 'alternating':

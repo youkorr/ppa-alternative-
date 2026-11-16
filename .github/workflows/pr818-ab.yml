@@ -5,8 +5,9 @@
 # The A/B benchmark of esp-iot-solution PR 818 (espressif/pr818-ab), built for
 # a Waveshare 7B and a Tab5, for the adapter as Espressif ships it and for the
 # branch given -- the same benchmark code in both, so the two can be compared
-# line for line. native-ram80 is the branch with the camera picture turned
-# through 80 KiB of internal RAM (CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB). Each artifact is one .bin to write at 0x0; the serial log, at
+# line for line. native turns the camera picture through the first tile, lent
+# as two bands (CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_BANDS, on by default);
+# native-nobands is the same with that off. Each artifact is one .bin to write at 0x0; the serial log, at
 # 115200 bauds, runs from AB_READY to AB_DONE in two to four minutes.
 name: PR 818 A/B benchmark firmwares
 run-name: PR 818 A/B, ${{ inputs.ref || 'test/rotate-in-draw-sync' }} against ${{ inputs.official || 'da53cfa' }}
@@ -37,7 +38,7 @@ jobs:
       fail-fast: false
       matrix:
         board: [waveshare-7b, tab5]
-        variant: [official, native, native-ram80]
+        variant: [official, native, native-nobands]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,10 +72,10 @@ jobs:
           [ -f "$IDF_PATH/version.txt" ] || git -C "$IDF_PATH" describe --tags --exact-match > "$IDF_PATH/version.txt"
           cat "$IDF_PATH/version.txt"
           VARIANT=${{ matrix.variant }}
-          RAM=0
-          if [ "$VARIANT" = native-ram80 ]; then VARIANT=native; RAM=80; fi
+          EXTRA=
+          if [ "$VARIANT" = native-nobands ]; then VARIANT=native; EXTRA=--no-bands; fi
           python3 ppa/espressif/pr818-ab/prepare.py --repo iots --ref HEAD --variant $VARIANT \
-            --board ${{ matrix.board }} --idf "$IDF_PATH" --out work --video video --video-ram $RAM
+            --board ${{ matrix.board }} --idf "$IDF_PATH" --out work --video video $EXTRA
       - name: Build
         shell: bash
         run: |
@@ -82,12 +83,12 @@ jobs:
           . "$IDF_PATH/export.sh" > /dev/null
           cd work/components/display/tools/esp_lvgl_adapter/test_apps/lvgl9
           idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.bench;sdkconfig.ab' -D IDF_TARGET=esp32p4 build
-          if [ "${{ matrix.variant }}" = native-ram80 ]; then
+          if [ "${{ matrix.variant }}" = native-nobands ]; then
             grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW=y" sdkconfig
-            grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB=80" sdkconfig
+            ! grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_BANDS=y" sdkconfig
           elif [ "${{ matrix.variant }}" = native ]; then
             grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW=y" sdkconfig
-            ! grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB=[1-9]" sdkconfig
+            grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_BANDS=y" sdkconfig
           else
             ! grep -E "^CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW=y" sdkconfig
           fi
