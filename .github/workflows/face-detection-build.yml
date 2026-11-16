@@ -64,6 +64,8 @@ jobs:
             device: jpeg
           lvgl:
             displays: [panel]
+            color_depth: 16
+            byte_order: little_endian
             pages:
               - id: main_page
                 widgets:
