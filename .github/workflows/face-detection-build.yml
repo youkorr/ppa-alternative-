@@ -16,7 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lvgl: [claude/native-idf-lv-freertos, main]
+        lvgl: [claude/native-idf-lv-freertos]
+        ppa: [plain, ppa]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -66,6 +67,7 @@ jobs:
             displays: [panel]
             color_depth: 16
             byte_order: little_endian
+          LVGL_EXTRA
             pages:
               - id: main_page
                 widgets:
@@ -82,6 +84,11 @@ jobs:
             recognition_enabled: true
             face_db_path: /sdcard/faces/faces.db
           YAML
+          if [ "${{ matrix.ppa }}" = ppa ]; then
+            sed -i 's/^LVGL_EXTRA$/  use_ppa: true\n  perf_monitor: true/' fd/fd.yaml
+          else
+            sed -i '/^LVGL_EXTRA$/d' fd/fd.yaml
+          fi
           cat fd/fd.yaml
       - name: esphome compile
         run: |
