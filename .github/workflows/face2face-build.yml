@@ -154,6 +154,18 @@ jobs:
         run: |
           set -o pipefail
           esphome compile f2f/f2f.yaml 2>&1 | tee build.log
+      # esp_video from that branch no longer builds on ESPHome dev's native
+      # ESP-IDF build (its esp_ipa include path is dropped), which stops ninja
+      # before face2face is reached: keep going past it and look at face2face.
+      - name: face2face.cpp past other components' errors
+        if: always()
+        run: |
+          cd f2f/.esphome/build/f2f-test/build
+          ninja -k 0 > ninja.log 2>&1 || true
+          grep -nE "face2face" ninja.log | head -40 || true
+          obj=$(find . -name "face2face.cpp.obj" | head -1)
+          echo "object: ${obj:-none}"
+          test -n "$obj"
       - name: What went into the firmware
         if: always()
         run: |
