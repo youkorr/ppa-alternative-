@@ -19,7 +19,8 @@ put it in Espressif's own `esp_lvgl_adapter`.
 
 ## In short
 
-Measured on two ESP32-P4 boards, the household's own:
+Measured on two ESP32-P4 boards, the household's own, and a camera on a
+third (a Guition 10", 800x1280 turned 90):
 
 | board | chip | panel | turned |
 |---|---|---|---|
@@ -35,7 +36,8 @@ Measured on two ESP32-P4 boards, the household's own:
 - **Against ESPHome's LVGL rotation**: a whole screen **2.7x as fast on the
   Waveshare and 3.2x on the Tab5**.
 - **A camera on the whole screen**: 20.4 frames/s on the Tab5, against 10-12
-  with LVGL's own rotation, and 27.8 on the Waveshare.
+  with LVGL's own rotation, 27.8 on the Waveshare, and 30.2 on the Guition,
+  which is its sensor's own rate.
 
 ## Measured on the boards
 
@@ -181,11 +183,32 @@ merged yet), the camera streaming, a whole picture:
 | Waveshare 7B, 1024x600 at 180 | 31.6 ms | 13.8 ms | 12.4 ms |
 | Tab5, 1280x720 at 270 | 44.3 ms | 24.4 ms | 18.7 ms |
 
+**Inside the engine, on the Guition 10"** (its OV02C10 at 30 frames/s, the
+panel's own frame buffers, two cores, `camera_ram:` left at 80 KB): 30.2
+screens/s shown for 29.5 camera frames/s -- every frame the sensor sends.
+Each 1280x728 picture (the canvas's width of the 1288 the sensor sends) is
+turned through internal RAM in bands of 24 rows in 27.4 ms, about 34 Mpx/s,
+and the CPU waits 1.7 ms a screen for it. The ten-second report:
+
+```
+30.2 screens/s shown
+turned 53880 KiB/s, 100% of it by the PPA, the CPU waited 39.8 times/s for it, 1.7 ms a screen
+  pictures: 29.6/s, 0.0/s the same one again, 0.0/s into a layer; 30.2 refreshes/s drawn
+buffers kept in step: 20988 KiB/s of LVGL's copies, 1182 KiB/s made (100% by the PPA)
+29.6 pictures/s turned through internal RAM, in bands of 24 rows, 27.4 ms each
+0 of 32 tiles painted on the second core
+```
+
+The PPA is then busy 81 % of each second, so the sensor's 30 is the limit
+here, and about 36 would be the PPA's. The second core paints nothing over a
+camera, as on the other boards (see [Two cores](#two-cores)).
+
 Without RAM of its own (`camera_ram: 0`, or no room at boot) the engine
 lends its first tile instead: while a picture is turned whole no tile is
 drawn, so its two halves are the bands, at no RAM cost. Both are checked on a
-PC at every angle, pixel for pixel, with three planted mistakes caught; **not
-yet run inside the engine on a board**. Anything the bands cannot take (no
+PC at every angle, pixel for pixel, with three planted mistakes caught; the
+bands are measured inside the engine on the Guition (above), the lent tile
+**not yet on a board**. Anything the bands cannot take (no
 room, a band shape the PPA cannot take whole because of DIG-734, a copy
 refused) is the plain turn, said in the ten-second report.
 
@@ -241,15 +264,17 @@ Two things that test app showed and that still hold:
 
 ### Not measured yet
 
-- **The Guition JC8012P4A1** (800x1280, 90) with `lv_draw_ortho`: only in the
-  simulation and the PC tests, its OV02C10 camera only in the tests.
+- **The Guition JC8012P4A1's interface** (800x1280, 90) with `lv_draw_ortho`:
+  only in the simulation and the PC tests. Its camera is measured (see
+  [The cameras](#the-cameras)).
 - **ESP32-P4 rev 3.0**, where the PPA's quarter turn works in 32x32 blocks
   rather than 16x16: neither board here has one. PR #818 carries a test that
   runs it on Espressif's CI board.
 - **RGB panels**: the adapter path supports them and has never run on one.
-- **A camera picture turned through internal RAM inside the engine**
-  (`camera_ram:`, and the lent tile): the bands were measured with the probe
-  firmware, not yet with the engine itself on a board.
+- **A camera picture turned through internal RAM inside the engine** on
+  the Tab5 and the Waveshare: measured there with the probe firmware only,
+  inside the engine on the Guition. The lent tile (`camera_ram: 0`) on no
+  board yet.
 
 ## On an ESPHome board
 
