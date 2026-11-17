@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         lvgl: [claude/native-idf-lv-freertos]
-        ppa: [plain]
+        ppa: [plain, portall]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,7 +50,7 @@ jobs:
             - source:
                 type: git
                 url: https://github.com/youkorr/face_detection
-                ref: claude/face-detection-check
+                ref: claude/esphome-face-detection-mit-71f1lr
               components: [face_detection]
               refresh: 0s
           logger:
@@ -85,7 +85,58 @@ jobs:
             face_db_path: /sdcard/faces/faces.db
             unknown_label: "Inconnu"
           YAML
-          if [ "${{ matrix.ppa }}" = ppa ]; then
+          if [ "${{ matrix.ppa }}" = portall ]; then
+            cat > fd/fd.yaml <<'YAML'
+          esphome:
+            name: camera-test-guition
+          packages:
+            board: !include guition.yaml
+          external_components:
+            - source:
+                type: git
+                url: https://github.com/youkorr/esphome_esp-video
+                ref: codex/portall-panel-buffers
+              components: [portall, portall_bt]
+              refresh: 0s
+            - source:
+                type: git
+                url: https://github.com/youkorr/lvgl_9.5
+                ref: claude/native-idf-lv-freertos
+              components: [lvgl, mipi_dsi]
+              refresh: 0s
+          logger:
+          wifi:
+            ssid: test
+            password: testtest
+          portall:
+            display_id: main_screen
+            port: 5000
+            width: 800
+            height: 1280
+            max_fps: 60
+            jpeg_quality: 9
+            rotation: 0
+            usb: false
+            remote: true
+            max_frame_bytes: 600000
+            panel_buffers: true
+          YAML
+            # The board file's own display block, without which Portall's
+            # check would see the board's settings rather than these.
+            sed -i '/^display:/,/^output:/{/^output:/!d}' fd/guition.yaml
+            cat >> fd/fd.yaml <<'YAML'
+          display:
+            - platform: mipi_dsi
+              model: JC8012P4A1
+              id: main_screen
+              reset_pin: GPIO27
+              pixel_mode: 16
+              color_depth: 16
+              update_interval: never
+              auto_clear_enabled: false
+              framebuffers: 3
+          YAML
+          elif [ "${{ matrix.ppa }}" = ppa ]; then
             sed -i 's/^LVGL_EXTRA$/  use_ppa: true\n  perf_monitor: true/' fd/fd.yaml
           else
             sed -i '/^LVGL_EXTRA$/d' fd/fd.yaml
