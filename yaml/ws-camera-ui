@@ -144,7 +144,6 @@ lvgl_ortho:
   rotation: 180          # the 7B turned over (ESPHome's degrees)
   ppa: true
   cores: 2
-  split: false
 
 lvgl:
   displays:

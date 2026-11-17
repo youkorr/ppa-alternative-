@@ -161,7 +161,6 @@ lvgl_ortho:
   rotation: 270          # the Tab5 in landscape (ESPHome's degrees)
   ppa: true
   cores: 2
-  split: false
 
 lvgl:
   displays:

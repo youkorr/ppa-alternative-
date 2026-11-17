@@ -19,8 +19,7 @@
 # The figures: the perf monitor on the screen, and in the log
 #   [D][lvgl_camera_display]: 1280x720 to the canvas at N fps
 #   [I][lvgl_ortho]: Last 10s: ... N screens/s shown ...
-# Measured on a Tab5 at 1280x720: 15.6 frames/s (15.3 with max_framerate 20),
-# 14.0 with split: true.
+# Measured on a Tab5 at 1280x720: 15.6 frames/s (15.3 with max_framerate 20).
 #
 # Needs secrets.yaml with wifi_ssid, wifi_password and api_encryption_key.
 
@@ -117,10 +116,6 @@ lvgl_ortho:
   rotation: 270          # was lvgl: rotation: 270
   ppa: true
   cores: 2
-  # true shares each frame's turn between the PPA and both cores: measured
-  # slower on a Tab5, 14.0 frames/s against 15.6 with the PPA alone -- the
-  # PSRAM is the limit, and the CPU working beside the PPA slows it down.
-  split: false
 # -------------------------------------------------------------------------
 
 esp32_hosted:

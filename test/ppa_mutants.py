@@ -91,18 +91,6 @@ MUTANTS = {
                              "     * buffer back -- in partial mode, to send it to the panel. */\n    fence();\n", ""),
     # A canvas -- a draw buffer LVGL changes -- kept turned.
     "a modifiable picture kept": ("    if(img->header.flags & LV_IMAGE_FLAGS_MODIFIABLE) return false;\n", ""),
-    # tile_width taken and never used.
-    "the tile width ignored": ("    if(g_tile_width > 0 && tw > g_tile_width) tw = g_tile_width;\n", ""),
-    # A split cut between two rows that share a cache line.
-    "a split cut inside a cache line": (
-        "    return last / LV_DRAW_ORTHO_SPLIT_LINE != first / LV_DRAW_ORTHO_SPLIT_LINE;\n", "    return true;\n"),
-    # The turner's band one row longer than the cut: one row turned by both.
-    "the turner's band past the cut": ("    first.y2 = r1 - 1;\n", "    first.y2 = r1;\n"),
-    # This core turning the whole picture over the turner's band.
-    "this core's band over the turner's": ("    mine.y1 = helped ? r2 : r1;\n", "    mine.y1 = rect->y1;\n"),
-    # The share asked for, ignored.
-    "the split share ignored": ("    const float share = g_split_fixed ? g_split_fixed / 1000.0f\n",
-                                "    const float share = 0 ? g_split_fixed / 1000.0f\n"),
     # A picture in the flash not recognised: handed to the PPA, as before,
     # which reads the flash more slowly than the CPU.
     "the flash not recognised": ("    if(g_flash_cb) return g_flash_cb(img);\n#if defined(ESP_PLATFORM)\n    return esp_ptr_in_drom",

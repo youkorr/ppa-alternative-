@@ -123,8 +123,8 @@ runs at 15-18 Mpx/s on this chip (16x16 macro blocks below rev 3.0), which is
 51-61 ms for the whole screen, and the drawing on both cores is hidden behind
 it. Where in that range a frame lands depends on the tiles' size: through the
 adapter with more internal RAM it was 54.4 ms (see the L2 cache below).
-`pixel_mode: 16` and `24` measure the same, and narrower tiles were slower
-(see `tile_width:` below).
+`pixel_mode: 16` and `24` measure the same, and narrower tiles were slower:
+73.8 ms with tiles 256 pixels wide against 71.0, 82.2 at 128.
 At 180 the turn is the PPA's easy case (about 41 Mpx/s), so on the Waveshare
 what is left is drawing the UI; the second core gains 16 %.
 
@@ -150,7 +150,6 @@ turned once by the PPA:
 | LVGL's own rotation | 10-12 /s | |
 | lvgl_ortho, frame copied to the panel (ESPHome's `mipi_dsi`) | 12.8 /s | |
 | lvgl_ortho, the panel's own frame buffers | 15.6 /s | 20.8 /s |
-| the same, the turn split between the PPA and both cores (`split:`) | 14.0 /s | |
 | the panel's own frame buffers, the main loop kept awake (`fast_loop: true`) | **20.4 /s** | **27.8 /s** |
 
 - **The copy to the panel** is 14.4 ms a frame on the Tab5: the whole
@@ -251,8 +250,6 @@ Two things that test app showed and that still hold:
 - **A camera picture turned through internal RAM inside the engine**
   (`camera_ram:`, and the lent tile): the bands were measured with the probe
   firmware, not yet with the engine itself on a board.
-- **`split:`** was measured on the Tab5 and was slower (see
-  [A big turn split](#a-big-turn-split)), so it stays off.
 
 ## On an ESPHome board
 
@@ -273,11 +270,6 @@ lvgl_ortho:
   rotation: 270           # what lvgl: had (ESPHome's degrees, clockwise)
   # ppa: true             # the default: the PPA turns while the CPU draws
   # cores: 2              # off by default: the second core draws every other tile
-  # image_cache: 4MB      # the default: pictures that do not change are turned once
-  # tile_width: 256       # off by default: narrower, taller tiles (slower on a Tab5)
-  # split: true           # off by default: the PPA and the CPU together (slower on a Tab5)
-  # cpu_load: true        # off by default: each core's real load in the ten-second report
-  # camera_ram: 160KB     # 80KB by default: internal RAM to turn a camera picture through, 0 the first tile
 ```
 
 It takes LVGL's display over once ESPHome's lvgl has built it: one
@@ -295,36 +287,20 @@ display's rotation itself.
   youkorr/esphome_esp-video's `lvgl_camera_display` that is one line,
   `ortho_id: ortho`. `example/guition-lvgl-ortho.yaml` is a whole board.
 - **`ppa: false`** turns with the CPU instead, to compare.
-- **`image_cache:`** is the PSRAM kept for pictures turned once (see
-  [Pictures turned once](#pictures-turned-once)); `0` turns it off.
-- **`tile_width:`** caps how wide a tile is drawn, so it is taller instead.
-  At 90 and 270 a tile's height is the length of each row the PPA writes:
-  a whole-width tile of 1280 is 51 rows high, so the turner writes rows of 51
-  pixels; at 256 it writes rows of 256. On a Tab5 it is slower: 73.8 ms
-  at 256 and 82.2 at 128 with 2 cores against 71.0, and 111.0 at 128 with
-  one against 78.5. Part of the cost is per tile, not per pixel -- LVGL
-  draws each task once per tile it touches, and each tile is one more PPA
-  transaction and one more wait. `0`, the default, keeps the widest tiles.
-- **`split: true`** shares a big picture's quarter turn (a camera frame, a
-  wallpaper) between the PPA and the CPU, see [A big turn split](#a-big-turn-split).
+- **Pictures that do not change** are turned once and kept in 4 MB of PSRAM
+  (see [Pictures turned once](#pictures-turned-once)). Nothing to set;
+  `image_cache: 0` turns it off, another size changes it.
 - **`cores: 2`** draws every other tile on the second core (see
   [Two cores](#two-cores)). It needs LVGL built with an OS, which
   youkorr/lvgl_9.5 is, and is refused otherwise.
-- **`camera_ram:`** is the internal RAM, both bands together, a big picture
-  in PSRAM is turned through: a camera frame, a wallpaper in PSRAM. 80KB by
-  default; on a Tab5 160KB takes the turn from 24 to 19 ms if internal RAM
-  has room for it. The boot log says whether it was taken and how much
+- **A big picture in PSRAM** -- a camera frame, a wallpaper -- is turned
+  through 80 KB of internal RAM, in two bands. Nothing to set;
+  `camera_ram:` changes the size: on a Tab5 160KB takes the turn from 24 to
+  19 ms if internal RAM has room for it. The boot log says whether it was taken and how much
   internal RAM is left; the ten-second report how many pictures went through
   it. With `0`, or no room at boot, the bands are the two halves of the first
   tile, lent while the picture is turned: no tile is drawn then, so they cost
   no RAM at all, and with the default 128 KB tiles they are 64 KB each.
-- **`cpu_load: true`** adds each core's real load to the ten-second report,
-  from FreeRTOS's count of the time each core's idle task ran:
-  `processor really busy: core 0 12%, core 1 4%`. LVGL's `perf_monitor`
-  counts the time spent inside LVGL, so a wait for the PPA -- a sleep since
-  the PPA's interrupt wakes it -- reads there as work, near 100 % while the
-  cores do little. It turns on FreeRTOS's run-time statistics for the whole
-  firmware, which is why it is off by default.
 
 Every ten seconds the log says how much was turned, how much of it the PPA
 did, how often the CPU waited for it, and how many tiles the second core drew,
@@ -596,7 +572,7 @@ frame on the second core. On a whole screen redrawn it gets half of them:
 the boards' logs during `lvgl_bench` read `960 of 1920 tiles painted on the
 second core` (Tab5) and the like. Over a camera it gets **none**, and that is
 expected rather than a fault: the frame is a picture, turned in one PPA pass
-without tiles (`split: true` is what puts a second core on it), and what is
+without tiles, and what is
 left each frame is a tile or two -- the scroll bars a canvas bigger than the
 screen draws over it, a label -- each a redraw of its own. A night of the
 OV5647 on the Waveshare read `0 of 345 tiles`, about 1.8 tiles a screen. The
@@ -605,42 +581,6 @@ tiles a frame, which go when the screen's scroll bars are turned off
 (`scrollbar_mode: "OFF"` on the canvas's parent, which also takes the bars
 off the picture).
 
-
-### A big turn split
-
-A quarter turn is the slowest thing the PPA does, about 15 Mpx/s on a Tab5,
-and a camera frame drawn on the whole screen is nothing else: 61-65 ms a
-frame, with the CPU waiting for it. `split: true` cuts a big picture
-(128 Kpx or more) by native rows: the PPA is handed the first part, and the
-CPU turns the rest at the same time -- the core LVGL runs on, and with
-`cores: 2` the other one too, so a frame is three bands. Each side's share
-follows what it was measured to turn the time before, so they finish
-together; the log says the shares every ten seconds.
-
-Native rows, so each side writes whole rows of its own, and every cut is
-moved to a row where the two sides fall in different cache lines (128
-bytes): the CPU's copy of a shared line would hold the PPA's pixels as they
-were before the PPA wrote them, and put them back when the frame is shown.
-The tests check every cut against that with their own arithmetic, that the
-bands cover the picture exactly once, and that the PPA turned its band and
-nothing more; `test/ppa_mutants.py` breaks each of those and the tests catch
-it.
-
-What it covers: pictures LVGL draws, which is how a camera reaches the
-screen through `lvgl_camera_display` and a canvas. Not the video window
-(`show_video`, `ortho_id`), nor the tiles the interface is drawn in.
-
-**Measured on a Tab5, and slower.** The camera on the whole screen, the same
-firmware with `max_framerate: 30`: **15.6 frames/s with the PPA alone, 14.0
-with the split** on both cores. The shares settled at 60% to the PPA and 40%
-to the CPU, and a frame still took about 71 ms: the PPA took about 70 ms for
-three fifths of the frame it turns alone in 64, and each core turned about
-2.6 Mpx/s where the simulation gives one core alone 15-17. Everything slowed
-down together, which is the PSRAM being the limit: the PPA, both cores, the
-camera writing its frames and the panel scanning out sixty times a second
-all go through it, and the simulation models one of them at a time. So it
-stays off; the tests that hold it right stay, for a board with more memory
-bandwidth. The camera at 30 against 20 cost nothing (15.6 against 15.3).
 
 ### The PPA's faults, and what is done about them
 
@@ -723,9 +663,8 @@ L2 cache). Two reasons, one measured and one not:
 - **The drawing.** At 180 the PPA's rate was right, and the Waveshare still
   measured twice the simulation: drawing the UI on two cores costs more on
   the board than the model of one memory access at a time allowed. Most
-  likely the PSRAM, which both cores, the PPA and the panel's scanout share --
-  the same limit [a big turn split](#a-big-turn-split) ran into. Not
-  measured apart.
+  likely the PSRAM, which both cores, the PPA and the panel's scanout share.
+  Not measured apart.
 
 So the simulation is kept for what it did -- choosing the design, and
 counting where the time goes -- and the boards' figures are the ones to
@@ -736,7 +675,7 @@ quote.
 ```
 git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 677 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 563 cases, and the ESPHome component at four angles
 build/ortho_test --ppa             # the PPA's cases alone
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case
@@ -772,8 +711,6 @@ lv_draw_ortho_init();                       /* after lv_init() */
 lv_draw_ortho_ppa_init();                   /* ESP32-P4: the PPA turns and fills */
 lv_draw_ortho_set_cores(2);                 /* optional, needs LV_USE_OS */
 lv_draw_ortho_set_image_cache(4 << 20);     /* optional: pictures that do not change turned once */
-lv_draw_ortho_set_tile_width(256);          /* optional: narrower, taller tiles */
-lv_draw_ortho_set_split(true);              /* optional: big pictures turned by the PPA and the CPU together */
 
 lv_display_t * d = lv_display_create(720, 1280);   /* the PANEL's size */
 lv_display_set_buffers(d, buf, NULL, size, LV_DISPLAY_RENDER_MODE_DIRECT);

@@ -51,10 +51,6 @@ class LvglOrtho : public Component {
   void set_cores(int cores) { this->cores_ = cores; }
   // Bytes of PSRAM for pictures turned once (lv_draw_ortho_set_image_cache).
   void set_image_cache(size_t bytes) { this->image_cache_ = bytes; }
-  // At most this many pixels wide, a drawing tile; 0 for the screen's width.
-  void set_tile_width(int width) { this->tile_width_ = width; }
-  // A big picture's turn shared between the PPA and the CPU (lv_draw_ortho_set_split).
-  void set_split(bool split) { this->split_ = split; }
   // Bytes of internal RAM, both bands together, for turning a big picture in
   // PSRAM through it (lv_draw_ortho_ppa_set_stage); 0 turns it straight.
   void set_camera_ram(size_t bytes) { this->camera_ram_ = bytes; }
@@ -101,8 +97,6 @@ class LvglOrtho : public Component {
   bool cores_on_{false};
   bool sync_on_{false};
   size_t image_cache_{0};
-  int tile_width_{0};
-  bool split_{false};
   size_t camera_ram_{0};
   bool ppa_on_{false};
   bool ppa_lost_{false};  // said once, and the screen drawn again
@@ -129,14 +123,6 @@ class LvglOrtho : public Component {
 
   // Time spent, summed between two dump lines (see loop()).
   uint32_t flush_us_{0}, flush_rows_{0}, video_us_{0}, video_frames_{0}, last_report_{0};
-#ifdef LVGL_ORTHO_CPU_LOAD
-  // Each core's idle time when the last report was made (FreeRTOS run-time
-  // counter, in its own units), and how much the counter ran in all.
-  uint32_t idle_prev_[2]{0, 0};
-  uint32_t total_prev_{0};
-  bool idle_known_{false};
-  void report_cpu_load_();
-#endif
   bool use_panel_buffers_();
 };
 

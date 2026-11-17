@@ -17,7 +17,7 @@ it is drawn. A camera is shown with id(...).show_video().
 import esphome.codegen as cg
 from esphome.coroutine import CoroPriority, coroutine_with_priority
 from esphome.components import display
-from esphome.components.esp32 import VARIANT_ESP32P4, add_idf_sdkconfig_option, only_on_variant
+from esphome.components.esp32 import VARIANT_ESP32P4, only_on_variant
 import esphome.config_validation as cv
 from esphome.const import CONF_DISPLAY_ID, CONF_ID, CONF_ROTATION
 import esphome.final_validate as fv
@@ -63,22 +63,6 @@ CONFIG_SCHEMA = cv.All(
             # drawn again is then copied, not turned again. Only pictures
             # that cannot change (compiled in, an `image:`); 0 turns it off.
             cv.Optional("image_cache", default="4MB"): _bytes,
-            # At most this many pixels wide, a drawing tile (0: as wide as
-            # the screen). Narrower is taller, and at 90 and 270 a tile's
-            # height is the length of the rows the PPA writes: try 256.
-            cv.Optional("tile_width", default=0): cv.int_range(min=0, max=4096),
-            # A big picture's turn (a camera frame, a wallpaper) shared: the
-            # PPA turns part of its rows and the CPU the rest at the same
-            # time, this core and with cores: 2 the other one. The PPA alone
-            # turns a quarter at about 15 Mpx/s on a Tab5.
-            cv.Optional("split", default=False): cv.boolean,
-            # The processor's real load, core by core, in the ten-second
-            # report: FreeRTOS's own count of the time each core spent idle.
-            # LVGL's perf_monitor counts the time spent inside LVGL, waiting
-            # for the PPA or for the panel included, so it reads near 100%
-            # while the cores sleep. Off by default: it turns on FreeRTOS's
-            # run-time statistics for the whole firmware.
-            cv.Optional("cpu_load", default=False): cv.boolean,
             # Internal RAM for turning a big picture in PSRAM -- a camera
             # frame -- in two bands: the GDMA copies a band of its rows into
             # internal RAM while the PPA turns the band before from there,
@@ -170,11 +154,5 @@ async def to_code(config):
     cg.add(var.set_ppa(config["ppa"]))
     cg.add(var.set_cores(config["cores"]))
     cg.add(var.set_image_cache(config["image_cache"]))
-    cg.add(var.set_tile_width(config["tile_width"]))
-    cg.add(var.set_split(config["split"]))
     cg.add(var.set_camera_ram(config["camera_ram"]))
-    if config["cpu_load"]:
-        add_idf_sdkconfig_option("CONFIG_FREERTOS_USE_TRACE_FACILITY", True)
-        add_idf_sdkconfig_option("CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS", True)
-        cg.add_define("LVGL_ORTHO_CPU_LOAD")
     cg.add_define("USE_LVGL_ORTHO")

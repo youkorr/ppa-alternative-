@@ -9,7 +9,6 @@
 #   mode ortho         as it is
 #   mode ortho_2cores  uncomment "cores: 2"
 #   mode ortho_cpu     ppa: false
-#   mode tiles         uncomment "tile_width: 256" (then try 128)
 #   mode panel_fbs     the panel's own frame buffers, nothing copied: uncomment
 #                      "framebuffers: 3" under display:, and make the first
 #                      external_components list "components: [lvgl, mipi_dsi]"
@@ -25,7 +24,6 @@ lvgl_ortho:
   rotation: 270          # the Tab5 in landscape (ESPHome's degrees)
   ppa: true              # false: mode ortho_cpu
   # cores: 2             # mode ortho_2cores
-  # tile_width: 256      # mode tiles
 # -------------------------------------------------------------------------
 
 esphome:

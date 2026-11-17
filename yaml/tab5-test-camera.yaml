@@ -27,9 +27,6 @@ lvgl_ortho:
   rotation: 270          # the Tab5 in landscape (ESPHome's degrees)
   ppa: true
   cores: 2
-  # true shares each frame's turn between the PPA and both cores: measured
-  # slower on a Tab5 (14.0 frames/s against 15.6), the PSRAM being the limit.
-  split: false
 
 esphome:
   name: camera-test
@@ -137,9 +134,8 @@ lvgl_camera_display:
   camera_id: tab5_cam
   canvas_id: camera_canvas
   update_interval: 16ms
-  # Left out so LVGL draws each frame as a picture, which split shares
-  # between the PPA and the CPU. Put back to send frames into lvgl_ortho's
-  # video window instead: the PPA alone, 15 frames/s at 1280x720.
+  # Left out so LVGL draws each frame as a picture. Put back to send frames
+  # into lvgl_ortho's video window instead: 15 frames/s at 1280x720.
   # ortho_id: ortho
 
 # The whole landscape screen is the camera's window.
