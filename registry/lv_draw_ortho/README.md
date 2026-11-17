@@ -102,8 +102,6 @@ ESP32-P4-WIFI6-Touch-LCD-7B; for another board, replace its `example_lcd.c`.
 | `lv_draw_ortho_set_cores(n)` | paint every other tile on the second core |
 | `lv_draw_ortho_take_sync(disp)` | take over LVGL's copies between DIRECT-mode frame buffers |
 | `lv_draw_ortho_set_image_cache(bytes)` | PSRAM budget for pictures turned once and kept |
-| `lv_draw_ortho_set_tile_width(px)` | narrower, taller tiles |
-| `lv_draw_ortho_set_split(bool)` | split a big quarter turn between the PPA and the CPU |
 | `lv_draw_ortho_video_*` | a video window turned and shown by the PPA, outside LVGL |
 | `lv_draw_ortho_get_stats()` | what was drawn and turned, and how |
 

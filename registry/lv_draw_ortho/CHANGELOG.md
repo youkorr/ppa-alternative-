@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+* Removed `lv_draw_ortho_set_tile_width()`, `lv_draw_ortho_set_split()`,
+  `lv_draw_ortho_set_split_share()` and the `splits`, `bytes_split_*`,
+  `split_share` and `split_cut*` statistics. Both were measured slower on a
+  Tab5 and stayed off; tiles are as wide as the area allows.
+
 ## 0.1.0
 
 First release on the ESP Component Registry: the engine of
