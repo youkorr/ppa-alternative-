@@ -1,9 +1,11 @@
 groupe,cas,reference,ppa_alternative,reference_nom,source
-espressif,Waveshare 7B 90°,15.8,17.3,esp_lvgl_adapter (Espressif),test_apps/lvgl9 PR #818 ESP-IDF v5.5.5
-espressif,Waveshare 7B 180°,16.6,18.0,esp_lvgl_adapter (Espressif),test_apps/lvgl9 PR #818 ESP-IDF v5.5.5
-espressif,Waveshare 7B 90° · L2 128 Ko,15.6,23.4,esp_lvgl_adapter (Espressif),test_apps/lvgl9 PR #818 ESP-IDF v5.5.5 cache L2 128 Ko (défaut d'ESP-IDF)
-espressif,Waveshare 7B 180° · L2 128 Ko,16.7,26.1,esp_lvgl_adapter (Espressif),test_apps/lvgl9 PR #818 ESP-IDF v5.5.5 cache L2 128 Ko (défaut d'ESP-IDF)
-espressif,Tab5 270°,11.3,13.0,esp_lvgl_adapter (Espressif),test_apps/lvgl9 PR #818 ESP-IDF v5.5.5
-espressif,Tab5 270° · L2 128 Ko,11.2,18.0,esp_lvgl_adapter (Espressif),test_apps/lvgl9 PR #818 ESP-IDF v5.5.5 cache L2 128 Ko (défaut d'ESP-IDF)
+espressif,Waveshare 7B 180° · tableau de bord,61.28,61.29,esp_lvgl_adapter (Espressif),banc A/B PR #818 ESP-IDF v5.5.6 (official-v12 / native-v13)
+espressif,Waveshare 7B 180° · tout l'écran,15.21,23.60,esp_lvgl_adapter (Espressif),banc A/B PR #818 ESP-IDF v5.5.6 (official-v12 / native-v13)
+espressif,Waveshare 7B 180° · image changeante,15.30,29.31,esp_lvgl_adapter (Espressif),banc A/B PR #818 ESP-IDF v5.5.6 (official-v12 / native-v13)
+espressif,Waveshare 7B 180° · image en flash,5.14,5.67,esp_lvgl_adapter (Espressif),banc A/B PR #818 ESP-IDF v5.5.6 (official-v12 / native-v13)
+espressif,Tab5 270° · tableau de bord,48.93,48.94,esp_lvgl_adapter (Espressif),banc A/B PR #818 ESP-IDF v5.5.6 (official-v12 / native-v13)
+espressif,Tab5 270° · tout l'écran,8.32,15.80,esp_lvgl_adapter (Espressif),banc A/B PR #818 ESP-IDF v5.5.6 (official-v12 / native-v13)
+espressif,Tab5 270° · image changeante,13.31,15.40,esp_lvgl_adapter (Espressif),banc A/B PR #818 ESP-IDF v5.5.6 (official-v12 / native-v13)
+espressif,Tab5 270° · image en flash,3.76,3.94,esp_lvgl_adapter (Espressif),banc A/B PR #818 ESP-IDF v5.5.6 (official-v12 / native-v13)
 esphome,Waveshare 7B 180°,7.75,20.96,rotation de LVGL (ESPHome),lvgl_bench 129.0 ms contre 47.7 ms
 esphome,Tab5 270°,5.17,16.37,rotation de LVGL (ESPHome),lvgl_bench 193.6 ms contre 61.1 ms

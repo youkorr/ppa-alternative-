@@ -5,9 +5,10 @@
 """Draw docs/cartes.svg from docs/mesures-cartes.csv.
 
 Images per second measured on the household's boards (an ESP32-P4 Waveshare 7B
-and an M5Stack Tab5), the same dashboard redrawn whole: against Espressif's
-esp_lvgl_adapter through its own test app, and against ESPHome's LVGL
-rotation (lvgl_bench's ms per frame, as 1000 / ms). Standard library only:
+and an M5Stack Tab5): against Espressif's esp_lvgl_adapter through the A/B
+bench of PR #818 (espressif/pr818-ab, the same firmware built on both
+adapters), and against ESPHome's LVGL rotation, a dashboard redrawn whole
+(lvgl_bench's ms per frame, as 1000 / ms). Standard library only:
 
     python3 docs/chart_boards.py
 """
@@ -18,7 +19,7 @@ from xml.sax.saxutils import escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TITLES = {
-    "espressif": "Contre l'adaptateur d'Espressif (même firmware, une seule option qui change)",
+    "espressif": "Contre l'adaptateur d'Espressif (banc A/B de la PR #818, même firmware sur les deux)",
     "esphome": "Contre la rotation de LVGL sous ESPHome",
 }
 
@@ -35,13 +36,13 @@ def main():
         r["ppa_alternative"] = float(r["ppa_alternative"])
     groups = [g for g in TITLES if any(r["groupe"] == g for r in rows)]
 
-    W, left, right = 940, 250, 40
+    W, left, right = 1000, 300, 40
     top, bar, gap, case_gap, title_h, group_gap = 96, 16, 3, 16, 30, 22
     case_h = 2 * bar + gap
     H = top + sum(title_h + sum(case_h + case_gap for r in rows if r["groupe"] == g) + group_gap
                   for g in groups) + 20
     # Room past the longest bar for its label, in steps of 5 /s.
-    vmax = 5.0 * math.ceil(max(r[k] for r in rows for k in ("reference", "ppa_alternative")) * 1.2 / 5)
+    vmax = 5.0 * math.ceil(max(r[k] for r in rows for k in ("reference", "ppa_alternative")) * 1.45 / 5)
     x = lambda v: left + (W - left - right) * v / vmax
 
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
@@ -59,7 +60,7 @@ def main():
            '<text class="fg" x="24" y="38" font-size="22" font-weight="600">'
            'PPA alternative, mesuré sur les cartes</text>',
            '<text class="mute" x="24" y="62" font-size="13">Images par seconde, plus long est meilleur. '
-           'Waveshare 7B (1024x600) et M5Stack Tab5 (720x1280), le même tableau de bord redessiné.</text>']
+           'Waveshare 7B (1024x600, 180°) et M5Stack Tab5 (1280x720, 270°), ESP-IDF 5.5.6.</text>']
     y = top
     for g in groups:
         out.append(f'<text class="fg" x="24" y="{y + 16}" font-size="14" font-weight="600">'
@@ -75,8 +76,11 @@ def main():
         for r in cases:
             gain = r["ppa_alternative"] / r["reference"]
             # Against Espressif in percent, as the README and the PR give it.
-            label = (f"+{fr((gain - 1) * 100, 0)} %" if g == "espressif" or gain < 1.5
-                     else f"{fr(gain)}×")
+            # Equal within half a percent is the panel's own rate in both:
+            # neither can show more frames than the panel scans out.
+            label = ("=" if abs(gain - 1) < 0.005
+                     else f"+{fr((gain - 1) * 100, 0)} %" if gain < 1.5
+                     else f"{fr(gain, 2)}×")
             out.append(f'<text class="fg" x="{left - 14}" y="{y + case_h / 2 - 3:.1f}" font-size="13" '
                        f'text-anchor="end">{escape(r["cas"])}</text>')
             out.append(f'<text class="gain" x="{left - 14}" y="{y + case_h / 2 + 14:.1f}" font-size="14" '

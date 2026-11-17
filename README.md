@@ -9,72 +9,102 @@ the screen upright, then turns the finished picture into the frame buffer.
 LVGL 9 has the right idea already (`lv_display_set_matrix_rotation()` hands
 each draw task a matrix), but its software renderer and its PPA unit ignore
 that matrix. **`lv_draw_ortho` is a draw unit that reads it.**
-`components/lvgl_ortho` puts it on an ESPHome board, and
+`components/lvgl_ortho` puts it on an ESPHome board,
+[`registry/lv_draw_ortho`](registry/lv_draw_ortho) is the same engine as an
+ESP-IDF component, and
 [esp-iot-solution PR #818](https://github.com/espressif/esp-iot-solution/pull/818)
-puts it in Espressif's own `esp_lvgl_adapter`.
+put it in Espressif's own `esp_lvgl_adapter`.
 
 ![Frames per second measured on the boards: PPA alternative against Espressif and LVGL](docs/cartes.svg)
 
-## Measured on the boards
+## In short
 
-Two ESP32-P4 boards, the same dashboard on both (text, cards with borders and
-shadows, a gradient, an arc, a bar, a slider, a switch), redrawn whole for
-ten seconds:
+Measured on two ESP32-P4 boards, the household's own:
 
 | board | chip | panel | turned |
 |---|---|---|---|
-| Waveshare ESP32-P4-WIFI6-Touch-LCD-7B | rev 1.3 | EK79007 1024x600 | 90 and 180 |
-| M5Stack Tab5 | rev 1.0 | ILI9881C 720x1280 | 270 (landscape) |
+| Waveshare ESP32-P4-WIFI6-Touch-LCD-7B | rev 1.3 | EK79007 1024x600, 60.3 Hz | 180 (and 90) |
+| M5Stack Tab5 | rev 1.0 | ILI9881C 720x1280, about 48 Hz | 270 (landscape) |
 
-### Against Espressif's own rotation
+- **Against Espressif's adapter**, same benchmark firmware, same day: a
+  whole screen redrawn (a page change, a scroll) **1.55x as fast on the
+  Waveshare and 1.90x on the Tab5**; a full-screen picture changing every
+  frame **1.92x and +16 %, for an eighth and a third of the CPU**; a small
+  dashboard at the panel's own rate in both, for 0.4 to 0.8 ms more CPU a
+  frame.
+- **Against ESPHome's LVGL rotation**: a whole screen **2.7x as fast on the
+  Waveshare and 3.2x on the Tab5**.
+- **A camera on the whole screen**: 20.4 frames/s on the Tab5, against 10-12
+  with LVGL's own rotation, and 27.8 on the Waveshare.
 
-Espressif's `esp_lvgl_adapter` already draws a turned screen in strips in
-internal RAM and turns each strip with the PPA while the next is drawn
-(`TRIPLE_PARTIAL`, its default on a MIPI DSI panel). PR #818 adds
-`CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW`, which is `lv_draw_ortho` with two
-cores and the panel's three frame buffers. Measured through the adapter's own
-test app (`test_apps/lvgl9`), the same firmware built twice but for that one
-option, ESP-IDF v5.5.5, two runs each:
+## Measured on the boards
 
-| | Espressif today | PPA alternative | |
-|---|---|---|---|
-| Waveshare 7B, 90 | 15.8 /s, 63.4 ms (worst 64.9) | **17.2 - 17.3 /s, 57.5 - 58.2 ms (worst 59.2)** | **+9 %** |
-| Waveshare 7B, 180 | 16.6 /s, 59.4 - 59.7 ms (worst 60.8) | **18.0 /s, 54.9 - 55.2 ms (worst 56.4)** | **+8 %** |
-| Tab5, 270 | 11.3 /s, 81.5 ms (worst 103) | **12.9 - 13.0 /s, 77.0 - 77.5 ms (worst 78)** | **+15 %** |
-| Tab5, 270, ESP-IDF's default L2 cache | 11.2 /s, 81.6 ms (worst 103) | **17.9 - 18.0 /s, 53.3 - 54.4 ms (worst 55)** | **+61 %** |
-| Waveshare 7B, 90, ESP-IDF's default L2 cache | 15.5 - 15.6 /s, 63.5 - 64.1 ms (worst 64.9) | **23.3 - 23.4 /s, 42.4 - 42.6 ms (worst 43.5)** | **+50 %** |
-| Waveshare 7B, 180, ESP-IDF's default L2 cache | 16.7 /s, 59.4 - 59.7 ms (worst 60.8) | **25.9 - 26.1 /s, 38.2 ms (worst 38.8)** | **+56 %** |
+### Inside Espressif's adapter: the A/B bench
 
-Frames a second is the figure to compare: Espressif's path also loses about
-7 ms between frames on the Tab5, which its time per frame does not show. Same
-frame buffers in both columns (three), and every one of the test app's tests
-passes in every run. On the Tab5, **ESP-IDF v6.1** gives the same: 13.0 - 13.2
-/s, 75.8 - 76.9 ms.
+PR #818 adds `CONFIG_ESP_LVGL_ADAPTER_ROTATE_IN_DRAW` to `esp_lvgl_adapter`:
+`lv_draw_ortho`, the panel's frame buffers drawn in directly
+(`DOUBLE_DIRECT`), and the engine keeping LVGL's frame buffers in step.
+Espressif's adapter as it ships draws the screen upright in strips in internal
+RAM and turns each strip with the PPA while the next is drawn
+(`TRIPLE_PARTIAL`, its default on a MIPI DSI panel).
 
-The last three rows are the same firmwares built with ESP-IDF's default L2
-cache, 128 KB, where the test app sets 256 KB: Espressif's path does not move,
-the PPA alternative gains 35 to 44 %. See [The L2 cache size](#the-l2-cache-size)
-below.
+`espressif/pr818-ab/` builds **one benchmark firmware twice**: on the adapter
+as Espressif ships it (`da53cfa`), and on the PR's branch with this
+repository's engine (`test/rotate-in-draw-sync` on
+[youkorr/esp-iot-solution](https://github.com/youkorr/esp-iot-solution)).
+Same scenes, same code, same day: ESP-IDF v5.5.6, 360 MHz, PSRAM at 200 MHz,
+ESP-IDF's default 128 KB of L2 cache, the flash in DIO at 40 MHz. Each scene
+is 64 frames after 16 to warm up, run twice; the figure is the median. *CPU*
+is the time the two cores were not idle (FreeRTOS's idle counters), both
+added together, divided by the frames.
 
-**What the turn itself costs.** An earlier build of the Espressif firmware
-ran at rotation 0 by mistake: 18.4 /s, 47.0 - 47.5 ms, which is this screen
-drawn with no turn at all. Over that, turning the Waveshare costs Espressif
-16 ms at 90 and 12 ms at 180, and the PPA alternative 11 and 8 -- **about a
-third less**.
+**Waveshare 7B**, 1024x600 turned 180:
 
-**Why three frame buffers.** A first version of the PR drew into two and was
-*slower* at 90, 66.1 ms (15.1 - 15.2 /s): it drew a frame in 58.4 ms, then
-waited for the panel to switch buffers on its next refresh, so on a 60 Hz panel
-every frame was rounded up to four refreshes. With three, LVGL draws the next
-frame into the third while the panel waits, and a frame costs what drawing it
-costs. The buffer LVGL draws into is then two frames old: LVGL brings over the
-frame before (`refr_sync_areas`), and the adapter copies the frame before that
-from its diff tracker, less what is about to be drawn again.
+| scene | Espressif's adapter | lv_draw_ortho |
+|---|---|---|
+| a dashboard: a few small areas a frame | 61.3 /s, 10.2 ms CPU | 61.3 /s, 10.6 ms CPU |
+| the same dashboard redrawn whole | 15.2 /s, 95.4 ms CPU | **23.6 /s (1.55x)**, 68.7 ms CPU |
+| a full-screen picture changing every frame | 15.3 /s, 72.4 ms CPU | **29.3 /s (1.92x)**, **9.1 ms CPU** |
+| a full-screen picture in the flash | 5.1 /s, 298 ms CPU | **5.7 /s (+10 %)**, 282 ms CPU |
+| the same picture drawn again (`image_cache`) | (no cache) | **29.7 /s**, 8.9 ms CPU |
 
-### Against ESPHome's LVGL rotation
+**M5Stack Tab5**, 1280x720 turned 270:
 
-Through ESPHome (`components/lvgl_ortho`, ESPHome 2026.12.0-dev with
-youkorr/lvgl_9.5), timed by `lvgl_bench` from `RENDER_START` to
+| scene | Espressif's adapter | lv_draw_ortho |
+|---|---|---|
+| a dashboard: a few small areas a frame | 48.9 /s, 10.8 ms CPU | 48.9 /s, 11.6 ms CPU |
+| the same dashboard redrawn whole | 8.3 /s, 183 ms CPU | **15.8 /s (1.90x)**, 103 ms CPU |
+| a full-screen picture changing every frame | 13.3 /s, 80.4 ms CPU | **15.4 /s (+16 %)**, **27.1 ms CPU** |
+| a full-screen picture in the flash | 3.76 /s, 408 ms CPU | **3.94 /s (+5 %)**, 401 ms CPU |
+| the same picture drawn again (`image_cache`) | (no cache) | **15.4 /s**, 27.0 ms CPU |
+
+What they say:
+
+- **The dashboard is at the panel's rate in both columns**: one frame per
+  scan-out (a median refresh of 15.6 and 19.9 ms here, 16.0 and 20.3 for the
+  adapter). No adapter can show more frames than the panel does; what is left
+  to compare is the CPU, 0.4 ms (Waveshare) and 0.8 ms (Tab5) a frame more
+  here.
+- **Wherever something big changes, more frames for less CPU.** A picture
+  changing every frame on the Waveshare: twice the frames, the processor busy
+  13 % of the time against 55 %. On the Tab5 the PPA's quarter turn sets the
+  rate (below), and the CPU it costs falls from 80 to 27 ms a frame.
+- **A picture in the flash** is mostly the flash being read, at 40 MHz in DIO
+  on these boards, by either engine. Drawn again it comes out of the cache,
+  in PSRAM, at the rate of a picture that changes.
+
+The serial logs are in `test_pr818/` (`*-official-v12`, `*-native-v13`), and
+`python3 test_pr818/depouiller.py` reads them again.
+[`test_pr818/RESULTATS.md`](test_pr818/RESULTATS.md) (in French) goes through
+every run since the first: the dashboard that started 38 % (Waveshare) and
+40 % (Tab5) behind, and the faults found and fixed to close it -- LVGL's
+copies between frame buffers made by the CPU, a picture in the flash handed
+to the PPA, which reads flash more slowly than the CPU, and every tile inside
+a card read back for nothing.
+
+### Through ESPHome
+
+`components/lvgl_ortho`, ESPHome 2026.12.0-dev with youkorr/lvgl_9.5, timed by `lvgl_bench` from `RENDER_START` to
 `REFR_READY`. ESPHome's LVGL draws the screen upright, then turns it, one
 after the other:
 
@@ -92,206 +122,137 @@ On the Tab5, the PPA turning 1280x720 is most of a frame: a quarter turn
 runs at 15-18 Mpx/s on this chip (16x16 macro blocks below rev 3.0), which is
 51-61 ms for the whole screen, and the drawing on both cores is hidden behind
 it. Where in that range a frame lands depends on the tiles' size: through the
-adapter with more internal RAM it was 54.4 ms (see the L2 cache below). `pixel_mode: 16` and `24`
-measure the same, and narrower tiles were slower (see `tile_width:` below).
+adapter with more internal RAM it was 54.4 ms (see the L2 cache below).
+`pixel_mode: 16` and `24` measure the same, and narrower tiles were slower
+(see `tile_width:` below).
 At 180 the turn is the PPA's easy case (about 41 Mpx/s), so on the Waveshare
 what is left is drawing the UI; the second core gains 16 %.
 
-### The L2 cache size
-
-It is most of the gap between the adapter and ESPHome. The ESPHome
-figures were lower than the adapter's on the same board (61 against 77 ms on
-the Tab5). The adapter's test app sets its L2 cache to 256 KB
-(`sdkconfig.defaults.esp32p4`), where ESP-IDF's default is 128 KB, and every
-KB of cache is a KB less of internal RAM: the heap's main internal block is
-256 KiB with 256 KB of cache and 384 KiB with 128 KB. `lv_draw_ortho` draws
-its tiles in internal RAM and cuts them out of whatever blocks fit there, so
-with more of it the tiles are bigger and there are fewer of them to turn. The
-same firmwares, built with 128 KB of L2 cache (`l2_cache: 128` in the workflow
-below), ESP-IDF v5.5.5; the boot log's main internal block reads 384 KiB:
-
-| | 256 KB of L2 cache (the test app's) | 128 KB (ESP-IDF's default) |
-|---|---|---|
-| Tab5, 270, PPA alternative | 12.9 - 13.0 /s, 77.0 - 77.5 ms | **17.9 - 18.0 /s, 53.3 - 54.4 ms (worst 55.2)** |
-| Tab5, 270, Espressif today | 11.3 /s, 81.5 ms (worst 103) | 11.2 /s, 81.6 ms (worst 103) |
-| Waveshare 7B, 90, PPA alternative | 17.2 - 17.3 /s, 57.5 - 58.2 ms | **23.3 - 23.4 /s, 42.4 - 42.6 ms (worst 43.5)** |
-| Waveshare 7B, 90, Espressif today | 15.8 /s, 63.4 ms | 15.5 - 15.6 /s, 63.5 - 64.1 ms (worst 64.9) |
-| Waveshare 7B, 180, PPA alternative | 18.0 /s, 54.9 - 55.2 ms | **25.9 - 26.1 /s, 38.2 ms (worst 38.8)** |
-| Waveshare 7B, 180, Espressif today | 16.6 /s, 59.4 - 59.7 ms | 16.7 /s, 59.4 - 59.7 ms (worst 60.8) |
-
-Espressif's path does not move with the cache size, on either board. The PPA
-alternative gains 35 to 44 %, is faster than through ESPHome (61.1 ms on the
-Tab5, 47.7 at 180 on the Waveshare), and at ESP-IDF's default gives **50 to
-61 % more frames a second than Espressif's own rotation**. On the Waveshare a
-frame drawn is a frame shown: the drawing alone is 42.3 ms at 90 against 42.4
-for the whole frame, because with three frame buffers nothing waits for the
-panel. Every test of the app passes in every run, and the heap moves by about
-as much with the option as without it (88 to 656 bytes a test, under the
-test's 2000).
-
 ### The cameras
 
-Each board's own sensor, as its YAML in
+Each board's own sensor, set up as its YAML in
 [youkorr/esphome_esp-video](https://github.com/youkorr/esphome_esp-video)
-sets it up. A sensor's lanes and frame rate belong to the format the driver
-picks, so the sensor's rate is the ceiling the display has to keep up with:
+does, through `esp_video_camera` and `lvgl_camera_display` from
+[youkorr/esphome](https://github.com/youkorr/esphome) (branch
+`esp_video_camera-lvgl`). The sensor's rate is the ceiling:
 
-| board | panel, turn | sensor | format | lanes | the sensor sends |
-|---|---|---|---|---|---|
-| M5Stack Tab5 | 720x1280, 270 | SC2356 (SC202CS silicon) | RAW8 1280x720, the whole frame shown | 1 | 30 /s |
-| Waveshare 7B | 1024x600, 180 | OV5647 | RAW10 1280x960 binned, its centre 1024x600 shown | 2 | 45 /s (the YAML asks 30) |
-| Guition 10" | 800x1280, 90 | OV02C10 | RAW10 1288x728, its centre 1280x720 under 80 px of UI | 1 | 30 /s |
+| board | panel, turn | sensor | format | the sensor sends |
+|---|---|---|---|---|
+| M5Stack Tab5 | 720x1280, 270 | SC2356 (SC202CS silicon) | RAW8 1280x720, 1 lane | 30 /s |
+| Waveshare 7B | 1024x600, 180 | OV5647 | RAW10 1280x960 binned, its centre shown, 2 lanes | 45 /s |
+| Guition 10" | 800x1280, 90 | OV02C10 | RAW10 1288x728, 1 lane | 30 /s |
 
-**Measured on the boards**, the camera on the whole screen, each frame drawn
-by LVGL as a picture and turned once by the PPA (`lvgl_camera_display`):
+The camera on the whole screen, each frame drawn by LVGL as a picture and
+turned once by the PPA:
 
 | | Tab5, SC2356 | Waveshare 7B, OV5647 |
 |---|---|---|
 | LVGL's own rotation | 10-12 /s | |
 | lvgl_ortho, frame copied to the panel (ESPHome's `mipi_dsi`) | 12.8 /s | |
-| lvgl_ortho, the panel's own frame buffers | **15.6 /s** | **20.8 /s** |
+| lvgl_ortho, the panel's own frame buffers | 15.6 /s | 20.8 /s |
 | the same, the turn split between the PPA and both cores (`split:`) | 14.0 /s | |
-| the panel's own frame buffers, ESPHome's main loop kept awake (`fast_loop: true`) | **20.4 /s** | **27.8 /s** (LVGL's own counter 26-28) |
+| the panel's own frame buffers, the main loop kept awake (`fast_loop: true`) | **20.4 /s** | **27.8 /s** |
 
-On the Tab5 the copy to the panel is 14.4 ms a frame, which is the whole
-difference between the second and third rows. The sensor at 30 frames a
-second against 20 changed nothing (15.6 against 15.3), so on the Tab5 the
-display is the limit, not the sensor: about half of what the SC2356 sends
-reaches the screen. The Guition's camera has not run with lvgl_ortho.
+- **The copy to the panel** is 14.4 ms a frame on the Tab5: the whole
+  difference between the second and third rows. Drawing into the panel's own
+  frame buffers removes it.
+- **ESPHome's main loop sleeps** up to 16 ms between passes unless something
+  wakes it, and `esp_video_camera` takes its frames from that loop, so a
+  frame ready meanwhile waited. `fast_loop: true` on `lvgl_camera_display`
+  holds the loop awake while the display is on: about 30 % more on both
+  boards.
+- **What is left is the PPA**, slowed by the camera's own memory traffic:
+  31.7 ms of a 35.6 ms frame on the Waveshare is the CPU waiting for the PPA
+  to turn 1024x600 (about 19 Mpx/s, half what a 180-degree turn of the whole
+  screen does on its own), and 44.3 ms of 49 on the Tab5 for 1280x720. The
+  OV5647 writes about 110 MB/s into the PSRAM the PPA reads and the panel
+  scans out of.
 
-**On the Waveshare the last 20 % was ESPHome's main loop sleeping.** The
-camera is taken from the main loop (`esp_video_camera` polls its capture
-queue there), and that loop sleeps up to 16 ms between passes unless
-something wakes it, so a frame ready meanwhile waits. The same firmware read
-**25** frames a second with `esp-idf: DEBUG` and **20** at WARN, with
-lvgl_ortho turning exactly one picture of 1200 KiB a screen in both: the
-ISP's DEBUG lines, one or two a frame, were what woke the loop (ESPHome's
-logger wakes it for a line from another task). Per frame the work was the
-same, about 35 ms; at WARN about 15 ms more was the loop asleep. Held awake
-with ESPHome's `HighFrequencyLoopRequester`, at WARN, it reads **27.8
-screens/s**, one picture turned a screen. In the first ten seconds after the
-camera starts the picture is turned 1.8 times a screen and it reads 26.2;
-the second report is back at one, every time so far. `lvgl_camera_display`
-in youkorr/esphome now has `fast_loop: true` for this, holding the loop
-awake only while the display is on; without it, two lines in a board's YAML
-do the same:
-
-```yaml
-esphome:
-  on_boot:
-    then:
-      - lambda: |-
-          static esphome::HighFrequencyLoopRequester fast_loop;
-          fast_loop.start();
-```
-
-Measured with `esp_video_camera` and `lvgl_camera_display` from
-youkorr/esphome (branch `esp_video_camera-lvgl`), OV5647 at 1280x960, ESPHome
-2026.12.0-dev. The Tab5 the same way, `fast_loop: true`, its SC2356 at
-1280x720: **20.4 screens/s** against the 15.6 before, about 30 % more.
-
-**What is left is the PPA, and the camera's own memory traffic slows it.**
-With the loop awake the frame is 35.6 ms (28.1 screens/s) and the CPU spends
-**31.7 ms of it waiting for the PPA** to turn the picture: 1024x600 in 31.7 ms
-is about 19 Mpx/s, half the 41 Mpx/s a 180-degree turn of the whole screen
-measured on its own on this board. The OV5647's 1280x960 format runs at 45
-frames a second whatever `max_framerate:` says (30 and 45 both read 28), so
-the ISP writes about 110 MB/s into the PSRAM the PPA reads and writes and the
-panel scans out of. That is the likely cause and it is not measured apart.
-Lowering it means a smaller sensor format; one of exactly 1024x600 would also
-stop at the sensor's 30 frames a second.
-
-**A camera canvas smaller than the screen no longer has its background
-filled under it every frame.** LVGL asks for a few pixels round what changed,
-so a canvas in a page (800x600 in the household's camera UIs) has its
-background asked for in a rectangle five pixels wider all round, which the
-engine could not call hidden by the frame: the PPA filled 810x610 pixels,
-about 950 KB, then turned the frame over 800x600 of them, every frame. Only
-the ring is filled now (on a PC, 5 140 pixels instead of the 58 604 under a
-322x182 frame), checked pixel for pixel against LVGL's own drawing over a
-scribbled frame buffer. Not measured on a board.
-
-**A camera picture is now turned through internal RAM** (`camera_ram:`,
-80KB by default). The PPA writing PSRAM costs it nothing over writing
-internal RAM, but its reading PSRAM in 16x16 macro blocks doubles its time,
-and that read is what the panel's scan-out and the camera slow down. So the
-picture's rows are copied into internal RAM a band at a time by the AXI GDMA,
-in one run, while the PPA turns the band before out of RAM. Measured on both
-boards with `espressif/ppa-probe`, the camera streaming, a whole picture:
+**A camera picture is turned through internal RAM** (`camera_ram:`, 80 KB by
+default). The PPA writing PSRAM costs it nothing over writing internal RAM,
+but its reading PSRAM in 16x16 macro blocks doubles its time, and that read
+is what the panel's scan-out and the camera slow down. So the picture's rows
+are copied into internal RAM a band at a time by the AXI GDMA, while the PPA
+turns the band before out of RAM. Measured with a probe firmware
+(`espressif/ppa-probe`, on the branch `claude/esphome-pr-outdated-mdq36w`, not
+merged yet), the camera streaming, a whole picture:
 
 | | straight from PSRAM | bands of 16 rows | bands of 32 rows |
 |---|---|---|---|
 | Waveshare 7B, 1024x600 at 180 | 31.6 ms | 13.8 ms | 12.4 ms |
 | Tab5, 1280x720 at 270 | 44.3 ms | 24.4 ms | 18.7 ms |
 
-A band of a 1280-wide picture is 2.5 KB a row: 80KB holds two bands of 16
-rows, 160KB two of 32.
+Without RAM of its own (`camera_ram: 0`, or no room at boot) the engine
+lends its first tile instead: while a picture is turned whole no tile is
+drawn, so its two halves are the bands, at no RAM cost. Both are checked on a
+PC at every angle, pixel for pixel, with three planted mistakes caught; **not
+yet run inside the engine on a board**. Anything the bands cannot take (no
+room, a band shape the PPA cannot take whole because of DIG-734, a copy
+refused) is the plain turn, said in the ten-second report.
 
-Those were measured with the DMA2D copy; the engine uses the GDMA's, public
-in ESP-IDF 5.5 and 6 where the DMA2D one is private and gone in 6.0, and the
-probe measures that one too. A band is whole rows of the picture, a multiple
-of 8. Anything else -- no room at boot, a band shape the PPA cannot take
-whole (DIG-734), a copy refused -- is the plain turn, said in the
-ten-second report. Checked on a PC at every angle with copies landing at
-once and late, pixel for pixel; not yet run inside the engine on a board.
+The tests in `test/` put each board's sensor frame through the (fake) PPA
+into its panel at its turn, and require the screen to match LVGL drawing the
+same crop as an ordinary picture, pixel for pixel; 45 more cases cover
+frames upright and already turned, smaller and bigger than the screen, cut
+and mirrored, at every angle.
 
-**Without RAM of its own the first tile is lent instead.** esp-iot-solution's
-lvgl9 test app showed why it is needed: with an LVGL task, two draw threads
-and LVGL's own objects in internal RAM, the 80 KB were not there (80 KB free
-in pieces, the largest 31 KB) and every picture was turned straight. While a
-picture is turned whole no tile is drawn and the second core is idle, so the
-engine lends its first tile (`lv_draw_ortho_set_loan`): the PPA writes the
-tile back out of the cache and drops it, and uses its two halves as the
-bands. On a PC: every angle, copies landing at once and late, a gradient
-and a caption drawn in tiles before and after every frame, and three
-mutants -- the write-back, the two halves one band, the tile never lent --
-each caught. A fourth guard, the wait for the tile's own turns before the
-first copy, cannot be: the engine takes a picture alone, after a fence, so
-nothing is ever queued then.
+**ESP-IDF v5.5.6** did not start the camera of an ESP32-P4 below rev 3.0 at
+all (`esp_cam_new_csi_ctlr: failed to configure format conversion`): it takes
+the CSI bridge's input colour to be the ISP's output, and esp_video handed it
+the sensor's RAW format, a conversion only rev 3.0 can do. esphome_esp-video
+(commit 26e1be9) and Espressif's esp-video-components (79ae611) carry the
+fix; no esp_video release does yet. Nothing in lvgl_ortho changes.
 
-On the Tab5 it is the same shape: 49 ms a frame, **44.3 ms of it waiting for
-the PPA** to turn the 1280x720 picture a quarter turn, one picture of 1800 KiB
-a screen. That is about 21 Mpx/s, faster than the 15-18 a quarter turn reads
-in tiles: one whole picture is one transaction. The SC2356 sends 30 frames a
-second, so there too the turn is the limit, not the sensor.
+### Earlier: Espressif's own test app, and the L2 cache
 
-**Tested on a PC at the sensors' real sizes.** `test/` has the three boards
-as cases, with their sensor's frame, their panel and their turn: the screen
-with the frame written by the (fake) PPA must be, pixel for pixel, the screen
-LVGL draws with that crop of the frame as an ordinary image. All three pass:
+Before the A/B bench, the PR was measured through the adapter's own test app
+(`test_apps/lvgl9`, a dashboard redrawn whole for ten seconds), with the
+engine as it stood before the November fixes and ESP-IDF v5.5.5. Every test
+of the app passed in every run. The test app sets 256 KB of L2 cache, where
+ESP-IDF's default is 128 KB, and that alone moved the PPA alternative a lot:
 
-```
-ok    M5Stack Tab5, SC2356: 1280x720 sensor frame into the 720x1280 panel at 90
-ok    Guition 10", OV02C10: 1288x728 sensor frame cropped into the 800x1280 panel at 270
-ok    Waveshare 7", OV5647: 1280x960 sensor frame cropped into the 1024x600 panel at 180
-```
+| | Espressif's adapter | PPA alternative, 256 KB of L2 | PPA alternative, 128 KB (ESP-IDF's default) |
+|---|---|---|---|
+| Waveshare 7B, 90 | 15.5 - 15.8 /s | 17.2 - 17.3 /s | **23.3 - 23.4 /s** (+50 %) |
+| Waveshare 7B, 180 | 16.6 - 16.7 /s | 18.0 /s | **25.9 - 26.1 /s** (+56 %) |
+| Tab5, 270 | 11.2 - 11.3 /s | 12.9 - 13.0 /s | **17.9 - 18.0 /s** (+61 %) |
 
-The angles there are LVGL's: ESPHome counts its quarter turns the other way,
-so its 270 is LVGL's 90. Besides those three, the camera has 45 more cases:
-frames upright and already turned, smaller and bigger than the screen, cut,
-mirrored, at every angle, through the PPA into the panel's own buffers.
+Espressif's path does not move with the cache size. Every KB of L2 cache is a
+KB less of internal RAM -- the heap's main internal block is 256 KiB with 256
+KB of cache and 384 KiB with 128 KB -- and `lv_draw_ortho` draws its tiles in
+internal RAM, cut out of whatever blocks fit there: with more of it the tiles
+are bigger and there are fewer of them to turn. **Leave the L2 cache at
+ESP-IDF's default.** The A/B bench above does.
 
-**ESP-IDF v5.5.6.** All the camera figures above are ESP-IDF v5.5.5. On
-v5.5.6 the camera of an ESP32-P4 below rev 3.0 did not start at all
-(`esp_cam_new_csi_ctlr: failed to configure format conversion`): v5.5.6
-takes the CSI bridge's input colour to be the ISP's output, and esp_video
-still handed it the sensor's RAW format, so the bridge was asked for a
-conversion that only rev 3.0 can do. esphome_esp-video carries the fix
-(commit 26e1be9), and so does Espressif's esp-video-components (79ae611),
-which no esp_video release carries yet. Nothing in lvgl_ortho changes.
+Two things that test app showed and that still hold:
+
+- **What the turn itself costs.** A build of the adapter run at rotation 0 by
+  mistake drew the same screen in 47.0 - 47.5 ms. Over that, turning the
+  Waveshare cost the adapter 16 ms at 90 and 12 ms at 180, and the PPA
+  alternative 11 and 8: about a third less.
+- **When a third frame buffer helps.** A first version of the PR drew into
+  two and was *slower* at 90 (66.1 ms): a frame took 58.4 ms to draw, then
+  waited for the panel to switch buffers on its next refresh, so on a 60 Hz
+  panel every frame was rounded up to four refreshes. With three, LVGL draws
+  the next frame into the third while the panel waits. A frame shorter than a
+  refresh, like the A/B bench's dashboard on two buffers, does not pay this.
+  The buffer LVGL draws into is then older than the last frame, and the engine
+  brings it up to date (see
+  [LVGL's copies between frame buffers](#lvgls-copies-between-frame-buffers)).
 
 ### Not measured yet
 
-- **The Guition JC8012P4A1** (800x1280, 90): only simulated, see
-  [How it is measured](#how-it-is-measured); its OV02C10 camera only in the
-  tests.
+- **The Guition JC8012P4A1** (800x1280, 90) with `lv_draw_ortho`: only in the
+  simulation and the PC tests, its OV02C10 camera only in the tests.
 - **ESP32-P4 rev 3.0**, where the PPA's quarter turn works in 32x32 blocks
-  rather than 16x16: neither board here has one. PR #818 now carries a test
-  that runs it on Espressif's CI board.
+  rather than 16x16: neither board here has one. PR #818 carries a test that
+  runs it on Espressif's CI board.
 - **RGB panels**: the adapter path supports them and has never run on one.
-- **Pictures turned once** (`image_cache:`) and **a big turn split**
-  (`split:`): `split:` was measured on the Tab5 and was slower (below);
-  `image_cache:` only in simulation.
+- **A camera picture turned through internal RAM inside the engine**
+  (`camera_ram:`, and the lent tile): the bands were measured with the probe
+  firmware, not yet with the engine itself on a board.
+- **`split:`** was measured on the Tab5 and was slower (see
+  [A big turn split](#a-big-turn-split)), so it stays off.
 
 ## On an ESPHome board
 
@@ -438,17 +399,26 @@ button:
 
 ## Measuring it against Espressif's adapter
 
-`espressif/` turns esp-iot-solution's `test_apps/lvgl9`, from the branch of
-PR #818, into a firmware for each board that runs by itself at boot: a timed
-whole-screen redraw (`espressif/waveshare-7b/bench.inc.c`), then every test of
-the test app. `espressif/waveshare-7b/prepare.py` adapts it to the Waveshare
-7B (its reset and backlight pins), `espressif/tab5/prepare.py` to the Tab5 (the
-ILI9881C, after Espressif's own Tab5 BSP). The workflow
-`.github/workflows/espressif-test-app.yml` builds, for each board and angle,
-`rotate_in_draw` (the PR) and `copy` (the adapter as it is today), each a
-single `.bin` to write at `0x0`. Its inputs: the esp-iot-solution branch, the
-ESP-IDF image (`v5.5.5` by default, `v6.1` measured too) and the L2 cache
-size (`256`, the test app's own, or `128`). The serial log says:
+Two benches, both built by GitHub Actions for the Waveshare 7B and the Tab5,
+each firmware a single `.bin` to write at `0x0`:
+
+- **The A/B bench** (the figures at the top). `espressif/pr818-ab/prepare.py`
+  turns the V9 benchmark (a dashboard, the same dashboard redrawn whole, a
+  picture changing every frame, a picture in the flash with and without a
+  cache) into a firmware for a board, built from any commit of
+  esp-iot-solution: `--variant official` is the adapter as Espressif ships it,
+  `--variant native` the PR's. `.github/workflows/pr818-ab.yml` builds all
+  four (ESP-IDF v5.5.6). Open the serial log at 115200 baud, reset, and wait
+  for `AB_DONE` (two to four minutes); `python3 test_pr818/depouiller.py`
+  reads the logs, `--moteur` adds the engine's own `AB_NATIVE` lines (tiles
+  read back, the second core's share).
+- **The test app** (the earlier figures). `espressif/` turns
+  esp-iot-solution's `test_apps/lvgl9`, from the branch of PR #818, into a
+  firmware that runs by itself at boot: a timed whole-screen redraw, then
+  every test of the app. `.github/workflows/espressif-test-app.yml` builds
+  `rotate_in_draw` (the PR) and `copy` (the adapter as it is), with the
+  ESP-IDF image (`v5.5.5` by default, `v6.1` measured too) and the L2 cache
+  size (`256` or `128`) as inputs. The serial log says:
 
 ```
 BENCH ROTATE_IN_DRAW (...): 173 frames in 10.0 s (17.3/s), 57.5 ms each, worst 59.2 ms
@@ -611,27 +581,30 @@ task pinned once, opposite the core LVGL happened to be on, could be on the
 very core that hands it the tile, and both halves were then painted one after
 the other. `helper_cores` in the stats says which cores have one.
 
+
 **A pair is two tiles of one redraw**, and a redraw that fits in one tile is
 cut in two for it. It was not until November 2026: a redraw of one tile was
 all the first core's, and so a dashboard -- a few small areas a frame, a card,
-a bar, a slider -- ran on one core. Measured through Espressif's adapter on
-the household's boards, that scene made 49 and 35 frames a second here
-against 61 and 49 for the stock adapter, whose two software units share every
-area (`test_pr818/RESULTATS.md`). On the same scene on a PC the second core
+a bar, a slider -- ran on one core. On the same scene on a PC the second core
 painted 1 tile of 120; it paints 74 of 193 now, a tile under
-`LV_DRAW_ORTHO_PAIR_MIN_PX` (8192 pixels) being left whole. What that gives
-on a board is not measured yet. On a whole screen redrawn it gets half of
-them: the boards' logs during `lvgl_bench` read `960 of 1920 tiles painted on
-the second core` (Tab5) and the like. Over a camera it gets **none**, and that
-is expected rather than a fault: the frame is a picture, turned in one PPA
-pass without tiles (`split: true` is what puts a second core on it), and what
-is left each frame is a tile or two -- the scroll bars a canvas bigger than
-the screen draws over it, a label -- each a redraw of its own. A night of the
+`LV_DRAW_ORTHO_PAIR_MIN_PX` (8192 pixels) being left whole. On the boards it
+first gave nothing (38.6 to 38.4 frames/s on the Waveshare, 29.4 to 30.0 on
+the Tab5): every tile inside a card was read back by the PPA first, and both
+cores waited for that. With the cards fixed the dashboard is at the panel's
+rate on both boards, and the A/B bench's `AB_NATIVE` line reads 2.3 tiles a
+frame on the second core. On a whole screen redrawn it gets half of them:
+the boards' logs during `lvgl_bench` read `960 of 1920 tiles painted on the
+second core` (Tab5) and the like. Over a camera it gets **none**, and that is
+expected rather than a fault: the frame is a picture, turned in one PPA pass
+without tiles (`split: true` is what puts a second core on it), and what is
+left each frame is a tile or two -- the scroll bars a canvas bigger than the
+screen draws over it, a label -- each a redraw of its own. A night of the
 OV5647 on the Waveshare read `0 of 345 tiles`, about 1.8 tiles a screen. The
-PC tests draw a canvas bigger than its screen and find the same: a few KiB
-of tiles a frame, which go when the screen's scroll bars are turned off
+PC tests draw a canvas bigger than its screen and find the same: a few KiB of
+tiles a frame, which go when the screen's scroll bars are turned off
 (`scrollbar_mode: "OFF"` on the canvas's parent, which also takes the bars
 off the picture).
+
 
 ### A big turn split
 
@@ -735,11 +708,10 @@ drawing into the panel's own frame buffers:
 
 **The boards say the simulation was right about Espressif's path and far too
 kind to ours.** For the adapter it gave 88.4 ms on the Tab5 and 64.1 on the
-Waveshare at 180; the boards measured 81.5 and 59.5. For the PPA alternative
-it gave 34.7 and 25.1, and the boards measured 61.1 and 47.7 under ESPHome
-(77.0 and 55.0 through the adapter, 54.4 on the Tab5 with ESP-IDF's default
-L2 cache): the 2.5x it promised over Espressif is 8 to 15 % on the boards
-with the test app's cache, 61 % on the Tab5 with ESP-IDF's default. Two reasons, one measured and one not:
+Waveshare at 180; the test app measured 81.5 and 59.5. For the PPA
+alternative it gave 34.7 and 25.1, and the boards measured 61.1 and 47.7
+under ESPHome (54.4 on the Tab5 through the test app with ESP-IDF's default
+L2 cache). Two reasons, one measured and one not:
 
 - **The PPA's quarter turn.** The simulation's PPA rate comes from a single
   turn of 180 on a Waveshare 7B, 14.9 ms for 1024x600, applied flat: 41.3
@@ -756,7 +728,7 @@ with the test app's cache, 61 % on the Tab5 with ESP-IDF's default. Two reasons,
   measured apart.
 
 So the simulation is kept for what it did -- choosing the design, and
-counting where the time goes -- and the figures at the top are the ones to
+counting where the time goes -- and the boards' figures are the ones to
 quote.
 
 ## Running the tests
@@ -764,7 +736,7 @@ quote.
 ```
 git clone --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl /tmp/lvgl
 cd test
-make LVGL=/tmp/lvgl run            # 627 cases, and the ESPHome component at four angles
+make LVGL=/tmp/lvgl run            # 677 cases, and the ESPHome component at four angles
 build/ortho_test --ppa             # the PPA's cases alone
 build/ortho_test --lvgl-quirk      # LVGL alone, drawn whole and in bands
 python3 ppa_mutants.py             # each wait for the PPA taken out must fail a case
