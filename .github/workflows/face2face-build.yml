@@ -1,0 +1,162 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 youkorr
+# Part of ppa-alternative: https://github.com/youkorr/ppa-alternative-
+#
+# Temporary: a real ESP-IDF build of youkorr/face-toface's face2face on an
+# ESP32-P4, its camera either youkorr/esphome's esp_video_camera or
+# esphome_esp-video's esp_cam_sensor. Proves what esphome config cannot:
+# that both paths compile and link.
+name: face2face build
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        camera: [esp_video_camera, esp_cam_sensor]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install "git+https://github.com/esphome/esphome@dev"
+      - run: esphome version
+      - name: The configuration
+        run: |
+          mkdir f2f
+          cat > f2f/f2f.yaml <<'YAML'
+          esphome:
+            name: f2f-test
+          esp32:
+            variant: esp32p4
+            cpu_frequency: 360MHz
+            framework:
+              type: esp-idf
+          psram:
+            mode: hex
+            speed: 200MHz
+          external_components:
+            - source:
+                type: git
+                url: https://github.com/youkorr/face-toface
+                ref: claude/face2face-esp-video-camera
+              components: [face2face]
+              refresh: 0s
+          CAMERA_SOURCE
+          logger:
+          esp32_hosted:
+            variant: esp32c6
+            clk_pin: GPIO18
+            cmd_pin: GPIO19
+            d0_pin: GPIO14
+            d1_pin: GPIO15
+            d2_pin: GPIO16
+            d3_pin: GPIO17
+            reset_pin: GPIO54
+          wifi:
+            ssid: test
+            password: testtest
+          i2c:
+            - id: i2c_bus
+              sda: GPIO7
+              scl: GPIO8
+          i2s_audio:
+            - id: i2s_bus
+              i2s_lrclk_pin: GPIO10
+              i2s_bclk_pin: GPIO12
+              i2s_mclk_pin: GPIO13
+          microphone:
+            - platform: i2s_audio
+              id: esp32_microphone
+              i2s_audio_id: i2s_bus
+              adc_type: external
+              i2s_din_pin: GPIO11
+          speaker:
+            - platform: i2s_audio
+              id: esp32_speaker
+              i2s_audio_id: i2s_bus
+              dac_type: external
+              i2s_dout_pin: GPIO9
+          switch:
+            - platform: template
+              id: audio_amplifier
+              optimistic: true
+          face2face:
+            id: f2f
+            camera_id: video_camera
+            microphone_id: esp32_microphone
+            speaker_id: esp32_speaker
+            enable_audio: true
+            enable_aec: false
+            scale: 2
+            jpeg_quality: 35
+            framerate: 15
+            swap_colors: true
+            ring_timeout: 30s
+            amplifier: audio_amplifier
+          YAML
+          if [ "${{ matrix.camera }}" = esp_video_camera ]; then
+            cat > src.txt <<'YAML'
+            - source:
+                type: git
+                url: https://github.com/youkorr/esphome
+                ref: esp_video_camera-lvgl
+              components: [esp_video_camera]
+              refresh: 0s
+          YAML
+            cat >> f2f/f2f.yaml <<'YAML'
+          esp_video_camera:
+            id: video_camera
+            name: Camera
+            i2c_id: i2c_bus
+            device: jpeg
+          YAML
+          else
+            cat > src.txt <<'YAML'
+            - source:
+                type: git
+                url: https://github.com/youkorr/esphome_esp-video
+                ref: claude/usb-uvc-consumer-integration-gnbflf
+              components: [esp_video, esp_cam_sensor]
+              refresh: 0s
+          YAML
+            cat >> f2f/f2f.yaml <<'YAML'
+          esp_video:
+            i2c_id: i2c_bus
+            xclk_pin: GPIO36
+            xclk_freq: 24000000
+            enable_jpeg: true
+            enable_isp: true
+            use_heap_allocator: false
+          esp_cam_sensor:
+            id: video_camera
+            i2c_id: i2c_bus
+            sensor_type: sc2356
+            resolution: "1280x720"
+            pixel_format: "RGB565"
+            framerate: 30
+            jpeg_quality: 15
+          YAML
+          fi
+          python3 - <<'PY'
+          p = "f2f/f2f.yaml"
+          s = open(p).read()
+          src = open("src.txt").read()
+          assert s.count("CAMERA_SOURCE\n") == 1
+          s = s.replace("CAMERA_SOURCE\n", src)
+          open(p, "w").write(s)
+          PY
+          cat f2f/f2f.yaml
+      - name: esphome config
+        run: esphome config f2f/f2f.yaml
+      - name: esphome compile
+        run: |
+          set -o pipefail
+          esphome compile f2f/f2f.yaml 2>&1 | tee build.log
+      - name: What went into the firmware
+        if: always()
+        run: |
+          grep -n "USE_FACE2FACE" f2f/.esphome/build/f2f-test/src/esphome/core/defines.h || true
+          grep -n "f2f->set_camera" f2f/.esphome/build/f2f-test/src/main.cpp || true
+          grep -nE "error:|warning: .*face2face" build.log | head -40 || true
