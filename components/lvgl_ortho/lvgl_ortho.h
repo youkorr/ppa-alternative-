@@ -27,6 +27,10 @@
 #include "lv_draw_ortho.h"
 #include "lv_draw_ortho_video.h"
 
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+#include "esphome/components/mipi_dsi/mipi_dsi.h"
+#endif
+
 // youkorr/lvgl_9.5's mipi_dsi publishes the panel's own scan-out buffers
 // here when it is given `framebuffers: 2` or `3`. ESPHome's own mipi_dsi has
 // no such header, and then this component copies into the display instead.
@@ -43,6 +47,9 @@ namespace lvgl_ortho {
 class LvglOrtho : public Component {
  public:
   void set_display(display::Display *display) { this->display_ = display; }
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+  void set_native_dsi(mipi_dsi::MipiDsi *panel) { this->native_dsi_ = panel; }
+#endif
   // ESPHome's degrees, clockwise -- the number the lvgl: block would have.
   void set_rotation(int degrees) { this->degrees_ = degrees; }
   // Turn tiles with the PPA, the CPU drawing the next one meanwhile; false
@@ -110,6 +117,11 @@ class LvglOrtho : public Component {
   // How many of the panel's own frame buffers LVGL draws into: 0 (copy mode),
   // 2 or 3. Shown by swapping the scan-out pointer, so nothing is copied.
   int panel_fbs_{0};
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+  mipi_dsi::MipiDsi *native_dsi_{nullptr};
+  bool native_present_failed_{false};
+  uint32_t native_present_us_{0}, native_present_count_{0};
+#endif
   lv_draw_buf_t third_{};
   uint32_t presents_{0};
   uint32_t renders_{0};  // LVGL refreshes that drew something, shown or not
