@@ -10,6 +10,7 @@
 
 #include "driver/gpio.h"
 #include "esp_check.h"
+#include "esp_idf_version.h"
 #include "esp_lcd_ek79007.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_lcd_panel_ops.h"
@@ -34,7 +35,11 @@ esp_err_t example_lcd_init(uint32_t num_fbs, esp_lcd_panel_handle_t *panel)
     const esp_lcd_dbi_io_config_t dbi_config = EK79007_PANEL_IO_DBI_CONFIG();
     ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_dbi(bus, &dbi_config, &io), "lcd", "DBI IO");
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+    esp_lcd_dpi_panel_config_t dpi_config = EK79007_1024_600_PANEL_60HZ_CONFIG_CF(LCD_COLOR_FMT_RGB565);
+#else
     esp_lcd_dpi_panel_config_t dpi_config = EK79007_1024_600_PANEL_60HZ_CONFIG(LCD_COLOR_PIXEL_FORMAT_RGB565);
+#endif
     dpi_config.num_fbs = num_fbs;
     ek79007_vendor_config_t vendor_config = {
         .mipi_config = {.dsi_bus = bus, .dpi_config = &dpi_config},
