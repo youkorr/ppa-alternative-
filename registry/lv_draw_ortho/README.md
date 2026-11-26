@@ -51,7 +51,10 @@ frame afterwards):
 
 ## Requirements
 
-- ESP32-P4, ESP-IDF 5.5 (tested on 5.5.5 and 5.5.6).
+- ESP32-P4. Version 0.1.0 was tested on ESP-IDF 5.5.5 and 5.5.6.
+  Version 0.2.0 targets ESP-IDF 5.5 through 6.1, with CI building the packaged
+  Waveshare example on 5.5.6 and 6.1.1. Hardware results below are historical;
+  a successful build is not an on-device validation of the new package.
 - LVGL 9.5 or 9.6. The engine reads LVGL's private structures, so only the
   tested versions are allowed by the manifest.
 - `CONFIG_LV_USE_FLOAT=y`, `CONFIG_LV_USE_MATRIX=y` and

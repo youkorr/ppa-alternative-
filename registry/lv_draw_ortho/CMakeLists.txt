@@ -20,7 +20,7 @@ endif()
 set(priv_requires esp_timer esp_mm esp_hw_support esp_rom heap)
 # esp_async_memcpy (the GDMA copy of the camera bands) moved out of
 # esp_hw_support in ESP-IDF 6.
-if("esp_driver_dma" IN_LIST build_components)
+if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
     list(APPEND priv_requires esp_driver_dma)
 endif()
 

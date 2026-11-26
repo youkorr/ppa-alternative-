@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+* Extend the ESP-IDF dependency range to include 6.1.1 and explicitly link
+  `esp_driver_dma` on ESP-IDF 6.x.
+* Build the staged registry package on ESP-IDF 5.5.6 and 6.1.1 before upload.
+  Hardware validation of this package on ESP-IDF 6.1.1 is still outstanding.
+
 
 * Removed `lv_draw_ortho_set_tile_width()`, `lv_draw_ortho_set_split()`,
   `lv_draw_ortho_set_split_share()` and the `splits`, `bytes_split_*`,

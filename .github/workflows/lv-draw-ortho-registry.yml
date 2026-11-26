@@ -4,7 +4,7 @@
 #
 # lv_draw_ortho as an ESP Component Registry component (registry/lv_draw_ortho).
 # Every push that touches it packs it as the registry would and builds its
-# example with ESP-IDF 5.5.6 against the registry's LVGL, so what is uploaded
+# example with ESP-IDF 5.5.6 and 6.1.1 against the registry's LVGL, so what is uploaded
 # is what was built. Uploading is by hand: Run workflow, "upload" set to
 # dry-run (the registry checks it and keeps nothing) or yes. It needs the
 # repository secret IDF_COMPONENT_API_TOKEN, a token made at
@@ -28,7 +28,11 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    container: espressif/idf:v5.5.6
+    strategy:
+      fail-fast: false
+      matrix:
+        idf: [v5.5.6, v6.1.1]
+    container: espressif/idf:${{ matrix.idf }}
     steps:
       - uses: actions/checkout@v4
       - name: Stage and pack
@@ -51,13 +55,13 @@ jobs:
           ls -la build/*.bin
       - uses: actions/upload-artifact@v4
         with:
-          name: lv_draw_ortho-package
+          name: lv_draw_ortho-package-${{ matrix.idf }}
           path: /tmp/dist/
   upload:
     needs: build
     if: github.event_name == 'workflow_dispatch' && inputs.upload != 'no'
     runs-on: ubuntu-24.04
-    container: espressif/idf:v5.5.6
+    container: espressif/idf:v6.1.1
     steps:
       - uses: actions/checkout@v4
       - name: Upload
