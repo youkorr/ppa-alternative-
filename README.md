@@ -35,9 +35,10 @@ third (a Guition 10", 800x1280 turned 90):
   frame.
 - **Against ESPHome's LVGL rotation**: a whole screen **2.7x as fast on the
   Waveshare and 3.2x on the Tab5**.
-- **A camera on the whole screen**: 20.4 frames/s on the Tab5, against 10-12
-  with LVGL's own rotation, 27.8 on the Waveshare, and 30.2 on the Guition,
-  which is its sensor's own rate.
+- **A camera on the whole screen**: 27.7 screens/s shown on the Tab5
+  (27.8 camera frames/s to the canvas), against 10-12 with LVGL's own
+  rotation, 27.8 on the Waveshare, and 30.2 on the Guition, which is its
+  sensor's own rate.
 
 ## Measured on the boards
 
@@ -152,7 +153,8 @@ turned once by the PPA:
 | LVGL's own rotation | 10-12 /s | |
 | lvgl_ortho, frame copied to the panel (ESPHome's `mipi_dsi`) | 12.8 /s | |
 | lvgl_ortho, the panel's own frame buffers | 15.6 /s | 20.8 /s |
-| the panel's own frame buffers, the main loop kept awake (`fast_loop: true`) | **20.4 /s** | **27.8 /s** |
+| the panel's own frame buffers, the main loop kept awake (`fast_loop: true`), earlier measurements | 20.4 /s | **27.8 /s** |
+| pictures turned through internal RAM inside the engine | **27.7 screens/s shown (27.8 /s to the canvas)** | not measured yet |
 
 - **The copy to the panel** is 14.4 ms a frame on the Tab5: the whole
   difference between the second and third rows. Drawing into the panel's own
@@ -162,7 +164,7 @@ turned once by the PPA:
   frame ready meanwhile waited. `fast_loop: true` on `lvgl_camera_display`
   holds the loop awake while the display is on: about 30 % more on both
   boards.
-- **What is left is the PPA**, slowed by the camera's own memory traffic:
+- **In the earlier runs, what was left was the PPA**, slowed by the camera's own memory traffic:
   31.7 ms of a 35.6 ms frame on the Waveshare is the CPU waiting for the PPA
   to turn 1024x600 (about 19 Mpx/s, half what a 180-degree turn of the whole
   screen does on its own), and 44.3 ms of 49 on the Tab5 for 1280x720. The
@@ -182,6 +184,36 @@ merged yet), the camera streaming, a whole picture:
 |---|---|---|---|
 | Waveshare 7B, 1024x600 at 180 | 31.6 ms | 13.8 ms | 12.4 ms |
 | Tab5, 1280x720 at 270 | 44.3 ms | 24.4 ms | 18.7 ms |
+
+**Inside the engine, on the M5Stack Tab5** (1280x720, SC2356 / SC202CS):
+the latest serial log reports 27.5-27.8 camera frames/s to the canvas,
+27.5-27.7 refreshes/s drawn and 27.7 screens/s shown in the complete
+ten-second report. The latter is about 92% of the sensor's nominal 30
+frames/s, against 10-12 with LVGL's own rotation and 20.4 in the previous
+optimized run. The PPA accounts for 99% of the turned data; the CPU waits
+only 0.5 ms per screen. Each picture is turned through internal RAM in
+bands of 16 rows, taking 28.6-28.8 ms. No panel rows are copied, no picture
+is drawn twice or into a layer, and the second core paints none of the tiles
+in these samples. These figures measure local camera display, not JPEG
+throughput over the network.
+
+The serial log excerpt (the first report's leading line was not supplied):
+
+```text
+[14:16:13][I][lvgl_ortho:501]:   turned 50158 KiB/s, 99% of it by the PPA, the CPU waited 55.1 times/s for it, 0.5 ms a screen
+[14:16:13][I][lvgl_ortho:510]:     of it: pictures 49571 KiB/s (1.00 a screen, 1800 KiB each), tiles out 294 KiB/s, read back under tiles 294 KiB/s
+[14:16:13][I][lvgl_ortho:520]:     pictures: 27.5/s, 0.0/s the same one again, 0.0/s into a layer; 27.5 refreshes/s drawn
+[14:16:13][I][lvgl_ortho:554]:   27.5 pictures/s turned through internal RAM, in bands of 16 rows, 28.8 ms each
+[14:16:13][I][lvgl_ortho:561]:   0 of 276 tiles painted on the second core
+[14:16:17][D][lvgl_camera_display:121]: 1280x720 to the canvas at 27.5 fps
+[14:16:23][I][lvgl_ortho:492]: Last 10s: 0.0 video frames/s (0.0 ms each), 27.7 screens/s shown, 0 panel rows/s copied (0.0 ms/s)
+[14:16:23][I][lvgl_ortho:501]:   turned 50431 KiB/s, 99% of it by the PPA, the CPU waited 55.4 times/s for it, 0.5 ms a screen
+[14:16:23][I][lvgl_ortho:510]:     of it: pictures 49840 KiB/s (1.00 a screen, 1800 KiB each), tiles out 295 KiB/s, read back under tiles 295 KiB/s
+[14:16:23][I][lvgl_ortho:520]:     pictures: 27.7/s, 0.0/s the same one again, 0.0/s into a layer; 27.7 refreshes/s drawn
+[14:16:23][I][lvgl_ortho:554]:   27.7 pictures/s turned through internal RAM, in bands of 16 rows, 28.6 ms each
+[14:16:23][I][lvgl_ortho:561]:   0 of 277 tiles painted on the second core
+[14:16:27][D][lvgl_camera_display:121]: 1280x720 to the canvas at 27.8 fps
+```
 
 **Inside the engine, on the Guition 10"** (its OV02C10 at 30 frames/s, the
 panel's own frame buffers, two cores, `camera_ram:` left at 80 KB): 30.2
@@ -207,7 +239,7 @@ Without RAM of its own (`camera_ram: 0`, or no room at boot) the engine
 lends its first tile instead: while a picture is turned whole no tile is
 drawn, so its two halves are the bands, at no RAM cost. Both are checked on a
 PC at every angle, pixel for pixel, with three planted mistakes caught; the
-bands are measured inside the engine on the Guition (above), the lent tile
+bands are measured inside the engine on the Tab5 and Guition (above), the lent tile
 **not yet on a board**. Anything the bands cannot take (no
 room, a band shape the PPA cannot take whole because of DIG-734, a copy
 refused) is the plain turn, said in the ten-second report.
@@ -272,8 +304,8 @@ Two things that test app showed and that still hold:
   runs it on Espressif's CI board.
 - **RGB panels**: the adapter path supports them and has never run on one.
 - **A camera picture turned through internal RAM inside the engine** on
-  the Tab5 and the Waveshare: measured there with the probe firmware only,
-  inside the engine on the Guition. The lent tile (`camera_ram: 0`) on no
+  the Waveshare: measured there with the probe firmware only, inside the
+  engine on the Tab5 and Guition. The lent tile (`camera_ram: 0`) on no
   board yet.
 
 ## On an ESPHome board
