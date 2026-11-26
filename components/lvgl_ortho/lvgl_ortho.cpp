@@ -194,6 +194,28 @@ void LvglOrtho::setup() {
 }
 
 bool LvglOrtho::use_panel_buffers_() {
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+  if (this->native_dsi_ != nullptr) {
+    auto *panel = this->native_dsi_;
+    if (panel->is_failed() || panel->get_num_framebuffers() != 3 ||
+        panel->get_native_width() != this->width_ || panel->get_native_height() != this->height_)
+      return false;
+    void *fb0 = panel->get_framebuffer(0);
+    void *fb1 = panel->get_framebuffer(1);
+    void *fb2 = panel->get_framebuffer(2);
+    if (fb0 == nullptr || fb1 == nullptr || fb2 == nullptr)
+      return false;
+    const size_t size = (size_t) this->stride_ * this->height_;
+    // Buffer zero starts in scan-out. Start rendering into buffer one instead.
+    lv_display_set_buffers_with_stride(this->disp_, fb1, fb2, size, this->stride_, LV_DISPLAY_RENDER_MODE_DIRECT);
+    lv_draw_buf_init(&this->third_, this->width_, this->height_, lv_display_get_color_format(this->disp_),
+                     this->stride_, fb0, size);
+    lv_display_set_3rd_draw_buffer(this->disp_, &this->third_);
+    this->panel_fbs_ = 3;
+    ESP_LOGI(TAG, "Native DSI framebuffer API (PR #23332), three buffers");
+    return true;
+  }
+#endif
 #if LVGL_ORTHO_FAST_PRESENT
   // The panel's own scan-out buffers, as youkorr/lvgl_9.5's mipi_dsi
   // publishes them. LVGL renders straight into one while the panel shows
@@ -266,6 +288,25 @@ void LvglOrtho::render_start_cb_(lv_event_t *e) {
 
 void LvglOrtho::flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   (void) px_map;  // the buffer is ours and already in the panel's orientation
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+  if (g_self != nullptr && g_self->native_dsi_ != nullptr && g_self->panel_fbs_ > 0) {
+    if (lv_display_flush_is_last(disp) && !g_self->native_present_failed_) {
+      const uint32_t start = micros();
+      if (!g_self->native_dsi_->present_framebuffer(px_map)) {
+        g_self->native_present_failed_ = true;
+        g_self->ready_ = false;
+        ESP_LOGE(TAG, "Native framebuffer presentation failed; stopping LVGL refreshes");
+        lv_display_enable_invalidation(disp, false);
+      } else {
+        g_self->native_present_us_ += micros() - start;
+        g_self->native_present_count_++;
+        g_self->presents_++;
+      }
+    }
+    lv_display_flush_ready(disp);
+    return;
+  }
+#endif
 #if LVGL_ORTHO_FAST_PRESENT
   if (g_self != nullptr && g_self->panel_fbs_ > 0) {
     // LVGL drew into one of the panel's own buffers. Once the whole frame is
