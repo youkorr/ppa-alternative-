@@ -212,7 +212,7 @@ bool LvglOrtho::use_panel_buffers_() {
                      this->stride_, fb0, size);
     lv_display_set_3rd_draw_buffer(this->disp_, &this->third_);
     this->panel_fbs_ = 3;
-    ESP_LOGI(TAG, "Native DSI framebuffer API (PR #23332), three buffers");
+    ESP_LOGI(TAG, "Native DSI framebuffer API (PR #23332), three buffers, deferred fence");
     return true;
   }
 #endif
@@ -292,7 +292,7 @@ void LvglOrtho::flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px
   if (g_self != nullptr && g_self->native_dsi_ != nullptr && g_self->panel_fbs_ > 0) {
     if (lv_display_flush_is_last(disp) && !g_self->native_present_failed_) {
       const uint32_t start = micros();
-      if (!g_self->native_dsi_->present_framebuffer(px_map)) {
+      if (!g_self->native_dsi_->present_framebuffer(px_map, true)) {
         g_self->native_present_failed_ = true;
         g_self->ready_ = false;
         ESP_LOGE(TAG, "Native framebuffer presentation failed; stopping LVGL refreshes");
