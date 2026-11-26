@@ -56,6 +56,8 @@ CONFIG_SCHEMA = cv.All(
             # The PPA turns each tile while the CPU draws the next; false
             # leaves the turning to the CPU, to compare the two on a board.
             cv.Optional("ppa", default=True): cv.boolean,
+            # Experimental adapter for ESPHome PR #23332, not the legacy fast-present ABI.
+            cv.Optional("native_dsi", default=False): cv.boolean,
             # Off by default: it takes up to three more tiles of internal RAM
             # and the other core's time. Compare with lvgl_bench first.
             cv.Optional("cores", default=1): cv.int_range(min=1, max=2),
@@ -107,6 +109,15 @@ def _final_validate(config):
         )
     if _the_display(full, config) is None:
         raise cv.Invalid(f"lvgl_ortho: no display found; give {CONF_DISPLAY_ID}:")
+    if config["native_dsi"]:
+        target = _the_display(full, config)
+        matches = [d for d in full.get("display", []) if d.get(CONF_ID) == target]
+        if len(matches) != 1 or matches[0].get("platform") != "mipi_dsi":
+            raise cv.Invalid("native_dsi requires a mipi_dsi display")
+        if matches[0].get("framebuffers", 1) != 3:
+            raise cv.Invalid("native_dsi requires framebuffers: 3")
+        if str(matches[0].get("color_depth", "16")).removesuffix("bit") != "16":
+            raise cv.Invalid("native_dsi requires color_depth: 16")
     return config
 
 
@@ -150,6 +161,9 @@ async def to_code(config):
     await cg.register_component(var, config)
     disp = await cg.get_variable(_the_display(CORE.config, config))
     cg.add(var.set_display(disp))
+    if config["native_dsi"]:
+        cg.add_define("USE_LVGL_ORTHO_NATIVE_DSI")
+        cg.add(var.set_native_dsi(disp))
     cg.add(var.set_rotation(config[CONF_ROTATION]))
     cg.add(var.set_ppa(config["ppa"]))
     cg.add(var.set_cores(config["cores"]))
