@@ -516,6 +516,13 @@ void LvglOrtho::loop() {
       ESP_LOGI(TAG, "Last %.0fs: %.1f video frames/s (%.1f ms each), %.1f screens/s shown, %.0f panel rows/s copied (%.1f ms/s)",
                s, this->video_frames_ / s, this->video_frames_ ? this->video_us_ / 1000.0f / this->video_frames_ : 0.0f,
                this->presents_ / s, this->flush_rows_ / s, this->flush_us_ / 1000.0f / s);
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+      if (this->native_present_count_ > 0) {
+        ESP_LOGI(TAG, "  native DSI present: %.2f ms/frame, %.1f ms/s, %u successful presents",
+                 this->native_present_us_ / 1000.0f / this->native_present_count_,
+                 this->native_present_us_ / 1000.0f / s, (unsigned) this->native_present_count_);
+      }
+#endif
       // How much of the turning the PPA did, and how often the CPU had to
       // wait for it: near 100% and few waits is the PPA working for nothing.
       const lv_draw_ortho_stats_t *st = lv_draw_ortho_get_stats();
@@ -580,6 +587,9 @@ void LvglOrtho::loop() {
       lv_draw_ortho_reset_stats();
     }
     this->last_report_ = now;
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+    this->native_present_us_ = this->native_present_count_ = 0;
+#endif
     this->video_us_ = this->video_frames_ = this->flush_us_ = this->flush_rows_ = this->presents_ = this->renders_ = 0;
   }
 }
