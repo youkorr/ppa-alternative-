@@ -207,6 +207,15 @@ bool lv_draw_ortho_set_cores(uint32_t cores);
 /** Create the draw unit. Call after `lv_init()`. */
 void lv_draw_ortho_init(void);
 
+/** Release tile blocks, turned image cache and helper tasks between refreshes.
+ * Caller must exclude ALL LVGL rendering, drain/deinit hardware first, and
+ * release any video/sync hooks. No rendering until resume succeeds.
+ * Unit and job array remain registered. False leaves resources untouched. */
+bool lv_draw_ortho_suspend(void);
+/** Reallocate first tile, one core; false keeps unit suspended. Caller may
+ * then reinitialize the PPA and optionally enable another core. */
+bool lv_draw_ortho_resume(void);
+
 void lv_draw_ortho_set_copy_cb(lv_draw_ortho_copy_cb_t cb);
 
 /** Turn the fast paths off, so every task goes through tiles. For tests. */

@@ -1013,6 +1013,18 @@ esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * in)
     return wait(g_queued) ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
+/* Unlike the legacy void deinit, this checks all DMA fences first.
+ * A failure must not permit tile or stage memory to be freed. */
+bool lv_draw_ortho_ppa_suspend(void)
+{
+    if(g_stuck || g_stage_broken || lv_draw_ortho_get_stats()->turner_failed) return false;
+    if(g_client && !wait(g_queued)) return false;
+    if(g_fill_client && !wait_on(&g_fill_done, g_fill_queued)) return false;
+    if(g_copier && !copies_done()) return false;
+    lv_draw_ortho_ppa_deinit();
+    return !g_stuck && !g_stage_broken && !g_client && !g_fill_client && !g_copier;
+}
+
 void lv_draw_ortho_ppa_deinit(void)
 {
     lv_draw_ortho_ppa_use_tiles(false);

@@ -86,6 +86,7 @@ static lv_draw_ortho_copy_cb_t g_copy_cb;
 static bool g_fast = true;
 static bool g_batch = true;
 static bool g_tile_internal;
+static bool g_suspended;
 
 /* A turner (the PPA) and the last ticket it was handed that may still be
  * running, 0 when none is. */
@@ -1791,6 +1792,7 @@ static bool same_matrix(const lv_draw_task_t * a, const lv_draw_task_t * b)
 static int32_t evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * task)
 {
     LV_UNUSED(draw_unit);
+    if(g_suspended) return 0;
     ortho_t o;
     if(!ortho_from_matrix(&task->matrix, &o)) return 0;
     /* An identity matrix is the software renderer's own case -- unless a
@@ -1825,6 +1827,7 @@ static int32_t evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * task)
 static int32_t dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
 {
     ortho_unit_t * u = (ortho_unit_t *)draw_unit;
+    if(g_suspended) return LV_DRAW_UNIT_IDLE;
     if(u->task_act) return 0;
 
     lv_draw_task_t * t = lv_draw_get_available_task(layer, NULL, DRAW_UNIT_ID_ORTHO);
@@ -2330,6 +2333,7 @@ static void share_tiles(ortho_unit_t * u, int want)
 {
     int blocks = 0;
     while(blocks < 4 && u->tile_alloc[blocks]) blocks++;
+    if(blocks == 0) return;
     const int per = (want + blocks - 1) / blocks;
     const size_t bytes = per == 1 ? LV_DRAW_ORTHO_TILE_BYTES
                          : (LV_DRAW_ORTHO_TILE_BYTES / (size_t)per) & ~(size_t)(TILE_ALIGN - 1);
@@ -2350,6 +2354,7 @@ static void share_tiles(ortho_unit_t * u, int want)
  * it, with nothing overlapped and no second core. */
 static void more_tiles(ortho_unit_t * u)
 {
+    if(g_suspended) return;
     const int want = tiles_wanted();
     int blocks = 0;
     while(blocks < 4 && u->tile_alloc[blocks]) blocks++;
@@ -2394,6 +2399,7 @@ static int32_t delete_cb(lv_draw_unit_t * draw_unit)
     lv_free(u->jobs);
     u->jobs = NULL;
     g_unit = NULL;
+    g_suspended = false;
     return 0;
 }
 
@@ -2445,7 +2451,7 @@ void lv_draw_ortho_set_turner(lv_draw_ortho_turn_cb_t turn, lv_draw_ortho_wait_c
 
 bool lv_draw_ortho_set_cores(uint32_t cores)
 {
-    if(g_unit == NULL) return false;
+    if(g_unit == NULL || g_suspended) return false;
     if(cores < 2) {
         if(g_helper.on) helper_stop_thread();
         g_helper.on = false;
@@ -2464,6 +2470,47 @@ bool lv_draw_ortho_set_cores(uint32_t cores)
     g_helper.on = true;
     more_tiles(g_unit);   /* tiles_wanted() now asks for the second core's */
     g_unit->pair = 0;
+    return true;
+}
+
+/* Caller holds exclusive LVGL ownership, between refreshes, and has
+ * drained/deinitialized the hardware turner. No drawing while suspended.
+ * The unit itself and its small job array stay registered. */
+bool lv_draw_ortho_suspend(void)
+{
+    if(!g_unit) return false;
+    if(g_suspended) return true;
+    if(g_unit->task_act || g_sync_hooked || g_win_disp || g_turn || g_fill || g_loan || g_turner_failed)
+        return false;
+    fence();
+    if(g_turner_failed) return false;
+    if(g_helper.on) helper_stop_thread();
+    g_helper.on = false;
+    lv_draw_ortho_image_cache_drop(NULL);
+    for(int i = 0; i < 4; ++i) {
+        if(g_unit->tile_alloc[i]) tile_free(g_unit->tile_alloc[i]);
+        g_unit->tile_alloc[i] = NULL;
+        g_unit->tile[i] = NULL;
+        g_unit->ticket[i] = 0;
+    }
+    g_unit->tile_bytes = 0;
+    g_unit->next = g_unit->pair = 0;
+    g_tile_internal = false;
+    g_suspended = true;
+    return true;
+}
+
+bool lv_draw_ortho_resume(void)
+{
+    if(!g_unit) return false;
+    if(!g_suspended) return true;
+    bool internal = false;
+    void *p = tile_alloc(LV_DRAW_ORTHO_TILE_BYTES + TILE_ALIGN, &internal);
+    if(!p) return false; /* stay suspended; no dangling tile */
+    g_unit->tile_alloc[0] = p;
+    g_tile_internal = internal;
+    g_suspended = false;
+    share_tiles(g_unit, 1);
     return true;
 }
 

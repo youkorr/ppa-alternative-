@@ -121,3 +121,14 @@ make a case fail. The figures above are from the boards.
 ## License
 
 MIT. See `LICENSE`.
+
+### Experimental resource lifecycle
+
+On the experimental-resource-lifecycle branch only, an exclusive caller can
+suspend between refreshes: check lv_draw_ortho_ppa_suspend(), then
+lv_draw_ortho_suspend(). Do not render or call the draw-unit configuration APIs
+until lv_draw_ortho_resume() succeeds. Reinitialize the PPA after resume, and
+optionally enable the helper again. No video window or deferred sync hooks may
+be active. A failed DMA drain is not permission to free anything. The unit,
+job array and mutex remain allocated; the tile blocks and turned image cache
+are released and helper tasks stopped. No new registry version is published.

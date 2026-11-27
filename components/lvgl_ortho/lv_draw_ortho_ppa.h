@@ -55,6 +55,9 @@ esp_err_t lv_draw_ortho_ppa_init(void);
 
 /** Hand the turns back to the CPU and release the PPA. */
 void lv_draw_ortho_ppa_deinit(void);
+/** Drain all PPA/GDMA work before teardown. False: do not release tiles or
+ * start another renderer; a reset may be required. Exclusive caller. */
+bool lv_draw_ortho_ppa_suspend(void);
 
 /** One scale-rotate-mirror through the same client and the same guards: cut
  *  for DIG-734 when it is 1:1 and unmirrored, trimmed by up to three source
