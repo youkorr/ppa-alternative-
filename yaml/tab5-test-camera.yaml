@@ -167,6 +167,9 @@ esp32:
   cpu_frequency: 360MHz
   framework:
     type: esp-idf
+    # esp_video from esphome_esp-video still requires IDF's built-in json.
+    # Keep these camera benchmarks on their documented IDF 5.5.6 baseline.
+    version: 5.5.6
     advanced:
       enable_idf_experimental_features: true
 
