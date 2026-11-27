@@ -285,6 +285,11 @@ void lv_draw_ortho_set_image_constant_cb(lv_draw_ortho_constant_cb_t cb);
  */
 bool lv_draw_ortho_take_sync(lv_display_t * disp);
 
+/** Native-buffer experiment: fail closed if a synchronization write targets
+ * an unleased framebuffer. Must be installed after take_sync, before refresh. */
+bool lv_draw_ortho_set_sync_write_guard(lv_display_t * disp, bool (*guard)(const void *));
+bool lv_draw_ortho_sync_write_guard_valid(lv_display_t * disp);
+
 /** Give LVGL its copies back (NULL: whichever display has them). */
 void lv_draw_ortho_release_sync(lv_display_t * disp);
 

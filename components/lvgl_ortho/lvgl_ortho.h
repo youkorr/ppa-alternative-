@@ -121,6 +121,9 @@ class LvglOrtho : public Component {
   mipi_dsi::MipiDsi *native_dsi_{nullptr};
   bool native_present_failed_{false};
   uint32_t native_present_us_{0}, native_present_count_{0};
+  uint32_t native_acquire_us_{0}, native_acquire_count_{0};
+  static bool native_write_guard_(const void *fb);
+  static void native_refresh_start_cb_(lv_event_t *e);
 #endif
   lv_draw_buf_t third_{};
   uint32_t presents_{0};

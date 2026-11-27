@@ -17,6 +17,7 @@
 #include "lvgl_private.h"
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 #if defined(ESP_PLATFORM)
 #include "esp_memory_utils.h"
 #endif
@@ -1946,6 +1947,16 @@ typedef struct {
 } sync_t;
 
 static sync_t g_sync;
+static bool (*g_sync_write_guard)(const void *);
+
+/* Called before actual CPU/PPA writes, not when just recording dirty areas. */
+static void sync_require_write(const lv_draw_buf_t * b)
+{
+    if(g_sync_write_guard && (!b || !g_sync_write_guard(b->data))) {
+        LV_LOG_ERROR("ortho: native sync destination is not leased");
+        abort();
+    }
+}
 /* The display our two event callbacks are on: they stay there, inert, once
  * the copies are given back from inside an event, where LVGL's list of them
  * may not be changed. */
@@ -2008,6 +2019,7 @@ static void sync_copy_cb(lv_draw_buf_t * dest, const lv_area_t * dest_area, cons
 {
     const int d = sync_index(dest), s = sync_index(src);
     LV_ASSERT(d >= 0);   /* only our buffers have this callback */
+    if(g_sync_write_guard && d < 0) abort();
     lv_display_t * disp = g_sync.disp;
     const bool same_place = s >= 0 && s != d && dest_area && dest_area == src_area && sync_alike(dest, src);
     /* LVGL's own sync, on our display: written down, not done. */
@@ -2021,6 +2033,7 @@ static void sync_copy_cb(lv_draw_buf_t * dest, const lv_area_t * dest_area, cons
         }
         return;
     }
+    sync_require_write(dest);
     /* Any other copy from one frame buffer to another, at the same place: made
      * now, by the turner when there is one -- the caller expects it done. */
     if(same_place) {
@@ -2126,6 +2139,7 @@ static void sync_repair(int i, lv_draw_buf_t * on, const lv_area_t * drawn, int3
         cur = !cur;
         n = m;
     }
+    sync_require_write(b);
     const lv_color_format_t cf = b->header.cf;
     const int32_t px = lv_color_format_get_size(cf);
     lv_area_t whole;
@@ -2162,6 +2176,9 @@ static void sync_wait_flush(lv_display_t * disp)
  * handed each one over. */
 static void sync_settle_and_release(void)
 {
+    /* Settling writes into both off-screen buffers. Under a native lease
+     * only one of them is writable: a hook change must stop, not fall back. */
+    if(g_sync_write_guard) abort();
     lv_display_t * disp = g_sync.disp;
     if(disp && disp->buf_1 == g_sync.buf[0] && disp->buf_2 == g_sync.buf[1] && disp->buf_3 == g_sync.buf[2]) {
         lv_draw_buf_t * on = sync_on_screen(disp);
@@ -2182,6 +2199,7 @@ static void sync_render_start(lv_event_t * e)
 {
     lv_display_t * disp = lv_event_get_current_target(e);
     if(disp != g_sync_hooked) return;
+    if(g_sync_write_guard && !lv_draw_ortho_sync_write_guard_valid(disp)) abort();
     if(g_sync.disp != disp || !sync_still_ours()) {
         /* The buffers were set again behind us (a dummy draw, a new panel):
          * what was written down is made, and they are taken again. LVGL
@@ -2260,6 +2278,23 @@ bool lv_draw_ortho_take_sync(lv_display_t * disp)
         g_sync_hooked = disp;
     }
     return true;
+}
+
+bool lv_draw_ortho_sync_write_guard_valid(lv_display_t * disp)
+{
+    if(!g_sync_write_guard || !disp || g_sync.disp != disp || g_sync_hooked != disp || !sync_still_ours())
+        return false;
+#if LVGL_VERSION_MAJOR > 9 || (LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR >= 6)
+    if(disp->sync_cb) return false;
+#endif
+    return true;
+}
+
+bool lv_draw_ortho_set_sync_write_guard(lv_display_t * disp, bool (*guard)(const void *))
+{
+    if(!guard || !disp || g_sync.disp != disp || !sync_still_ours() || g_sync_write_guard) return false;
+    g_sync_write_guard = guard;
+    return lv_draw_ortho_sync_write_guard_valid(disp);
 }
 
 void lv_draw_ortho_release_sync(lv_display_t * disp)

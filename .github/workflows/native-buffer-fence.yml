@@ -1,0 +1,36 @@
+name: Native DSI buffer fence
+on:
+  push:
+    branches: [test-native-dsi-buffer-fence]
+  workflow_dispatch:
+jobs:
+  ownership:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: youkorr/esphome
+          ref: f35e7d2b4fc1fc6d45161170b3a3da6ac7b01cda
+      - run: g++ -std=c++17 -O2 -Wall -Wextra -Werror -I. tests/native_framebuffer_fence_test.cpp -o /tmp/fence-test && /tmp/fence-test
+  tab5:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install "git+https://github.com/esphome/esphome@dev"
+      - run: esphome version
+      - name: Local experimental renderer and dummy secrets
+        run: |
+          python - <<'PY'
+          p = "yaml/tab5-camera-ui.yaml"
+          s = open(p).read()
+          old = "  - source: github://youkorr/ppa-alternative-@test-native-dsi-buffer-fence"
+          assert s.count(old) == 1
+          s = s.replace(old, "  - source:\n      type: local\n      path: ../components")
+          open(p, "w").write(s)
+          PY
+          printf 'wifi_ssid: "test"\nwifi_password: "testtest"\napi_encryption_key: "kIuGSIsyjV6h5x0uC4ToRJKNJa6tRtjSFdbTB8PA36A="\n' > yaml/secrets.yaml
+      - run: esphome compile yaml/tab5-camera-ui.yaml

@@ -12,6 +12,7 @@
 #include "esp_memory_utils.h"
 #include "esp_rom_sys.h"
 #include <stdio.h>
+#include <stdlib.h>
 #if defined(ESP_PLATFORM)
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -35,13 +36,19 @@
 
 static ppa_client_handle_t g_client;
 static uint32_t g_queued;            /* tickets handed out */
-static volatile uint32_t g_done;     /* counted by the PPA's interrupt */
+static uint32_t g_done;     /* counted by the PPA's interrupt */
 /* Fills run on the PPA's other engine (blend), with a client and a count of
  * their own: the two engines finish in no order relative to each other. */
 static ppa_client_handle_t g_fill_client;
 static uint32_t g_fill_queued;
-static volatile uint32_t g_fill_done;
+static uint32_t g_fill_done;
 static bool g_stuck;
+static bool g_require_completion;
+
+void lv_draw_ortho_ppa_require_completion(bool required)
+{
+    g_require_completion = required;
+}
 #if defined(ESP_PLATFORM)
 /* Given by the PPA's interrupt when a transaction of either engine finishes,
  * once for each task sleeping on it (once when none is, so a task about to
@@ -275,8 +282,8 @@ static bool on_done(ppa_client_handle_t client, ppa_event_data_t * event, void *
 {
     (void)event;
     (void)user;
-    if(client == g_fill_client) g_fill_done++;
-    else g_done++;
+    if(client == g_fill_client) __atomic_add_fetch(&g_fill_done, 1U, __ATOMIC_RELEASE);
+    else __atomic_add_fetch(&g_done, 1U, __ATOMIC_RELEASE);
     return wake_sleepers();
 }
 
@@ -306,22 +313,24 @@ static uint32_t pause_for_ppa(uint32_t max_us)
 }
 
 /* Until `*done` reaches `ticket`, bounded the same way for both engines. */
-static bool wait_on(volatile uint32_t * done, uint32_t ticket)
+static bool wait_on(uint32_t * done, uint32_t ticket)
 {
     const uint32_t limit = LV_DRAW_ORTHO_PPA_TIMEOUT_MS * 1000u;
-    uint32_t seen = *done, idle_us = 0;
-    while((int32_t)(*done - ticket) < 0) {
+    uint32_t seen = __atomic_load_n(done, __ATOMIC_ACQUIRE), idle_us = 0;
+    while((int32_t)(__atomic_load_n(done, __ATOMIC_ACQUIRE) - ticket) < 0) {
         if(g_stuck) return false;
         idle_us += pause_for_ppa(limit - LV_MIN(idle_us, limit));
-        if(*done != seen) {
-            seen = *done;
+        const uint32_t completed = __atomic_load_n(done, __ATOMIC_ACQUIRE);
+        if(completed != seen) {
+            seen = completed;
             idle_us = 0;
         }
         else if(idle_us >= limit) {
             g_stuck_engine = done == &g_fill_done ? 2 : 1;
-            g_stuck_done = *done;
+            g_stuck_done = completed;
             g_stuck_queued = done == &g_fill_done ? g_fill_queued : g_queued;
             g_stuck = true;
+            if(g_require_completion) abort();  /* accepted DMA may still write */
             return false;
         }
     }
@@ -379,7 +388,7 @@ static bool wait(uint32_t ticket);
 static uint8_t * g_stage[2];
 static size_t g_stage_bytes;
 static async_memcpy_handle_t g_copier;
-static volatile uint32_t g_copied;     /* counted by the copy's interrupt */
+static uint32_t g_copied;     /* counted by the copy's interrupt */
 static uint32_t g_copies;              /* copies asked for */
 /* The last ticket that reads each band: nothing is copied into a band before
  * it has finished, across pictures too. */
@@ -413,7 +422,7 @@ static bool on_copied(async_memcpy_handle_t mcp, async_memcpy_event_t * event, v
     (void)mcp;
     (void)event;
     (void)user;
-    g_copied++;
+    __atomic_add_fetch(&g_copied, 1U, __ATOMIC_RELEASE);
     return wake_sleepers();
 }
 
@@ -434,8 +443,11 @@ static bool copies_done(void)
 {
     const uint32_t limit = STAGE_COPY_TIMEOUT_MS * 1000u;
     uint32_t idle_us = 0;
-    while((int32_t)(g_copied - g_copies) < 0) {
-        if(idle_us >= limit) return false;
+    while((int32_t)(__atomic_load_n(&g_copied, __ATOMIC_ACQUIRE) - g_copies) < 0) {
+        if(idle_us >= limit) {
+            if(g_require_completion) abort();  /* accepted GDMA may still write */
+            return false;
+        }
         idle_us += pause_for_ppa(limit - idle_us);
     }
     return true;
@@ -476,7 +488,7 @@ static bool queue_rows(const lv_draw_ortho_pic_t * src, const lv_area_t * block,
                        const piece_t * pieces, int n)
 {
     const uint32_t bw = (uint32_t)lv_area_get_width(block), bh = (uint32_t)lv_area_get_height(block);
-    if(g_queued - g_done + (uint32_t)n > PENDING && !wait(g_queued - (PENDING - (uint32_t)n))) return false;
+    if(g_queued - __atomic_load_n(&g_done, __ATOMIC_ACQUIRE) + (uint32_t)n > PENDING && !wait(g_queued - (PENDING - (uint32_t)n))) return false;
     ppa_srm_oper_config_t op;
     lv_memzero(&op, sizeof(op));
     op.in.buffer = from;
@@ -507,6 +519,7 @@ static bool queue_rows(const lv_draw_ortho_pic_t * src, const lv_area_t * block,
             return false;
         }
         ++g_queued;
+        if(g_require_completion && g_queued == 0) wait(g_queued);  /* zero is the no-ticket sentinel */
         note(0, g_queued, from, src->w, from_h, op.in.block_offset_x, op.in.block_offset_y, p->w, p->h, dst->buf,
              dst->w, dst->h, op.out.block_offset_x, op.out.block_offset_y, rot, px * 8, 1.0f, 1.0f);
     }
@@ -619,7 +632,8 @@ static esp_err_t install_copier(void)
 #if defined(ESP_PLATFORM)
     if(g_wake == NULL && (g_wake = xSemaphoreCreateCounting(WAKE_MAX, 0)) == NULL) return ESP_ERR_NO_MEM;
 #endif
-    g_copied = g_copies = 0;
+    g_copies = 0;
+    __atomic_store_n(&g_copied, 0U, __ATOMIC_RELAXED);
     return ESP_OK;
 }
 
@@ -770,7 +784,7 @@ static uint32_t turn(const lv_draw_ortho_pic_t * src, const lv_area_t * block, c
     piece_t pieces[MAX_PIECES];
     int n = 0;
     if(!cut(0, 0, bw, bh, rot, px * 8, pieces, &n, 0)) return 0;
-    if(g_queued - g_done + (uint32_t)n > PENDING) return 0;
+    if(g_queued - __atomic_load_n(&g_done, __ATOMIC_ACQUIRE) + (uint32_t)n > PENDING) return 0;
 
     /* Write back and drop the output rows first. The CPU has drawn right up to
      * this block's edges, and a cache line it shares with the block holds its
@@ -830,8 +844,12 @@ static uint32_t turn(const lv_draw_ortho_pic_t * src, const lv_area_t * block, c
         op.out.block_offset_y = (uint32_t)dy + oy;
         /* A piece refused after others were queued: those finish, and the
          * CPU then turns the whole block over them -- the same pixels. */
-        if(ppa_do_scale_rotate_mirror(g_client, &op) != ESP_OK) return 0;
+        if(ppa_do_scale_rotate_mirror(g_client, &op) != ESP_OK) {
+            if(g_require_completion) wait(g_queued);
+            return 0;
+        }
         ++g_queued;
+        if(g_require_completion && g_queued == 0) wait(g_queued);  /* zero is the no-ticket sentinel */
         note(0, g_queued, src->buf, src->w, src->h, op.in.block_offset_x, op.in.block_offset_y, p->w, p->h, dst->buf,
              dst->w, dst->h, op.out.block_offset_x, op.out.block_offset_y, rot, px * 8, 1.0f, 1.0f);
     }
@@ -905,7 +923,8 @@ static esp_err_t ensure_client(void)
         g_client = NULL;
         return err;
     }
-    g_queued = g_done = 0;
+    g_queued = 0;
+    __atomic_store_n(&g_done, 0U, __ATOMIC_RELAXED);
     g_trail_n = 0;
     /* The fill client: optional, the turns work without it. */
     lv_memzero(&cfg, sizeof(cfg));
@@ -918,7 +937,8 @@ static esp_err_t ensure_client(void)
             g_fill_client = NULL;
         }
     }
-    g_fill_queued = g_fill_done = 0;
+    g_fill_queued = 0;
+    __atomic_store_n(&g_fill_done, 0U, __ATOMIC_RELAXED);
     return ESP_OK;
 }
 
@@ -1006,6 +1026,7 @@ esp_err_t lv_draw_ortho_ppa_srm(const ppa_srm_oper_config_t * in)
             return err;
         }
         ++g_queued;
+        if(g_require_completion && g_queued == 0) wait(g_queued);  /* zero is the no-ticket sentinel */
         note(1, g_queued, op.in.buffer, op.in.pic_w, op.in.pic_h, op.in.block_offset_x, op.in.block_offset_y,
              op.in.block_w, op.in.block_h, op.out.buffer, op.out.pic_w, op.out.pic_h, op.out.block_offset_x,
              op.out.block_offset_y, rot, bits, op.scale_x, op.scale_y);

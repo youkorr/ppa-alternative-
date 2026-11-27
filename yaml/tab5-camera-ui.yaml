@@ -60,9 +60,15 @@ external_components:
       type: git
       url: https://github.com/youkorr/lvgl_9.5
       ref: claude/jolly-lamport-ERZOC
-    components: [lvgl, mipi_dsi]
+    components: [lvgl]
     refresh: 0s
-  - source: github://youkorr/ppa-alternative-@main
+  - source:
+      type: git
+      url: https://github.com/youkorr/esphome
+      ref: test-native-dsi-buffer-fence
+    components: [mipi_dsi]
+    refresh: 0s
+  - source: github://youkorr/ppa-alternative-@test-native-dsi-buffer-fence
     components: [lvgl_ortho]
     refresh: 0s
 
@@ -70,6 +76,10 @@ logger:
   level: DEBUG
   logs:
     esp-idf: WARN
+    esp_ipa_agc: WARN
+    esp_ipa_ian: WARN
+    esp_ipa_adn: WARN
+    esp_ipa_acc: WARN
 
 api:
   encryption:
@@ -161,6 +171,7 @@ lvgl_ortho:
   rotation: 270          # the Tab5 in landscape (ESPHome's degrees)
   ppa: true
   cores: 2
+  native_dsi: true
 
 lvgl:
   displays:

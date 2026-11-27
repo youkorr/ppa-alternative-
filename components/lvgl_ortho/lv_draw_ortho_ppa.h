@@ -53,6 +53,9 @@ extern "C" {
 /** Register a PPA client and hand lv_draw_ortho's turns to it. */
 esp_err_t lv_draw_ortho_ppa_init(void);
 
+/** Native framebuffer leases cannot be released after an uncompleted DMA. */
+void lv_draw_ortho_ppa_require_completion(bool required);
+
 /** Hand the turns back to the CPU and release the PPA. */
 void lv_draw_ortho_ppa_deinit(void);
 

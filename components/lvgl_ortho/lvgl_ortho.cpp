@@ -8,6 +8,7 @@
 #include "esphome/core/version.h"
 
 #include <cstring>
+#include <cstdlib>
 
 #include "esp_cache.h"
 #include "esp_chip_info.h"
@@ -135,6 +136,12 @@ void LvglOrtho::setup() {
       ESP_LOGW(TAG, "cores: 2 refused (LVGL built without an OS, or no internal RAM for the tile): one core draws");
   }
   if (!this->use_panel_buffers_()) {
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+    if (this->native_dsi_ != nullptr) {
+      ESP_LOGE(TAG, "Native per-buffer fence requires three matching panel buffers");
+      std::abort();
+    }
+#endif
     const size_t size = ((size_t) this->stride_ * this->height_ + LINE - 1) & ~(LINE - 1);
     this->buf_ = (uint8_t *) heap_caps_aligned_alloc(LINE, size, MALLOC_CAP_SPIRAM);
     if (this->buf_ == nullptr) {
@@ -177,6 +184,19 @@ void LvglOrtho::setup() {
   // and by the PPA.
   if (this->panel_fbs_ > 0)
     this->sync_on_ = lv_draw_ortho_take_sync(this->disp_);
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+  if (this->native_dsi_ != nullptr) {
+    if (!this->sync_on_ || !lv_draw_ortho_set_sync_write_guard(this->disp_, native_write_guard_)) {
+      ESP_LOGE(TAG, "Native per-buffer fence requires deferred LVGL synchronization");
+      std::abort();
+    }
+    // Check the copy hooks before LVGL attempts its pre-render sync.
+    // The existing RENDER_START callback acquires the active buffer before
+    // the renderer's deferred sync callback or any drawing can write it.
+    lv_display_add_event_cb(this->disp_, native_refresh_start_cb_, LV_EVENT_REFR_START, nullptr);
+    lv_draw_ortho_ppa_require_completion(true);
+  }
+#endif
 
   lv_obj_invalidate(lv_display_get_screen_active(this->disp_));
   this->ready_ = true;
@@ -212,7 +232,7 @@ bool LvglOrtho::use_panel_buffers_() {
                      this->stride_, fb0, size);
     lv_display_set_3rd_draw_buffer(this->disp_, &this->third_);
     this->panel_fbs_ = 3;
-    ESP_LOGI(TAG, "Native DSI framebuffer API (PR #23332), three buffers, deferred fence");
+    ESP_LOGI(TAG, "Native DSI experimental per-buffer fence, three buffers, acquire before render");
     return true;
   }
 #endif
@@ -280,10 +300,38 @@ void LvglOrtho::dump_config() {
   }
 }
 
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+bool LvglOrtho::native_write_guard_(const void *fb) {
+  return g_self != nullptr && g_self->native_dsi_ != nullptr &&
+         g_self->native_dsi_->native_framebuffer_is_acquired(fb);
+}
+
+void LvglOrtho::native_refresh_start_cb_(lv_event_t *e) {
+  auto *disp = static_cast<lv_display_t *>(lv_event_get_current_target(e));
+  if (!lv_draw_ortho_sync_write_guard_valid(disp)) {
+    ESP_LOGE(TAG, "Native framebuffer synchronization hooks changed; refusing to render");
+    std::abort();
+  }
+}
+#endif
+
 void LvglOrtho::render_start_cb_(lv_event_t *e) {
   (void) e;
-  if (g_self != nullptr)
-    g_self->renders_++;
+  if (g_self == nullptr)
+    return;
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+  if (g_self->native_dsi_ != nullptr) {
+    auto *buf = lv_display_get_buf_active(g_self->disp_);
+    const uint32_t started = micros();
+    if (buf == nullptr || !g_self->native_dsi_->acquire_native_framebuffer(buf->data)) {
+      ESP_LOGE(TAG, "Native framebuffer not safe to write; stopping before render");
+      std::abort();
+    }
+    g_self->native_acquire_us_ += micros() - started;
+    g_self->native_acquire_count_++;
+  }
+#endif
+  g_self->renders_++;
 }
 
 void LvglOrtho::flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
@@ -292,11 +340,12 @@ void LvglOrtho::flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px
   if (g_self != nullptr && g_self->native_dsi_ != nullptr && g_self->panel_fbs_ > 0) {
     if (lv_display_flush_is_last(disp) && !g_self->native_present_failed_) {
       const uint32_t start = micros();
-      if (!g_self->native_dsi_->present_framebuffer(px_map, true)) {
+      if (!g_self->native_dsi_->present_acquired_framebuffer(px_map)) {
         g_self->native_present_failed_ = true;
         g_self->ready_ = false;
         ESP_LOGE(TAG, "Native framebuffer presentation failed; stopping LVGL refreshes");
-        lv_display_enable_invalidation(disp, false);
+        // Do not let LVGL rotate to another buffer after uncertain ownership.
+        std::abort();
       } else {
         g_self->native_present_us_ += micros() - start;
         g_self->native_present_count_++;
@@ -405,6 +454,12 @@ bool LvglOrtho::show_video(lv_obj_t *obj, const uint8_t *frame, uint16_t width, 
                            bool mirror_y) {
   if (!this->ready_ || this->video_failed_ || obj == nullptr || frame == nullptr || width == 0 || height == 0)
     return false;
+#ifdef USE_LVGL_ORTHO_NATIVE_DSI
+  // This experiment leases buffers at RENDER_START. Out-of-refresh video
+  // writes bypass that hook; use the camera canvas instead.
+  if (this->native_dsi_ != nullptr)
+    return false;
+#endif
   if (!this->on_screen_(obj)) {
     this->clear_video();
     return false;
@@ -517,6 +572,11 @@ void LvglOrtho::loop() {
                s, this->video_frames_ / s, this->video_frames_ ? this->video_us_ / 1000.0f / this->video_frames_ : 0.0f,
                this->presents_ / s, this->flush_rows_ / s, this->flush_us_ / 1000.0f / s);
 #ifdef USE_LVGL_ORTHO_NATIVE_DSI
+      if (this->native_acquire_count_ > 0) {
+        ESP_LOGI(TAG, "  native DSI acquire: %.2f ms/frame, %.1f ms/s, %u acquisitions",
+                 this->native_acquire_us_ / 1000.0f / this->native_acquire_count_,
+                 this->native_acquire_us_ / 1000.0f / s, (unsigned) this->native_acquire_count_);
+      }
       if (this->native_present_count_ > 0) {
         ESP_LOGI(TAG, "  native DSI present: %.2f ms/frame, %.1f ms/s, %u successful presents",
                  this->native_present_us_ / 1000.0f / this->native_present_count_,
@@ -589,6 +649,7 @@ void LvglOrtho::loop() {
     this->last_report_ = now;
 #ifdef USE_LVGL_ORTHO_NATIVE_DSI
     this->native_present_us_ = this->native_present_count_ = 0;
+    this->native_acquire_us_ = this->native_acquire_count_ = 0;
 #endif
     this->video_us_ = this->video_frames_ = this->flush_us_ = this->flush_rows_ = this->presents_ = this->renders_ = 0;
   }
